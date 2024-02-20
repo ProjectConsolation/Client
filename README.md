@@ -11,7 +11,7 @@ A work-in-progress project aimed at extending and improving upon theh PC port of
  - [Lierrmm](https://github.com/Lierrmm) for working on zones & zonetool
  
 
-## fun facts
+## Fun facts
 
 - QoS is abandonware!
 - QoS was drastically different on the Wii version and even recieved updates
