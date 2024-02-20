@@ -438,7 +438,7 @@ namespace console
 
 			// setup external console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);
-			SetConsoleTitle("qos-exp");
+			SetConsoleTitle("Project: Consolation - Console");
 
 			con.kill_event = CreateEvent(NULL, TRUE, FALSE, NULL);
 
