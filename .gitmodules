@@ -1,0 +1,12 @@
+[submodule "deps/minhook"]
+	path = deps/minhook
+	url = https://github.com/TsudaKageyu/minhook.git
+[submodule "deps/GSL"]
+	path = deps/GSL
+	url = https://github.com/microsoft/GSL.git
+[submodule "deps/asmjit"]
+	path = deps/asmjit
+	url = https://github.com/asmjit/asmjit
+[submodule "deps/iw4-open-formats"]
+	path = deps/iw4-open-formats
+	url = https://github.com/iw4x/iw4-open-formats
