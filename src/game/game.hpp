@@ -37,6 +37,14 @@ namespace game
 	};
 
 	void Cbuf_AddText(int controller, const char* text);
+	void Cmd_AddCommandInternal(const char* name, void(__cdecl* function)(), qos::cmd_function_s* cmd);
+	bool DB_IsXAssetDefault(qos::XAssetType type, const char* name);
+	void DB_EnumXAssetEntries(qos::XAssetType type, std::function<void(qos::XAssetEntryPoolEntry*)> callback, bool overrides);
+
+	namespace iw4
+	{
+		void VectorSubtract(const qos::vec3_t& a, const qos::vec3_t& b, qos::vec3_t& out);
+	}
 }
 
 #include "symbols.hpp"

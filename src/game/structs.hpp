@@ -1,7 +1,5 @@
 #pragma once
 
-#include <std_include.hpp>
-
 namespace game::qos
 {
 	typedef float vec_t;
@@ -28,11 +26,11 @@ namespace game::qos
 		ASSET_TYPE_SOUND = 0x9,
 		ASSET_TYPE_SOUND_CURVE = 0xA,
 		//ASSET_TYPE_LOADED_SOUND = 11, // no loaded sounds?
-		ASSET_TYPE_CLIPMAP = 11,
-		ASSET_TYPE_CLIPMAP_PVS = 12,
+		ASSET_TYPE_CLIPMAP_SP = 11,
+		ASSET_TYPE_CLIPMAP_MP = 12, // ASSET_TYPE_CLIPMAP_PVS
 		ASSET_TYPE_COMWORLD = 13,
-		ASSET_TYPE_GAMEWORLD_SP = 14,
-		ASSET_TYPE_GAMEWORLD_MP = 15,
+		ASSET_TYPE_gameWORLD_SP = 14,
+		ASSET_TYPE_gameWORLD_MP = 15,
 		ASSET_TYPE_MAP_ENTS = 16,
 		ASSET_TYPE_GFXWORLD = 17,
 		ASSET_TYPE_LIGHT_DEF = 18,
@@ -45,18 +43,14 @@ namespace game::qos
 		ASSET_TYPE_SNDDRIVER_GLOBALS = 25, // i think?
 		ASSET_TYPE_FX = 26,
 		ASSET_TYPE_IMPACT_FX = 27,
-
-		// luckily, this is the same as IW3 at the very least
 		ASSET_TYPE_AITYPE = 28,
 		ASSET_TYPE_MPTYPE = 29,
 		ASSET_TYPE_CHARACTER = 30,
 		ASSET_TYPE_XMODELALIAS = 31,
-		//
-
 		ASSET_TYPE_RAWFILE = 32,
 		ASSET_TYPE_STRINGTABLE = 33,
 
-		// QoS exclusive assets for Singleplayer
+		// these assets only exist in QoS
 		ASSET_TYPE_XML_TREE = 34,
 		ASSET_TYPE_SCENE_ANIM_RESOURCE = 35,
 		ASSET_TYPE_CUTSCENE_RESOURCE = 36,
@@ -67,5 +61,69 @@ namespace game::qos
 		ASSET_TYPE_STRING = 38,
 		ASSET_TYPE_ASSETLIST = 39,
 		ASSET_TYPE_INVALID = -1
+	};
+
+	union XAssetHeader
+	{
+		void* data;
+		//void* xmodelPieces;
+		//PhysPreset* physPreset; // not done
+		//void* physConstraints;
+		//void* destructibleDef;
+		//Material* material;
+		//GfxImage* image;
+		//XModel* xmodel;
+		//ComWorld* comWorld;
+		//gameWorldSp* gameWorldSp;
+		//gameWorldMp* gameWorldMp;
+		//clipMap_t* clipMap;
+		//GfxWorld* gfxWorld;
+
+		//RawFile* rawfile;
+	};
+
+	struct XAsset
+	{
+		XAssetType type;
+		XAssetHeader header;
+	};
+
+	struct XAssetEntry
+	{
+		XAsset asset;
+		char zoneIndex;
+		char inuse;
+		unsigned __int16 nextHash;
+		unsigned __int16 nextOverride;
+		unsigned __int16 usageFrame;
+	};
+
+	union XAssetEntryPoolEntry
+	{
+		XAssetEntry entry;
+		XAssetEntryPoolEntry* next;
+	};
+
+	struct CmdArgs
+	{
+		int nesting;
+		int localClientNum[8];
+		int controllerIndex[8];
+		int argc[8];
+		const char** argv[8];
+	};
+
+	struct cmd_function_s
+	{
+		cmd_function_s* next;
+		const char* name;
+		const char* autoCompleteDir;
+		const char* autoCompleteExt;
+		void(__cdecl* function)();
+	};
+
+	struct scrMemTreePub_t
+	{
+		char* mt_buffer;
 	};
 }

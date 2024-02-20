@@ -333,6 +333,8 @@ namespace console
 
 			com_printf_hook.invoke<void>(channel, "%s", result); // invoke Com_PrintMessage with the clean result
 
+			// TODO: add dvar to stop this function from running
+
 			// pretty sure channel 4 is used for debugging, but the normal user doesn't usually see it. remove this if you want every single print.
 			//if (channel != 4)
 			{
@@ -430,7 +432,9 @@ namespace console
 		{
 			// redirect console output to our console
 			printf_hook.create(printf, printf_stub);
+#ifndef DEBUG
 			com_printf_hook.create(game::game_offset(0x103F6400), com_printf_stub);
+#endif
 
 			// setup external console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);

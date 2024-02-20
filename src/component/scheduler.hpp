@@ -10,14 +10,8 @@ namespace scheduler
 		// The game's rendering pipeline
 		renderer,
 
-		// The game's server thread
-		server,
-
 		// The game's main thread
 		main,
-
-		// LUI context
-		lui,
 
 		count,
 	};
@@ -32,7 +26,5 @@ namespace scheduler
 	void loop(const std::function<void()>& callback, pipeline type = pipeline::async,
 		std::chrono::milliseconds delay = 0ms);
 	void once(const std::function<void()>& callback, pipeline type = pipeline::async,
-		std::chrono::milliseconds delay = 0ms);
-	void on_game_initialized(const std::function<void()>& callback, pipeline type = pipeline::async,
 		std::chrono::milliseconds delay = 0ms);
 }

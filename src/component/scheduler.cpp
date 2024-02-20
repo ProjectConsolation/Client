@@ -11,7 +11,6 @@
 
 namespace scheduler
 {
-	/*
 	namespace
 	{
 		struct task
@@ -87,10 +86,10 @@ namespace scheduler
 		volatile bool kill = false;
 		std::thread thread;
 		task_pipeline pipelines[pipeline::count];
-		utils::hook::detour r_end_frame_hook;
+		//utils::hook::detour r_end_frame_hook;
 		//utils::hook::detour g_run_frame_hook;
-		//utils::hook::detour main_frame_hook;
-		utils::hook::detour g_shutdown_game_hook;
+		utils::hook::detour main_frame_hook;
+		//utils::hook::detour g_shutdown_game_hook;
 
 		std::vector<std::function<void()>> shutdown_callbacks;
 
@@ -100,28 +99,17 @@ namespace scheduler
 			pipelines[type].execute();
 		}
 
-		void r_end_frame_stub()
-		{
-			execute(pipeline::renderer);
-			r_end_frame_hook.invoke<void>();
-		}
-
-		void server_frame_stub()
-		{
-			utils::hook::invoke<void>(0x4FC8F0);
-			execute(pipeline::server);
-		}
-
 		void main_frame_stub()
 		{
+			main_frame_hook.invoke<void>();
+
 			const auto _0 = gsl::finally([]()
 			{
 				execute(pipeline::main);
 			});
-
-			utils::hook::invoke<void>(0x434DC0); // Com_DedicatedModified
 		}
 
+		/*
 		void g_shutdown_game_stub(const int free_scripts)
 		{
 			g_shutdown_game_hook.invoke<void>(free_scripts);
@@ -131,6 +119,7 @@ namespace scheduler
 				callback();
 			}
 		}
+		*/
 	}
 
 	void on_shutdown(const std::function<void()>& callback)
@@ -188,11 +177,11 @@ namespace scheduler
 
 		void post_load() override
 		{
-			utils::hook::call(0x4FD7AB, scheduler::server_frame_stub);
-			r_end_frame_hook.create(0x68A2AC, scheduler::r_end_frame_stub);
-			utils::hook::call(0x43503D, scheduler::main_frame_stub); // may be wrong?
+			//utils::hook::call(0x4FD7AB, scheduler::server_frame_stub);
+			//r_end_frame_hook.create(0x68A2AC, scheduler::r_end_frame_stub);
+			main_frame_hook.create(game::game_offset(0x103F7470), scheduler::main_frame_stub); // may be wrong?
 
-			g_shutdown_game_hook.create(0x4FC800, g_shutdown_game_stub);
+			//g_shutdown_game_hook.create(0x4FC800, g_shutdown_game_stub);
 		}
 
 		void pre_destroy() override
@@ -204,7 +193,6 @@ namespace scheduler
 			}
 		}
 	};
-	*/
 }
 
-//REGISTER_COMPONENT(scheduler::component)
+REGISTER_COMPONENT(scheduler::component)
