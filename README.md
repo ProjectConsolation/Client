@@ -4,11 +4,11 @@ A work-in-progress project aimed at extending and improving upon theh PC port of
 
 # Credits 
 
- [Rackover](https://github.com/Rackover) for IW3/IW4 research & [iw3x-port](https://github.com/iw4x/iw3x-port)
- [MrReeko](https://github.com/MrReekoFTWxD) for initial GSC injection
- [ujicos](https://github.com/ujicos) for initially starting the project, wiith small additions every now and then
- [mjkzy](https://github.com/mjkzy) for working on zones & zonetool
- [Lierrmm](https://github.com/Lierrmm) for working on zones & zonetool
+ - [Rackover](https://github.com/Rackover) for IW3/IW4 research & [iw3x-port](https://github.com/iw4x/iw3x-port)
+ - [MrReeko](https://github.com/MrReekoFTWxD) for initial GSC injection
+ - [ujicos](https://github.com/ujicos) for initially starting the project, wiith small additions every now and then
+ - [mjkzy](https://github.com/mjkzy) for working on zones & zonetool
+ - [Lierrmm](https://github.com/Lierrmm) for working on zones & zonetool
  
 
 ## fun facts
