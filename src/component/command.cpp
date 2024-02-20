@@ -107,7 +107,7 @@ namespace command
 			{
 				add("hello", []()
 				{
-					printf("hello from qos-exp!\n");
+					printf("hello from Project: Consolation!\n");
 				});
 			}, scheduler::main);
 		}
