@@ -52,7 +52,6 @@
 #include <utility>
 #include <filesystem>
 #include <functional>
-#include <format>
 
 #include <cassert> // assert missing?
 

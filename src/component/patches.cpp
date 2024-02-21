@@ -73,10 +73,6 @@ namespace patches
 			// un-cap fps
 			utils::hook::set<uint8_t>(game::game_offset(0x103F696A), 0x00);
 
-			// fix LOD distance at higher FOVs
-			// FLOAT: base+0x1054688 + 10 (int value) --> set to 0
-			//utils::hook::set<uint8_t>(game::game_offset(0x114A4420), 0x00); //check if this works. it doesnt lolo
-
 #ifdef DEBUG
 			// hook linkxassetentry to debug stuff
 			link_xasset_entry_hook.create(game::game_offset(0x103E0640), link_xasset_entry_stub);

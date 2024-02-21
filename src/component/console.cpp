@@ -413,48 +413,6 @@ namespace console
 		dispatch_message(type, result);
 	}
 
-	void conPrint(int channel, const char* fmt, ...)
-	{
-		va_list ap;
-		char buf[0x4000];
-
-		va_start(ap, fmt);
-		vsnprintf(buf, sizeof(buf), fmt, ap);
-		va_end(ap);
-
-		if (std::string(buf).find("SCALEFORM") != std::string::npos)
-		{
-			return; //Do not remove this, this filters out and output with "SCALEFORM" in it, as it is unnecessary
-		}
-
-		if (std::string(buf).find("XUserReadProfileSettings took 0ms") != std::string::npos)
-		{
-			return; //filter this as it spams, and isnt the real time it takes
-		}
-
-		if (std::string(buf).size() > 50)
-		{
-			buf[0] = '\0';
-		}
-
-		game::Conbuf_AppendText(0, buf); //Prints the output
-	}
-
-	void showDevConsole()
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-		game::Sys_ShowConsole();
-
-		MSG message;
-		while (GetMessageA(&message, 0, 0, 0))
-		{
-			TranslateMessage(&message);
-			DispatchMessageA(&message);
-		}
-		//exit(0);
-	}
-
 	class component final : public component_interface
 	{
 	public:
@@ -477,8 +435,6 @@ namespace console
 #ifndef DEBUG
 			com_printf_hook.create(game::game_offset(0x103F6400), com_printf_stub);
 #endif
-
-			CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(showDevConsole), nullptr, 0, 0);
 
 			// setup external console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);
