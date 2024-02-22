@@ -15,7 +15,8 @@ namespace dvars
 	{
 		inline game::qos::dvar_s* Dvar_RegisterBool_r(const char* dvar_name, const char* description, std::int32_t default_value, std::uint16_t flags)
 		{
-			return game::Dvar_RegisterBool(dvar_name, game::qos::dvar_type::boolean, default_value);
+			//0 = bool
+			return game::Dvar_RegisterBool(dvar_name, 0 , default_value);
 		}
 	}
 }
