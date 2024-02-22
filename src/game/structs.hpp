@@ -126,4 +126,93 @@ namespace game::qos
 	{
 		char* mt_buffer;
 	};
+
+	struct DvarValueStringBuf
+	{
+		const char* pad;
+		char string[12];
+	};
+
+	union DvarValue
+	{
+		bool enabled;
+		int integer;
+		unsigned int unsignedInt;
+		float value;
+		float vector[4];
+		const char* string;
+		DvarValueStringBuf stringBuf;
+		char color[4];
+	};
+
+	union DvarLimits
+	{
+		struct enumeration
+		{
+			int stringCount;
+			const char** strings;
+		};
+		struct integer
+		{
+			int min;
+			int max;
+		};
+		struct value
+		{
+			float min;
+			float max;
+		};
+		struct vector
+		{
+			float min;
+			float max;
+		};
+	};
+
+	enum class dvar_type : std::int8_t
+	{ //IW3SP
+		boolean = 0,
+		value = 1,
+		vec2 = 2,
+		vec3 = 3,
+		vec4 = 4,
+		integer = 5,
+		enumeration = 6,
+		string = 7,
+		color = 8,
+		rgb = 9 // Color without alpha
+	};
+
+	enum dvar_flags : std::uint16_t
+	{ //IW3SP
+		none = 0x0,
+		saved = 0x1,
+		user_info = 0x2, // sent to server on connect or change
+		server_info = 0x4, // sent in response to front end requests
+		replicated = 0x8,
+		write_protected = 0x10,
+		latched = 0x20,
+		read_only = 0x40,
+		cheat_protected = 0x80,
+		temp = 0x100,
+		saved_flag = 0x1000,
+		no_restart = 0x400, // do not clear when a cvar_restart is issued
+		user_created = 0x4000, // created by a set command
+	};
+
+	struct dvar_s
+	{
+		const char* name;
+		const char* description;
+		dvar_flags flags;
+		dvar_type type;
+		bool modified;
+		DvarValue current;
+		DvarValue latched;
+		DvarValue reset;
+		DvarLimits domain;
+		dvar_s* next;
+		dvar_s* hashNext;
+	};
+
 }

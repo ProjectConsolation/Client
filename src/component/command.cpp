@@ -150,7 +150,7 @@ namespace command
 						console::info("================================ COMMAND DUMP =====================================\n");
 						game::qos::cmd_function_s* cmd = (*game::cmd_functions);
 						std::string filename;
-						/*if (argument.size() == 2)
+						if (argument.size() == 2)
 						{
 							filename = "Consolation/";
 							filename.append(argument[1]);
@@ -158,17 +158,17 @@ namespace command
 							{
 								filename.append(".txt");
 							}
-						}*/
+						}
 						int i = 0;
 						while (cmd)
 						{
 							if (cmd->name)
 							{
-								/*if (!filename.empty())
+								if (!filename.empty())
 								{
 									const auto line = std::format("{}\r\n", cmd->name);
-									//utils::io::write_file(filename, line, i != 0);
-								}*/
+									utils::io::write_file(filename, line, i != 0);
+								}
 								console::info("%s\n", cmd->name);
 								i++;
 							}

@@ -7,7 +7,8 @@ namespace game
 	WEAK symbol<void(int channel, const char* fmt, ...)> Com_Printf{ game_offset(0x103F6400) };
 	WEAK symbol<void(int channel, const char* fmt)> Conbuf_AppendText{ game_offset(0x102C3CE0) };
 
-	WEAK symbol<qos::XAssetHeader (qos::XAssetType type, const char* name)> DB_FindXAssetHeader{ game_offset(0x103E2260) };
+	WEAK symbol<qos::XAssetHeader(qos::XAssetType type, const char* name)> DB_FindXAssetHeader{ game_offset(0x103E2260) };
+	WEAK symbol<qos::dvar_s*(const char* dvar_name, game::qos::dvar_type flags, std::int32_t default_value)> Dvar_RegisterBool{ game_offset(0x10278E60) };
 
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
 
