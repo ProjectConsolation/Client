@@ -74,11 +74,6 @@ namespace patches
 			// un-cap fps
 			utils::hook::nop(game::game_offset(0x103F696A), 0x00);
 
-			// branding
-			//utils::hook::set<const char*>(game::game_offset(0x12BBAEA0), utils::string::va("%d %s %s", 549, "CONSOLATION", curTime)); //doesnt work?
-			//utils::hook::set<const char*>(game::game_offset(0x104CAD58), "QOS-CSLT"); // "007GUEST" Branding
-			//utils::hook::set<const char*>(game::game_offset(0x104CAD3C), utils::string::va("%s", curTime)); //Date + Time
-
 			// fix LOD distance at higher FOVs
 			// FLOAT: base+0x1054688 + 10 (int value) --> set to 0
 			// in mem this would be 00 00 @ game_offset+14A4422 & 23

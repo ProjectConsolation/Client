@@ -89,7 +89,7 @@ namespace scheduler
 		//utils::hook::detour r_end_frame_hook;
 		//utils::hook::detour g_run_frame_hook;
 		utils::hook::detour main_frame_hook;
-		//utils::hook::detour g_shutdown_game_hook;
+		utils::hook::detour g_shutdown_game_hook;
 
 		std::vector<std::function<void()>> shutdown_callbacks;
 

@@ -29,7 +29,7 @@ namespace exception
 			char pathname[MAX_PATH] = {0};
 
 			GetTempPathA(sizeof(pathname), pathname);
-			GetTempFileNameA(pathname, "t3-mod -", 0, filename);
+			GetTempFileNameA(pathname, "consolation -", 0, filename);
 			return filename;
 		}
 
