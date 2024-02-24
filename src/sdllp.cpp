@@ -32,7 +32,9 @@ bool sdllp::is_loaded(const char* library)
 
 FARPROC sdllp::get_export(const char* function, const char* library)
 {
+#ifndef DEBUG
 	printf("export '%s' requested from %s.\n", function, library);
+#endif
 
 	if (!is_loaded(library))
 	{
