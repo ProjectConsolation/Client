@@ -11,12 +11,12 @@ namespace dvars
 	// Gamepad
 	//extern game::qos::dvar_s* gpad_use_hold_time;
 
-	namespace reg
+	/*namespace reg
 	{
 		inline game::qos::dvar_s* Dvar_RegisterBool_r(const char* dvar_name, const char* description, std::int32_t default_value, std::uint16_t flags)
 		{
 			//0 = bool
 			return game::Dvar_RegisterBool(dvar_name, 0 , default_value);
 		}
-	}
+	}*/
 }

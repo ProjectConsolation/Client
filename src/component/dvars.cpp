@@ -21,7 +21,7 @@ namespace dvars
 	public:
 		void post_load() override
 		{
-			dvars::r_noborder = dvars::reg::Dvar_RegisterBool_r("r_noborder", "Do not use a border in windowed mode", false, game::qos::saved);
+			//dvars::r_noborder = dvars::reg::Dvar_RegisterBool_r("r_noborder", "Do not use a border in windowed mode", false, game::qos::saved);
 		}
 	};
 }

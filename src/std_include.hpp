@@ -53,6 +53,8 @@
 #include <filesystem>
 #include <functional>
 #include <format>
+#include <iomanip> // for std::put_time
+#include <ctime>   // for std::time, std::tm, std::strftime
 
 #include <cassert> // assert missing?
 
