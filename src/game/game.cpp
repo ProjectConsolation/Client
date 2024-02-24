@@ -3,11 +3,16 @@
 #include "component/console.hpp"
 
 #include "game/game.hpp"
-
+#include <utils/string.hpp>
 #include <utils/hook.hpp>
 
 namespace game
 {
+	std::time_t now = std::time(nullptr);
+	std::tm tm = *std::localtime(&now);
+	char timeBuffer[80];
+	const auto curTime = std::strftime(timeBuffer, sizeof(timeBuffer), "%a %b %d %H:%M:%S %Y", &tm);
+
 	HMODULE mp_dll = nullptr;
 
 	uintptr_t game_offset(uintptr_t ida_address)
@@ -125,5 +130,156 @@ namespace game
 			++index;
 		} while (index < 0x9C40);
 		InterlockedDecrement(lock);
+	}
+
+	//IW3SP-MOD's code, thanks :)
+	void ScrPlace_ApplyRect(const game::qos::ScreenPlacement* ScrPlace, float* x, float* y, float* w, float* h, int horzAlign, int vertAlign)
+	{
+		float v7;
+		float v8;
+		float v9;
+		float v10;
+
+		switch (horzAlign)
+		{
+		case 7:
+			v7 = *x * ScrPlace->scaleVirtualToReal[0];
+			v8 = (float)(ScrPlace->realViewableMin[0] + ScrPlace->realViewableMax[0]) * 0.5;
+			*x = v7 + v8;
+			*w = *w * ScrPlace->scaleVirtualToReal[0];
+			break;
+		case 6:
+			*x = *x * ScrPlace->scaleRealToVirtual[0];
+			*w = *w * ScrPlace->scaleRealToVirtual[0];
+			break;
+		case 5:
+			break;
+		case 4:
+			*x = *x * ScrPlace->scaleVirtualToFull[0];
+			*w = *w * ScrPlace->scaleVirtualToFull[0];
+			break;
+		case 3:
+			*x = (float)(*x * ScrPlace->scaleVirtualToReal[0]) + ScrPlace->realViewableMax[0];
+			*w = *w * ScrPlace->scaleVirtualToReal[0];
+			break;
+		case 2:
+			v7 = *x * ScrPlace->scaleVirtualToReal[0];
+			v8 = 0.5 * ScrPlace->realViewportSize[0];
+			*x = v7 + v8;
+			*w = *w * ScrPlace->scaleVirtualToReal[0];
+			break;
+		case 1:
+			*x = (float)(*x * ScrPlace->scaleVirtualToReal[0]) + ScrPlace->realViewableMin[0];
+			*w = *w * ScrPlace->scaleVirtualToReal[0];
+			break;
+		default:
+			*x = (float)(*x * ScrPlace->scaleVirtualToReal[0]) + ScrPlace->subScreenLeft;
+			*w = *w * ScrPlace->scaleVirtualToReal[0];
+			break;
+		}
+
+		switch (vertAlign)
+		{
+		case 7:
+			v9 = *y * ScrPlace->scaleVirtualToReal[1];
+			v10 = (float)(ScrPlace->realViewableMin[1] + ScrPlace->realViewableMax[1]) * 0.5;
+			*y = v9 + v10;
+			*h = *h * ScrPlace->scaleVirtualToReal[1];
+		case 6:
+			*y = *y * ScrPlace->scaleRealToVirtual[1];
+			*h = *h * ScrPlace->scaleRealToVirtual[1];
+			break;
+		case 5:
+			return;
+		case 4:
+			*y = *y * ScrPlace->scaleVirtualToFull[1];
+			*h = *h * ScrPlace->scaleVirtualToFull[1];
+			break;
+		case 3:
+			*y = (float)(*y * ScrPlace->scaleVirtualToReal[1]) + ScrPlace->realViewableMax[1];
+			*h = *h * ScrPlace->scaleVirtualToReal[1];
+			break;
+		case 2:
+			v9 = *y * ScrPlace->scaleVirtualToReal[1];
+			v10 = 0.5 * ScrPlace->realViewportSize[1];
+			*y = v9 + v10;
+			*h = *h * ScrPlace->scaleVirtualToReal[1];
+			break;
+		case 1:
+			*y = (float)(*y * ScrPlace->scaleVirtualToReal[1]) + ScrPlace->realViewableMin[1];
+			*h = *h * ScrPlace->scaleVirtualToReal[1];
+			break;
+		default:
+			*y = *y * ScrPlace->scaleVirtualToReal[1];
+			*h = *h * ScrPlace->scaleVirtualToReal[1];
+			break;
+		}
+	}
+
+	//xoxor3d's code, thanks :)
+	void R_AddCmdDrawTextASM(const char* text, int max_chars, void* font, float x, float y, float x_scale, float y_scale, float rotation, const float* color, int style)
+	{
+		const static uint32_t R_AddCmdDrawText_func = game::game_offset(0x103C02B0); //AddBaseDrawTextCmd, no idea if it works :shrug:
+		__asm
+		{
+			push	style;
+			sub     esp, 14h;
+
+			fld		rotation;
+			fstp[esp + 10h];
+
+			fld		y_scale;
+			fstp[esp + 0Ch];
+
+			fld		x_scale;
+			fstp[esp + 8];
+
+			fld		y;
+			fstp[esp + 4];
+
+			fld		x;
+			fstp[esp];
+
+			push	font;
+			push	max_chars;
+			push	text;
+			mov		ecx, [color];
+
+			call	R_AddCmdDrawText_func;
+			add		esp, 24h;
+		}
+	}
+
+	//IW3SP-MOD's code, thanks :)
+	void UI_DrawText(const game::qos::ScreenPlacement* ScrPlace, const char* text, int maxChars, game::qos::Font_s* font, float ix, float iy, int horzAlign, int vertAlign, float scale, const float* color, int style)
+	{
+		float xScale = scale * 48.0f / static_cast<float>(font->pixelHeight);
+		float yScale = xScale;
+
+		ScrPlace_ApplyRect(ScrPlace, &ix, &iy, &xScale, &yScale, horzAlign, vertAlign);
+		int x = floor(ix + 0.5);
+		int y = floor(iy + 0.5);
+		R_AddCmdDrawTextASM(text, maxChars, font, x, y, xScale, yScale, 0.0, color, style);
+	}
+
+	// IW3SP-MOD, thanks again, though this one was simple, lul
+	game::qos::ScreenPlacement* ScrPlace_GetFullPlacement()
+	{
+		return game::scrPlaceFull;
+	}
+
+	const char* drawVersion()
+	{
+		//auto* const scrPlace = ScrPlace_GetFullPlacement();
+
+		//const float color[4] = { 0.0f, 0.80f, 0.0f, 0.69f };
+		//game::qos::Font_s* fontHandle = game::R_RegisterFont("fonts/objectiveFont", sizeof("fonts/objectiveFont"));
+
+		//float fontScale = (0.2f * 48.0f / static_cast<float>(fontHandle->pixelHeight)) * game::scrPlace->scaleVirtualToReal[0];
+		//float xPos = 50.f * game::scrPlace->scaleVirtualToReal[0];
+		//float yPos = 18.f * game::scrPlace->scaleVirtualToReal[1];
+		//UI_DrawText(scrPlace, utils::string::va("%d %s %s", 549, "CONSOLATION", buffer), 128, fontHandle, xPos, yPos, 0, 0, fontScale, color, 0);
+		const char* out = utils::string::va("%d %s %s", 549, "CONSOLATION", timeBuffer);
+		return out;
 	}
 }
