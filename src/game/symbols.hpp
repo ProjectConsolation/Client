@@ -8,7 +8,14 @@ namespace game
 	WEAK symbol<void(int errorParmCode, const char* message, ...)> Com_Error{ game::game_offset(0x1) };
 	WEAK symbol<void(int channel, const char* fmt)> Conbuf_AppendText{ game_offset(0x102C3CE0) };
 
+	WEAK symbol<void(qos::XAssetType type, void(*)(qos::XAssetHeader, void*), const void* userdata, bool overrides)> DB_EnumXAssets_FastFile{ game_offset(0x103DFCA0) };
 	WEAK symbol<qos::XAssetHeader(qos::XAssetType type, const char* name)> DB_FindXAssetHeader{ game_offset(0x103E2260) };
+	//WEAK symbol<const char*(qos::XAssetHeader* asset)> DB_XAssetGetNameHandler{ game_offset(0x1055E470) };
+
+
+	//IW3SP-MOD
+	typedef const char* (*DB_XAssetGetNameHandler_t)(game::qos::XAssetHeader* asset);
+	extern DB_XAssetGetNameHandler_t* DB_XAssetGetNameHandler;
 
 	WEAK symbol<qos::dvar_s*(const char* dvarName)> Dvar_FindVar{ game_offset(0x103BA28) };
 	WEAK symbol<void(qos::dvar_s* dvarName, const char* value)> Dvar_SetString{ game_offset(0x10277E60) };
@@ -28,6 +35,10 @@ namespace game
 	WEAK symbol<qos::scrMemTreePub_t> scrMemTreePub{ game_offset(0x116357CC) };
 	WEAK symbol<qos::ScreenPlacement> scrPlace{ game_offset(0x1127BAA0) };
 	WEAK symbol<qos::ScreenPlacement> scrPlaceFull{ game_offset(0x1127BA50) };
+
+	WEAK symbol<qos::dvar_s*> sortedDvars{ game_offset(0x1149FCD4) };
+	WEAK symbol<int> dvarCount{ game_offset(0x1149FCC8) };
+	WEAK symbol<const char*> g_assetNames{ game_offset(0x1055E3D8) };
 
 	WEAK symbol<unsigned short> db_hashTable{ game_offset(0x1082ED60) };
 	WEAK symbol<qos::XAssetEntryPoolEntry> g_assetEntryPool{ game_offset(0x108CB5C0) };

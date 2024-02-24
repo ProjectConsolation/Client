@@ -72,11 +72,18 @@ namespace patches
 #endif
 
 			// un-cap fps
-			utils::hook::nop(game::game_offset(0x103F696A), 0x00);
+			utils::hook::nop(game::game_offset(0x103F696A), 0x01);
 
-			// fix LOD distance at higher FOVs
-			// FLOAT: base+0x1054688 + 10 (int value) --> set to 0
-			// in mem this would be 00 00 @ game_offset+14A4422 & 23
+			// nop call to Com_Printf for "SCALEFORM: %s" messages
+			utils::hook::nop(game::game_offset(0x1000230F), 0x05); // TODO: Make this a Dvar maybe? Could be useful info
+			utils::hook::nop(game::game_offset(0x102E1284), 0x05); // 
+			// nop above call to Com_Printf for "unknown UI script %s in block:\n%s\n"
+
+			// LOD Scaling fix
+			// Was going to do this via mem editing, but i cant figure out how, this could be a dirty patch?
+			// FLOAT: base+0x1054688 + 10 (dvar pointer) (int value) --> set to 0
+			
+			//game::Cbuf_AddText(0, "r_lodScale 0");
 
 #ifdef DEBUG
 			// hook linkxassetentry to debug stuff

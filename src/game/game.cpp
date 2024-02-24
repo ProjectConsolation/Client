@@ -72,6 +72,18 @@ namespace game
 			console::debug("registered cmd '%s'\n", name);
 		}
 	}
+	
+	//credits to IW3SP--MOD
+	DB_XAssetGetNameHandler_t* DB_XAssetGetNameHandler = reinterpret_cast<DB_XAssetGetNameHandler_t*>(game_offset(0x1055E470)); //why the fuck do i need this here specifically?
+
+	const char* DB_GetXAssetName(game::qos::XAsset* asset)
+	{
+		if (!asset) return "";
+
+		assert(asset->header.data);
+
+		return game::DB_XAssetGetNameHandler[asset->type](&asset->header);
+	}
 
 	bool DB_IsXAssetDefault(qos::XAssetType type, const char* name)
 	{

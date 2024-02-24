@@ -360,6 +360,14 @@ namespace console
 					new_result.erase(0, 2); // example: '^1'
 				}
 
+				if (std::string(result).contains("Unable to")
+					|| std::string(result).contains("Missing asset")
+					|| std::string(result).contains("Couldn't find")
+					|| std::string(result).contains("Unknown command"))
+				{
+					type = con_type_warning;//Quality of Life stuff i guess?
+				}
+
 				dispatch_message(type, new_result);
 			}
 		}
@@ -413,36 +421,9 @@ namespace console
 		dispatch_message(type, result);
 	}
 
-	void conPrint(int channel, const char* fmt, ...)
-	{
-		va_list ap;
-		char buf[0x4000];
-
-		va_start(ap, fmt);
-		vsnprintf(buf, sizeof(buf), fmt, ap);
-		va_end(ap);
-
-		if (std::string(buf).find("SCALEFORM") != std::string::npos)
-		{
-			return; //Do not remove this, this filters out and output with "SCALEFORM" in it, as it is unnecessary
-		}
-
-		if (std::string(buf).find("XUserReadProfileSettings took 0ms") != std::string::npos)
-		{
-			return; //filter this as it spams, and isnt the real time it takes
-		}
-
-		if (std::string(buf).size() > 50)
-		{
-			buf[0] = '\0';
-		}
-
-		game::Conbuf_AppendText(0, buf); //Prints the output
-	}
-
 	void showDevConsole()
 	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		//std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 		game::Sys_ShowConsole();
 
@@ -453,6 +434,56 @@ namespace console
 			DispatchMessageA(&message);
 		}
 		//exit(0);
+	}
+
+	bool match_compare(const std::string& input, const std::string& text, const bool exact)
+	{
+		if (exact && text == input) return true;
+		if (!exact && text.find(input) != std::string::npos) return true;
+		return false;
+	}
+
+	void find_matches(std::string input, std::vector<std::string>& suggestions, const bool exact)
+	{
+		input = utils::string::to_lower(input);
+
+		for (int i = 0; i < *game::dvarCount; i++)
+		{
+			if (game::sortedDvars[i] && game::sortedDvars[i]->name)
+			{
+				std::string name = utils::string::to_lower(game::sortedDvars[i]->name);
+
+				if (match_compare(input, name, exact))
+				{
+					suggestions.push_back(game::sortedDvars[i]->name);
+				}
+
+				if (exact && suggestions.size() > 1)
+				{
+					return;
+				}
+			}
+		}
+
+		game::qos::cmd_function_s* cmd = (*game::cmd_functions);
+		while (cmd)
+		{
+			if (cmd->name)
+			{
+				std::string name = utils::string::to_lower(cmd->name);
+
+				if (match_compare(input, name, exact))
+				{
+					suggestions.push_back(cmd->name);
+				}
+
+				if (exact && suggestions.size() > 1)
+				{
+					return;
+				}
+			}
+			cmd = cmd->next;
+		}
 	}
 
 	class component final : public component_interface
@@ -474,9 +505,9 @@ namespace console
 		{
 			// redirect console output to our console
 			printf_hook.create(printf, printf_stub);
-#ifndef DEBUG
+//#ifndef DEBUG
 			com_printf_hook.create(game::game_offset(0x103F6400), com_printf_stub);
-#endif
+//#endif
 
 			//CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(showDevConsole), nullptr, 0, 0);
 
