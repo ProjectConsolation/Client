@@ -6,6 +6,7 @@ namespace console
 	void set_title(std::string title);
 	void set_size(int width, int height);
 	bool match_compare(const std::string& input, const std::string& text, const bool exact);
+	void clear();
 
 	enum console_type
 	{

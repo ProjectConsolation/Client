@@ -41,6 +41,11 @@ namespace game
 	bool DB_IsXAssetDefault(qos::XAssetType type, const char* name);
 	void DB_EnumXAssetEntries(qos::XAssetType type, std::function<void(qos::XAssetEntryPoolEntry*)> callback, bool overrides);
 	const char* DB_GetXAssetName(game::qos::XAsset* asset);
+	bool Key_IsCatcherActive(int mask);
+	void R_AddCmdDrawTextASM(const char* text, int max_chars, void* font, float x, float y, float x_scale, float y_scale, float rotation, const float* color, int style);
+	void R_AddCmdDrawStretchPic(game::qos::Material* material, float x, float y, float w, float h, float null1, float null2, float null3, float null4, float* color);
+	void UI_DrawText(const game::qos::ScreenPlacement* ScrPlace, const char* text, int maxChars, game::qos::Font_s* font, float ix, float iy, int horzAlign, int vertAlign, float scale, const float* color, int style);
+
 
 	unsigned int Scr_GetFunctionHandle(const char* filename, const char* funcHandle);
 	void RemoveRefToObject(unsigned int obj);

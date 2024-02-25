@@ -8,11 +8,6 @@
 
 namespace game
 {
-	std::time_t now = std::time(nullptr);
-	std::tm tm = *std::localtime(&now);
-	char timeBuffer[80];
-	const auto curTime = std::strftime(timeBuffer, sizeof(timeBuffer), "%a %b %d %H:%M:%S %Y", &tm);
-
 	HMODULE mp_dll = nullptr;
 
 	uintptr_t game_offset(uintptr_t ida_address)
@@ -143,6 +138,13 @@ namespace game
 		} while (index < 0x9C40);
 		InterlockedDecrement(lock);
 	}
+
+	bool Key_IsCatcherActive(int mask)
+	{
+		return (mask & game::clientUI->keyCatchers);
+	}
+
+	// end of IW3SP
 
 	unsigned int Scr_GetFunctionHandle(const char* filename, const char* funcHandle)
 	{
@@ -320,6 +322,46 @@ namespace game
 		}
 	}
 
+	void R_AddCmdDrawStretchPic(game::qos::Material* material, float x, float y, float w, float h, float null1, float null2, float null3, float null4, float* color)
+	{
+		const static uint32_t R_AddCmdDrawStretchPic_func = game::game_offset(0x103C0820);
+		__asm
+		{
+			pushad;
+			push	color;
+			mov		eax, [material];
+			sub		esp, 20h;
+
+			fld		null4;
+			fstp[esp + 1Ch];
+
+			fld		null3;
+			fstp[esp + 18h];
+
+			fld		null2;
+			fstp[esp + 14h];
+
+			fld		null1;
+			fstp[esp + 10h];
+
+			fld		h;
+			fstp[esp + 0Ch];
+
+			fld		w;
+			fstp[esp + 8h];
+
+			fld		y;
+			fstp[esp + 4h];
+
+			fld		x;
+			fstp[esp];
+
+			call	R_AddCmdDrawStretchPic_func;
+			add		esp, 24h;
+			popad;
+		}
+	}
+
 	//IW3SP-MOD's code, thanks :)
 	void UI_DrawText(const game::qos::ScreenPlacement* ScrPlace, const char* text, int maxChars, game::qos::Font_s* font, float ix, float iy, int horzAlign, int vertAlign, float scale, const float* color, int style)
 	{
@@ -349,7 +391,7 @@ namespace game
 		//float xPos = 50.f * game::scrPlace->scaleVirtualToReal[0];
 		//float yPos = 18.f * game::scrPlace->scaleVirtualToReal[1];
 		//UI_DrawText(scrPlace, utils::string::va("%d %s %s", 549, "CONSOLATION", buffer), 128, fontHandle, xPos, yPos, 0, 0, fontScale, color, 0);
-		const char* out = utils::string::va("%d %s %s", 549, "CONSOLATION", timeBuffer);
+		const char* out = utils::string::va("%d %s %s", 549, "CONSOLATION", utils::string::get_timestamp);
 		return out;
 	}
 }

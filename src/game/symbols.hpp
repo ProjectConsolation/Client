@@ -21,6 +21,7 @@ namespace game
 	WEAK symbol<void(qos::dvar_s* dvarName, const char* value)> Dvar_SetString{ game_offset(0x10277E60) };
 	//WEAK symbol<qos::dvar_s*(const char* dvar_name, game::qos::dvar_type flags, std::int32_t default_value)> Dvar_RegisterBool{ game_offset(0x10278E60) };
 
+	WEAK symbol<void*(int imageTrack, char* materialName)> Material_RegisterHandle { game::game_offset(0x103C0820) };
 	WEAK symbol<game::qos::Font_s* (const char* fontName, int imageTrack)> R_RegisterFont{ game::game_offset(0x10199E74) };
 
 	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
@@ -32,9 +33,14 @@ namespace game
 	WEAK symbol<DWORD> cmd_argc{ game_offset(0x10752CB4) };
 	WEAK symbol<char**> cmd_argv{ game_offset(0x10752CD4) };
 	WEAK symbol<qos::cmd_function_s*> cmd_functions{ game_offset(0x10752CF8) };
+	//WEAK symbol<qos::clientUIActive_t*> clientUI{ game_offset(0x11A7AB81) };
+	game::qos::clientUIActive_t* clientUI = reinterpret_cast<game::qos::clientUIActive_t*>(game::game_offset(0x11A7AB81));
+
+	WEAK symbol<qos::PlayerKeyState> playerKeys{ game_offset(0x11263610) };
 	WEAK symbol<qos::scrMemTreePub_t> scrMemTreePub{ game_offset(0x116357CC) };
 	WEAK symbol<qos::ScreenPlacement> scrPlace{ game_offset(0x1127BAA0) };
 	WEAK symbol<qos::ScreenPlacement> scrPlaceFull{ game_offset(0x1127BA50) };
+
 
 	WEAK symbol<qos::dvar_s*> sortedDvars{ game_offset(0x1149FCD4) };
 	WEAK symbol<int> dvarCount{ game_offset(0x1149FCC8) };
