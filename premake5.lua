@@ -163,6 +163,10 @@ workspace "qos-exp"
 		pchheader "std_include.hpp"
 		pchsource "src/std_include.cpp"
 
+		if _OPTIONS["copy-to"] then
+			postbuildcommands {"copy /y \"$(TargetPath)\" \"" .. _OPTIONS["copy-to"] .. "\""}
+		end
+
 		dependencies.imports()
 
 	group "Dependencies"
