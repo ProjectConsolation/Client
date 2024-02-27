@@ -1,7 +1,6 @@
 #pragma once
 
 #include <game/game.hpp>
-#include <game/structs.IW4.hpp>
 
 class component_interface
 {
