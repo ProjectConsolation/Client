@@ -73,7 +73,7 @@ namespace command
 
 	void add_raw(const char* name, void (*callback)())
 	{
-		game::Cmd_AddCommandInternal(name, callback, cmd_allocator.allocate<game::qos::cmd_function_s>());
+		game::Cmd_AddCommandInternal(name, callback, cmd_allocator.allocate<game::cmd_function_s>());
 	}
 
 	void add(const char* name, const std::function<void(const params&)>& callback)
@@ -148,7 +148,7 @@ namespace command
 				add("commandDump", [](const params& argument)
 					{
 						console::info("================================ COMMAND DUMP =====================================\n");
-						game::qos::cmd_function_s* cmd = (*game::cmd_functions);
+						game::cmd_function_s* cmd = (*game::cmd_functions);
 						std::string filename;
 						/*if (argument.size() == 2)
 						{

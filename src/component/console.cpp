@@ -478,7 +478,7 @@ namespace console
 			com_printf_hook.create(game::game_offset(0x103F6400), com_printf_stub);
 #endif
 
-			CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(showDevConsole), nullptr, 0, 0);
+			//CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(showDevConsole), nullptr, 0, 0);
 
 			// setup external console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);

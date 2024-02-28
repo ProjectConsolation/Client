@@ -103,7 +103,7 @@ namespace
 				{
 					throw "component post start failed";
 				}
-
+				MessageBoxA(NULL, "CONNECT DEBUGGER", "DEBUG", MB_DEFBUTTON1);
 				if (!component_loader::post_load())
 				{
 					throw "component post load failed";

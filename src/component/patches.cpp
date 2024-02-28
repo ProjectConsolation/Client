@@ -41,15 +41,15 @@ namespace patches
 		}
 
 		utils::hook::detour link_xasset_entry_hook;
-		game::qos::XAssetEntry* link_xasset_entry_stub(game::qos::XAssetEntry* entry, int override)
+		game::XAssetEntry* link_xasset_entry_stub(game::XAssetEntry* entry, int override)
 		{
-			if (entry->asset.type == game::qos::ASSET_TYPE_GFXWORLD)
+			if (entry->asset.type == game::ASSET_TYPE_GFXWORLD)
 			{
 				//const auto troll = entry->asset.header.gfxWorld;
 				//printf("");
 			}
 
-			return link_xasset_entry_hook.invoke<game::qos::XAssetEntry*>(entry, override);
+			return link_xasset_entry_hook.invoke<game::XAssetEntry*>(entry, override);
 		}
 	}
 

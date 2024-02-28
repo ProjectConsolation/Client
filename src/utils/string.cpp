@@ -88,4 +88,34 @@ namespace utils::string
 
 		return timestamp;
 	}
+
+	bool match_compare(const std::string& input, const std::string& text, const bool exact)
+	{
+		if (exact && text == input) return true;
+		if (!exact && text.find(input) != std::string::npos) return true;
+		return false;
+	}
+
+	std::string get_clipboard_data()
+	{
+		if (OpenClipboard(nullptr))
+		{
+			std::string data;
+
+			auto* const clipboard_data = GetClipboardData(1u);
+			if (clipboard_data)
+			{
+				auto* const cliptext = static_cast<char*>(GlobalLock(clipboard_data));
+				if (cliptext)
+				{
+					data.append(cliptext);
+					GlobalUnlock(clipboard_data);
+				}
+			}
+			CloseClipboard();
+
+			return data;
+		}
+		return {};
+	}
 }

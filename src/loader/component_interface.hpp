@@ -31,8 +31,8 @@ public:
 		return true;
 	}
 
-	virtual game::qos::XAssetType get_type()
+	virtual game::XAssetType get_type()
 	{
-		return game::qos::ASSET_TYPE_INVALID;
+		return game::ASSET_TYPE_INVALID;
 	}
 };

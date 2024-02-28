@@ -34,9 +34,9 @@ namespace game
 	}
 
 	// half of this is inlined on QoS, so just re-writing it all since its little work
-	qos::cmd_function_s* Cmd_FindCommand(const char* name)
+	cmd_function_s* Cmd_FindCommand(const char* name)
 	{
-		qos::cmd_function_s* command;
+		cmd_function_s* command;
 
 		for (command = *cmd_functions; command; command = command->next)
 		{
@@ -49,7 +49,7 @@ namespace game
 		return 0;
 	}
 
-	void Cmd_AddCommandInternal(const char* name, void(__cdecl* function)(), qos::cmd_function_s* cmd)
+	void Cmd_AddCommandInternal(const char* name, void(__cdecl* function)(), cmd_function_s* cmd)
 	{
 		if (Cmd_FindCommand(name))
 		{
@@ -68,7 +68,7 @@ namespace game
 		}
 	}
 
-	bool DB_IsXAssetDefault(qos::XAssetType type, const char* name)
+	bool DB_IsXAssetDefault(XAssetType type, const char* name)
 	{
 		int func_loc = game_offset(0x103DFC00);
 		bool answer = false;
@@ -86,7 +86,7 @@ namespace game
 		return answer;
 	}
 
-	void DB_EnumXAssetEntries(qos::XAssetType type, std::function<void(qos::XAssetEntryPoolEntry*)> callback, bool overrides)
+	void DB_EnumXAssetEntries(XAssetType type, std::function<void(XAssetEntryPoolEntry*)> callback, bool overrides)
 	{
 		volatile long* lock = reinterpret_cast<volatile long*>(game_offset(0x1056250A));
 		InterlockedIncrement(lock);
@@ -101,7 +101,7 @@ namespace game
 			{
 				do
 				{
-					qos::XAssetEntryPoolEntry* asset = &g_assetEntryPool[hashIndex];
+					XAssetEntryPoolEntry* asset = &g_assetEntryPool[hashIndex];
 					hashIndex = asset->entry.nextHash;
 					if (asset->entry.asset.type == type)
 					{
@@ -125,5 +125,39 @@ namespace game
 			++index;
 		} while (index < 0x9C40);
 		InterlockedDecrement(lock);
+	}
+
+	ScreenPlacement ScrPlace_GetViewPlacement()
+	{
+		return *game::scrPlaceView;
+	}
+
+	Font_s* R_RegisterFont(const char* font)
+	{
+		return DB_FindXAssetHeader(ASSET_TYPE_FONT, font).font;
+	}
+
+	Material* Material_RegisterHandle(const char* material)
+	{
+		return DB_FindXAssetHeader(ASSET_TYPE_MATERIAL, material).material;
+	}
+
+	dvar_s* Dvar_FindMalleableVar(const char* dvarName)
+	{
+		dvar_s* var;
+		int hash = generateHashValue((char*)dvarName);
+
+		for (var = (dvar_s*)dvarHashTable[hash]; var; var = var->hashNext)
+		{
+			if (!stricmp(dvarName, var->name))
+				return var;
+		}
+
+		return NULL;
+	}
+
+	dvar_s* Dvar_FindVar(const char* dvarName)
+	{
+		return Dvar_FindMalleableVar(dvarName);
 	}
 }

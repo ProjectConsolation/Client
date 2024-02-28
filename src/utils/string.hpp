@@ -84,4 +84,8 @@ namespace utils::string
 	std::string dump_hex(const std::string& data, const std::string& separator = " ");
 
 	std::string get_timestamp();
+
+	bool match_compare(const std::string& input, const std::string& text, const bool exact);
+
+	std::string get_clipboard_data();
 }

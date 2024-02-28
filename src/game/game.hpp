@@ -37,14 +37,13 @@ namespace game
 	};
 
 	void Cbuf_AddText(int controller, const char* text);
-	void Cmd_AddCommandInternal(const char* name, void(__cdecl* function)(), qos::cmd_function_s* cmd);
-	bool DB_IsXAssetDefault(qos::XAssetType type, const char* name);
-	void DB_EnumXAssetEntries(qos::XAssetType type, std::function<void(qos::XAssetEntryPoolEntry*)> callback, bool overrides);
-
-	namespace iw4
-	{
-		void VectorSubtract(const qos::vec3_t& a, const qos::vec3_t& b, qos::vec3_t& out);
-	}
+	void Cmd_AddCommandInternal(const char* name, void(__cdecl* function)(), cmd_function_s* cmd);
+	bool DB_IsXAssetDefault(XAssetType type, const char* name);
+	void DB_EnumXAssetEntries(XAssetType type, std::function<void(XAssetEntryPoolEntry*)> callback, bool overrides);
+	ScreenPlacement ScrPlace_GetViewPlacement();
+	Font_s* R_RegisterFont(const char* font);
+	Material* Material_RegisterHandle(const char* material);
+	dvar_s* Dvar_FindVar(const char* dvarName);
 }
 
 #include "symbols.hpp"
