@@ -120,9 +120,9 @@ void Entities::DeleteOldSchoolPickups()
 void Entities::AddRemovedSModels()
 {
 	///todo
-	/*game::qos::GfxWorld* iw3World{};
+	/*game::GfxWorld* iw3World{};
 
-	game::DB_EnumXAssetEntries(game::qos::ASSET_TYPE_GFXWORLD, [&iw3World](game::qos::XAssetEntryPoolEntry* entry)
+	game::DB_EnumXAssetEntries(game::ASSET_TYPE_GFXWORLD, [&iw3World](game::XAssetEntryPoolEntry* entry)
 	{
 		iw3World = entry->entry.asset.header.gfxWorld;
 	}, false);
@@ -133,7 +133,7 @@ void Entities::AddRemovedSModels()
 		{
 			auto drawInst = &iw3World->smodelDrawInsts[index];
 
-			game::qos::vec3_t angles{};
+			game::vec3_t angles{};
 			game::AxisToAngles(&angles, drawInst->placement.axis);
 			const std::string origin = utils::string::va("%f %f %f", drawInst->placement.origin[0], drawInst->placement.origin[1], drawInst->placement.origin[2]);
 			const std::string anglesStr = utils::string::va("%f %f %f", angles[0], angles[1], angles[2]);

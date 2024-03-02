@@ -493,6 +493,107 @@ namespace game
 	static_assert(offsetof(dvar_s, reset) == 48);
 	static_assert(offsetof(dvar_s, domain) == 64);
 
+	typedef int scr_entref_t;
+
+	typedef void(__stdcall* function_t)();
+
+	struct scr_function_t
+	{
+		const char* name;
+		function_t call;
+		int developer;
+	};
+
+	typedef void(__stdcall* method_t)(scr_entref_t);
+
+	struct scr_method_t
+	{
+		const char* name;
+		method_t call;
+		int developer;
+	};
+
+	union VariableUnion
+	{
+		int intValue;
+		float floatValue;
+		unsigned int stringValue;
+		const float* vectorValue;
+		const char* codePosValue;
+		unsigned int pointerValue;
+		struct VariableStackBuffer* stackValue;
+		unsigned int entityOffset;
+	};
+
+	typedef struct
+	{
+		union VariableUnion u;
+		int type;
+	} VariableValue;
+
+	struct function_stack_t
+	{
+		const char* pos;
+		unsigned int localId;
+		unsigned int localVarCount;
+		VariableValue* top;
+		VariableValue* startTop;
+	};
+
+	struct function_frame_t
+	{
+		function_stack_t fs;
+		int topType;
+	};
+
+	struct scrVmPub_t
+	{
+		unsigned int* localVars;
+		VariableValue* maxstack;
+		int function_count;
+		function_frame_t* function_frame;
+		VariableValue* top;
+		unsigned int inparamcount;
+		unsigned int outparamcount;
+		function_frame_t function_frame_start[32];
+		VariableValue stack[2048];
+	};
+
+	enum VariableType
+	{
+		VAR_UNDEFINED = 0x0,
+		VAR_BEGIN_REF = 0x1,
+		VAR_POINTER = 0x1,
+		VAR_STRING = 0x2,
+		VAR_ISTRING = 0x3,
+		VAR_VECTOR = 0x4,
+		VAR_END_REF = 0x5,
+		VAR_FLOAT = 0x5,
+		VAR_INTEGER = 0x6,
+		VAR_CODEPOS = 0x7,
+		VAR_PRECODEPOS = 0x8,
+		VAR_FUNCTION = 0x9,
+		VAR_BUILTIN_FUNCTION = 0xA,
+		VAR_BUILTIN_METHOD = 0xB,
+		VAR_STACK = 0xC,
+		VAR_ANIMATION = 0xD,
+		VAR_DEVELOPER_CODEPOS = 0xE,
+		VAR_INCLUDE_CODEPOS = 0xF,
+		VAR_THREAD_LIST = 0x10,
+		VAR_THREAD = 0x11,
+		VAR_NOTIFY_THREAD = 0x12,
+		VAR_TIME_THREAD = 0x13,
+		VAR_CHILD_THREAD = 0x14,
+		VAR_OBJECT = 0x15,
+		VAR_DEAD_ENTITY = 0x16,
+		VAR_ENTITY = 0x17,
+		VAR_ARRAY = 0x18,
+		VAR_DEAD_THREAD = 0x19,
+		VAR_COUNT = 0x1A,
+		VAR_FREE = 0x1A,
+		VAR_ENDON_LIST = 0x1B,
+	};
+
 	enum keyNum_t
 	{
 		K_NONE = 0x0,

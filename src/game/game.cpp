@@ -127,6 +127,64 @@ namespace game
 		InterlockedDecrement(lock);
 	}
 
+	unsigned int Scr_GetFunctionHandle(const char* filename, const char* funcHandle)
+	{
+		int func_loc = game::game_offset(0x1022E410);
+		unsigned int answer = 0;
+
+		__asm
+		{
+			push funcHandle;
+			mov eax, filename;
+			call func_loc;
+			add esp, 4;
+			mov answer, eax;
+		}
+
+		return answer;
+	}
+
+	void RemoveRefToObject(unsigned int obj)
+	{
+		int func_loc = game::game_offset(0x10230DB0);
+
+		__asm
+		{
+			mov edi, obj;
+			call func_loc;
+		}
+	}
+
+	__int16 Scr_ExecThread(int handle)
+	{
+		int func_loc = game::game_offset(0x1023B960);
+		__int16 answer = 0;
+
+		__asm
+		{
+			mov eax, handle;
+			call func_loc;
+			mov answer, ax;
+		}
+
+		return answer;
+	}
+
+	int Scr_LoadScript(const char* name)
+	{
+		int func_loc = game::game_offset(0x1022E7C0);
+		int answer = 0;
+
+		__asm
+		{
+			mov ecx, name;
+			call func_loc;
+			mov answer, eax;
+		}
+
+		return answer;
+	}
+
 	ScreenPlacement ScrPlace_GetViewPlacement()
 	{
 		return *game::scrPlaceView;

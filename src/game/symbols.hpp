@@ -7,8 +7,10 @@ namespace game
 	WEAK symbol<void(int channel, const char* fmt, ...)> Com_Printf{ game_offset(0x103F6400) };
 	WEAK symbol<void(int channel, const char* fmt)> Conbuf_AppendText{ game_offset(0x102C3CE0) };
 
+	WEAK symbol<void(XAssetType type, void(*)(XAssetHeader, void*), const void* userdata, bool overrides)> DB_EnumXAssets_FastFile{ game_offset(0x103DFCA0) };
 	WEAK symbol<XAssetHeader (XAssetType type, const char* name)> DB_FindXAssetHeader{ game_offset(0x103E2260) };
 
+	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
 
 	WEAK symbol<DWORD> command_id{ game_offset(0x10752C70) };
@@ -37,5 +39,7 @@ namespace game
 	WEAK symbol<int> keyCatchers{ game_offset(0x11A7AB84) };
 	WEAK symbol<PlayerKeyState> playerKeys{ game_offset(0x11263618) };
 	WEAK symbol<ScreenPlacement> scrPlaceView{ game_offset(0x1127BA50) };
+	WEAK symbol<unsigned int> scr_numParams{ game_offset(0x117384A4) };
+	WEAK symbol<scrVmPub_t> scrVmPub{ game_offset(0x11738488) };
 	WEAK symbol<void()> Con_DrawConsole{game_offset(0x10311F70)};
 }

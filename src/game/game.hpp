@@ -44,6 +44,12 @@ namespace game
 	Font_s* R_RegisterFont(const char* font);
 	Material* Material_RegisterHandle(const char* material);
 	dvar_s* Dvar_FindVar(const char* dvarName);
+
+	unsigned int Scr_GetFunctionHandle(const char* filename, const char* funcHandle);
+	void RemoveRefToObject(unsigned int obj);
+	__int16 Scr_ExecThread(int handle);
+
+	int Scr_LoadScript(const char* name);
 }
 
 #include "symbols.hpp"

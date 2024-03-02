@@ -106,78 +106,78 @@ namespace command
 		void post_load() override
 		{
 			scheduler::once([&]()
-			{
-				add("hello", []()
 				{
-					printf("hello from Project: Consolation!\n");
-				});
-
-				/*add("dvarDump", [](const params& argument)
-					{
-						std::string filename;
-						if (argument.size() == 2)
+					add("hello", []()
 						{
-							filename = "iw6x/";
-							filename.append(argument[1]);
-							if (!filename.ends_with(".txt"))
-							{
-								filename.append(".txt");
-							}
-						}
+							printf("hello from Project: Consolation!\n");
+						});
 
-						console::info("================================ DVAR DUMP ========================================\n");
-						for (auto i = 0; i < *game::qos::dvarCount; i++)
+					/*add("dvarDump", [](const params& argument)
 						{
-							auto* dvar = game::qos::sortedDvars[i];
-							if (dvar)
+							std::string filename;
+							if (argument.size() == 2)
 							{
-								if (!filename.empty())
+								filename = "consolation/";
+								filename.append(argument[1]);
+								if (!filename.ends_with(".txt"))
 								{
-									const auto line = std::format("{} \"{}\"\r\n", dvar->name, game::Dvar_ValueToString(dvar, dvar->current));
-									utils::io::write_file(filename, line, i != 0);
+									filename.append(".txt");
 								}
-
-								console::info("%s \"%s\"\n", dvar->name, game::Dvar_ValueToString(dvar, dvar->current));
 							}
-						}
 
-						console::info("\n%i dvars\n", *game::dvarCount);
-						console::info("================================ END DVAR DUMP ====================================\n");
-					});*/
-
-				add("commandDump", [](const params& argument)
-					{
-						console::info("================================ COMMAND DUMP =====================================\n");
-						game::cmd_function_s* cmd = (*game::cmd_functions);
-						std::string filename;
-						/*if (argument.size() == 2)
-						{
-							filename = "Consolation/";
-							filename.append(argument[1]);
-							if (!filename.ends_with(".txt"))
+							console::info("================================ DVAR DUMP ========================================\n");
+							for (auto i = 0; i < *game::dvarCount; i++)
 							{
-								filename.append(".txt");
-							}
-						}*/
-						int i = 0;
-						while (cmd)
-						{
-							if (cmd->name)
-							{
-								/*if (!filename.empty())
+								auto* dvar = game::sortedDvars[i];
+								if (dvar)
 								{
-									const auto line = std::format("{}\r\n", cmd->name);
-									//utils::io::write_file(filename, line, i != 0);
-								}*/
-								console::info("%s\n", cmd->name);
-								i++;
+									if (!filename.empty())
+									{
+										const auto line = std::format("{} \"{}\"\r\n", dvar->name, game::Dvar_ValueToString(dvar, dvar->current));
+										utils::io::write_file(filename, line, i != 0);
+									}
+
+									console::info("%s \"%s\"\n", dvar->name, game::Dvar_ValueToString(dvar, dvar->current));
+								}
 							}
-							cmd = cmd->next;
-						}
-						console::info("\n%i commands\n", i);
-						console::info("================================ END COMMAND DUMP =================================\n");
-					});
-			}, scheduler::main);
+
+							console::info("\n%i dvars\n", *game::dvarCount);
+							console::info("================================ END DVAR DUMP ====================================\n");
+						});*/
+
+					add("commandDump", [](const params& argument)
+						{
+							console::info("================================ COMMAND DUMP =====================================\n");
+							game::cmd_function_s* cmd = (*game::cmd_functions);
+							std::string filename;
+							/*if (argument.size() == 2)
+							{
+								filename = "Consolation/";
+								filename.append(argument[1]);
+								if (!filename.ends_with(".txt"))
+								{
+									filename.append(".txt");
+								}
+							}*/
+							int i = 0;
+							while (cmd)
+							{
+								if (cmd->name)
+								{
+									/*if (!filename.empty())
+									{
+										const auto line = std::format("{}\r\n", cmd->name);
+										//utils::io::write_file(filename, line, i != 0);
+									}*/
+									console::info("%s\n", cmd->name);
+									i++;
+								}
+								cmd = cmd->next;
+							}
+							console::info("\n%i commands\n", i);
+							console::info("================================ END COMMAND DUMP =================================\n");
+						});
+				}, scheduler::main);
 		}
 
 		void pre_destroy() override
