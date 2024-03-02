@@ -4,11 +4,13 @@ A work-in-progress project aimed at extending and improving upon the PC port of 
 
 # Credits 
 
+ - [mjkzy](https://github.com/mjkzy) for working on zones & zonetool, finishing GSC support & providing a base + patches, upkeep
+ - [Lierrmm](https://github.com/Lierrmm) for zones & zonetool, upkeep, patches
+ - [JerryALT](https://github.com/JerryALT) for lots of code snippets from [IW3SP-MOD](https://github.com/JerryALT/iw3sp_mod)
+ - [xoxor4d](https://github.com/xoxor4d) for another big lot of code snippets from [iw3xo](https://github.com/xoxor4d/iw3xo-dev)
  - [Rackover](https://github.com/Rackover) for IW3/IW4 research & [iw3x-port](https://github.com/iw4x/iw3x-port)
  - [MrReeko](https://github.com/MrReekoFTWxD) for initial GSC injection
- - [ujicos](https://github.com/ujicos) for initially starting the project, wiith small additions every now and then
- - [mjkzy](https://github.com/mjkzy) for working on zones & zonetool
- - [Lierrmm](https://github.com/Lierrmm) for working on zones & zonetool
+ - [ujicos](https://github.com/ujicos) for initially starting the project, with additions & general upkeep
  
 
 ## Fun facts
