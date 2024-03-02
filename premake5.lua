@@ -86,8 +86,8 @@ end
 
 dependencies.load()
 
-workspace "qos-exp"
-	startproject "qos-exp"
+workspace "consolation-client"
+	startproject "consolation-client"
 	location "./build"
 	objdir "%{wks.location}/obj/%{cfg.buildcfg}"
 	targetdir "%{wks.location}/bin/%{cfg.buildcfg}"
