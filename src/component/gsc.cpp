@@ -25,7 +25,7 @@ namespace gsc
 		std::unordered_map<const char*, const char*> replaced_functions;
 		const char* replaced_pos = nullptr;
 
-		std::unordered_map<std::string, bool> loaded_scripts;
+		std::unordered_map<std::string, game::RawFile*> loaded_scripts;
 
 		game::method_t player_get_method_stub(const char** name)
 		{
@@ -54,26 +54,24 @@ namespace gsc
 		{
 			const auto custom_script_name = name + ".gsc"s;
 
-			loaded_scripts[custom_script_name] = false;
 			auto script = game::Scr_LoadScript(name.data());
 			if (!script)
 			{
 				return;
 			}
-			loaded_scripts[custom_script_name] = true; // loaded
 
 			const auto main_handle = game::Scr_GetFunctionHandle(name.data(), "main");
 			const auto init_handle = game::Scr_GetFunctionHandle(name.data(), "init");
 
 			if (main_handle)
 			{
-				console::info("Loaded '%s::main'\n", name.data());
+				console::debug("Loaded '%s::main'\n", name.data());
 				main_handles[name] = main_handle;
 			}
 
 			if (init_handle)
 			{
-				console::info("Loaded '%s::init'\n", name.data());
+				console::debug("Loaded '%s::init'\n", name.data());
 				init_handles[name] = init_handle;
 			}
 		}
@@ -104,9 +102,6 @@ namespace gsc
 
 		void load_gametype_script_stub()
 		{
-			main_handles.clear();
-			init_handles.clear();
-
 			utils::hook::invoke<void>(game::game_offset(0x101A8A70));
 
 			for (const auto& path : filesystem::get_search_paths())
@@ -136,6 +131,77 @@ namespace gsc
 			}
 
 			utils::hook::invoke<void>(game::game_offset(0x10179920));
+		}
+
+		bool read_raw_script_file(const std::string& name, std::string* data)
+		{
+			if (filesystem::read_file(name, data))
+			{
+				return true;
+			}
+
+			/*
+			const auto* name_str = name.data();
+			if (game::DB_XAssetExists(game::ASSET_TYPE_RAWFILE, name_str) &&
+				!game::DB_IsXAssetDefault(game::ASSET_TYPE_RAWFILE, name_str))
+			{
+				const auto asset = game::DB_FindXAssetHeader(game::ASSET_TYPE_RAWFILE, name_str, false);
+				const auto len = game::DB_GetRawFileLen(asset.rawfile);
+				data->resize(len);
+				game::DB_GetRawBuffer(asset.rawfile, data->data(), len);
+				if (len > 0)
+				{
+					data->pop_back();
+				}
+
+				return true;
+			}
+			*/
+
+			return false;
+		}
+
+		game::RawFile* load_custom_script(const char* file_name)
+		{
+			if (const auto itr = loaded_scripts.find(file_name); itr != loaded_scripts.end())
+			{
+				return itr->second;
+			}
+
+			std::string source_buffer{};
+			if (!read_raw_script_file(file_name, &source_buffer) || source_buffer.empty())
+			{
+				return nullptr;
+			}
+
+			const auto rawfile_ptr = utils::memory::allocate<game::RawFile>();
+			rawfile_ptr->name = file_name;
+
+			auto buffer_size = source_buffer.size();
+			rawfile_ptr->buffer = static_cast<char*>(utils::memory::allocate(buffer_size + 1));
+			std::memcpy(rawfile_ptr->buffer, source_buffer.data(), buffer_size);
+
+			loaded_scripts[file_name] = rawfile_ptr;
+
+			console::debug("Loaded custom gsc '%s\n", file_name);
+
+			return rawfile_ptr;
+		}
+
+		game::RawFile* find_script(game::XAssetType type, const char* name, int allow_create_default)
+		{
+			auto* script = load_custom_script(name);
+			if (script)
+			{
+				return script;
+			}
+
+			const auto rawfile = game::DB_FindXAssetHeader_Internal(type, name, allow_create_default).rawfile;
+#ifdef GSC_DUMPING
+			utils::io::write_file(utils::string::va("gsc_dump/%s", name), rawfile->buffer);
+			console::debug("Dumped %s\n", name);
+#endif
+			return rawfile;
 		}
 
 		const char* get_code_pos_for_param(int index)
@@ -204,44 +270,23 @@ namespace gsc
 				inc edx
 
 				jmp loc_1
-			loc_1:
+				loc_1 :
 				cmp eax, 0x86
 
-				mov dword_116377F8, eax
-				mov dword ptr qword_11738440, edx
+					mov dword_116377F8, eax
+					mov dword ptr qword_11738440, edx
 
-				push jmp_back_to_10237866
-				retn
-			set_pos:
+					push jmp_back_to_10237866
+					retn
+					set_pos :
 				mov edx, replaced_pos
-				mov replaced_pos, 0
+					mov replaced_pos, 0
 
-				movzx eax, byte ptr[edx]
-				inc edx
+					movzx eax, byte ptr[edx]
+					inc edx
 
-				jmp loc_1
+					jmp loc_1
 			}
-		}
-
-		utils::hook::detour scr_add_source_buffer_hook;
-		char* scr_add_source_buffer_stub(const char* file_name, int code_pos)
-		{
-			if (!loaded_scripts.contains(file_name))
-			{
-				return scr_add_source_buffer_hook.invoke<char*>(file_name, code_pos);
-			}
-
-			std::string data;
-			if (filesystem::read_file(file_name, &data))
-			{
-				char* new_data = new char[data.size() + 1];
-				std::memcpy(new_data, data.data(), data.size());
-				new_data[data.size()] = '\0';
-				return new_data;
-			}
-
-			console::error("Failed to get raw buffer for script '%s'\n", file_name);
-			return nullptr;
 		}
 	}
 
@@ -272,42 +317,42 @@ namespace gsc
 			//utils::hook::call(game::game_offset(0x10197711), player_get_method_stub);
 			//utils::hook::call(game::game_offset(0x10229B64), scr_get_function_stub);
 
-			// load custom scripts
+			// load custom scripts + override scripts
 			utils::hook::call(game::game_offset(0x101A8ED4), load_gametype_script_stub); // load our custom gsc
 
 			// execute handles
 			utils::hook::call(game::game_offset(0x101AD1FA), g_load_structs_stub); // execute main handles (Scr_LoadGameType is inlined)
 			utils::hook::call(game::game_offset(0x101AD27A), save_reigstered_weapons_stub); // execute init handles (Scr_StartupGameType is inlined)
 
-			// manually load buffer for custom scripts since stuff seems bonk?? (probably a proper way to do this)
-			scr_add_source_buffer_hook.create(game::game_offset(0x1022DEA0), scr_add_source_buffer_stub);
+			// hook xasset function to return our own scripts
+			utils::hook::call(game::game_offset(0x1022DC10), find_script);
 
 			// hook vm_execute to redirect function calls
 			//utils::hook::jump(game::game_offset(0x1023784C), vm_execute_stub);
 
-			/*
 			add_function("replacefunc", []()
-			{
-				if (*game::scr_numParams != 2)
 				{
-					//game::Scr_Error("replacefunc: two parameters are required.\n");
-					console::error("replacefunc: two parameters are required.\n");
-					return;
-				}
+					if (game::Scr_GetNumParam() != 2)
+					{
+						//game::Scr_Error("replacefunc: two parameters are required.\n");
+						console::error("replacefunc: two parameters are required.\n");
+						return;
+					}
 
-				const auto what = get_code_pos_for_param(0);
-				const auto with = get_code_pos_for_param(1);
+					const auto what = get_code_pos_for_param(0);
+					const auto with = get_code_pos_for_param(1);
 
-				set_replaced_pos(what, with);
-			});
-			*/
+					set_replaced_pos(what, with);
+				});
 
 			// reset replaced functions on game shutdown
 			scheduler::on_shutdown([]
-			{
-				replaced_functions.clear();
-				loaded_scripts.clear();
-			});
+				{
+					main_handles.clear();
+					init_handles.clear();
+					replaced_functions.clear();
+					loaded_scripts.clear();
+				});
 		}
 	};
 }

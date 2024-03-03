@@ -360,6 +360,14 @@ namespace console
 					new_result.erase(0, 2); // example: '^1'
 				}
 
+				if (std::string(result).contains("Unable to")
+					|| std::string(result).contains("Missing asset")
+					|| std::string(result).contains("Couldn't find")
+					|| std::string(result).contains("Unknown command"))
+				{
+					type = con_type_warning; // QoL stuff i guess?
+				}
+
 				dispatch_message(type, new_result);
 			}
 		}
@@ -474,9 +482,9 @@ namespace console
 		{
 			// redirect console output to our console
 			printf_hook.create(printf, printf_stub);
-#ifndef DEBUG
+//#ifndef DEBUG
 			com_printf_hook.create(game::game_offset(0x103F6400), com_printf_stub);
-#endif
+//#endif
 
 			//CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(showDevConsole), nullptr, 0, 0);
 

@@ -50,6 +50,9 @@ namespace game
 	__int16 Scr_ExecThread(int handle);
 
 	int Scr_LoadScript(const char* name);
+	dvar_s* Dvar_RegisterBool(const char* name, bool value, int flags, const char* desc);
+
+	unsigned int Scr_GetNumParam();
 }
 
 #include "symbols.hpp"
