@@ -93,8 +93,8 @@ namespace patches
 			// support xliveless emulator
 #ifdef XLIVELESS
 			// bypass playlist + stats
-			//utils::hook::jump(game::game_offset(0x10240B30), ret_one);
-			//utils::hook::jump(game::game_offset(0x10240A30), ret_one);
+			utils::hook::jump(game::game_offset(0x10240B30), ret_one);
+			utils::hook::jump(game::game_offset(0x10240A30), ret_one);
 
 			// allow map loading
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
