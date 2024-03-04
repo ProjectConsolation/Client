@@ -10,6 +10,9 @@ namespace game
 	WEAK symbol<void(XAssetType type, void(*)(XAssetHeader, void*), const void* userdata, bool overrides)> DB_EnumXAssets_FastFile{ game_offset(0x103DFCA0) };
 	WEAK symbol<XAssetHeader (XAssetType type, const char* name)> DB_FindXAssetHeader{ game_offset(0x103E2260) };
 	WEAK symbol<XAssetHeader(XAssetType type, const char* name, int create_default)> DB_FindXAssetHeader_Internal{ game_offset(0x103E1EE0) };
+	//IW3SP-MOD
+	typedef const char* (*DB_XAssetGetNameHandler_t)(game::XAssetHeader* asset);
+	extern DB_XAssetGetNameHandler_t* DB_XAssetGetNameHandler;
 
 	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
@@ -36,6 +39,8 @@ namespace game
 
 	WEAK symbol<int(char* dvar)> generateHashValue{ game_offset(0x10275260) };
 	WEAK symbol<dvar_s*> dvarHashTable{game_offset(0x1149FCE0)};
+
+	WEAK symbol<const char*> g_assetNames{ game_offset(0x1055E3D8) };
 
 	WEAK symbol<int> keyCatchers{ game_offset(0x11A7AB84) };
 	WEAK symbol<PlayerKeyState> playerKeys{ game_offset(0x11263618) };

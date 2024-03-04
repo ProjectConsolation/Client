@@ -421,31 +421,11 @@ namespace console
 		dispatch_message(type, result);
 	}
 
-	void conPrint(int channel, const char* fmt, ...)
+	bool match_compare(const std::string& input, const std::string& text, const bool exact)
 	{
-		va_list ap;
-		char buf[0x4000];
-
-		va_start(ap, fmt);
-		vsnprintf(buf, sizeof(buf), fmt, ap);
-		va_end(ap);
-
-		if (std::string(buf).find("SCALEFORM") != std::string::npos)
-		{
-			return; //Do not remove this, this filters out and output with "SCALEFORM" in it, as it is unnecessary
-		}
-
-		if (std::string(buf).find("XUserReadProfileSettings took 0ms") != std::string::npos)
-		{
-			return; //filter this as it spams, and isnt the real time it takes
-		}
-
-		if (std::string(buf).size() > 50)
-		{
-			buf[0] = '\0';
-		}
-
-		game::Conbuf_AppendText(0, buf); //Prints the output
+		if (exact && text == input) return true;
+		if (!exact && text.find(input) != std::string::npos) return true;
+		return false;
 	}
 
 	void showDevConsole()

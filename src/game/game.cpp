@@ -68,6 +68,18 @@ namespace game
 		}
 	}
 
+	//credits to IW3SP--MOD
+	DB_XAssetGetNameHandler_t* DB_XAssetGetNameHandler = reinterpret_cast<DB_XAssetGetNameHandler_t*>(game_offset(0x1055E470)); //why the fuck do i need this here specifically?
+
+	const char* DB_GetXAssetName(game::XAsset* asset)
+	{
+		if (!asset) return "";
+
+		assert(asset->header.data);
+
+		return game::DB_XAssetGetNameHandler[asset->type](&asset->header);
+	}
+
 	bool DB_IsXAssetDefault(XAssetType type, const char* name)
 	{
 		int func_loc = game_offset(0x103DFC00);

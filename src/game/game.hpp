@@ -40,6 +40,7 @@ namespace game
 	void Cmd_AddCommandInternal(const char* name, void(__cdecl* function)(), cmd_function_s* cmd);
 	bool DB_IsXAssetDefault(XAssetType type, const char* name);
 	void DB_EnumXAssetEntries(XAssetType type, std::function<void(XAssetEntryPoolEntry*)> callback, bool overrides);
+	const char* DB_GetXAssetName(game::XAsset* asset);
 	ScreenPlacement ScrPlace_GetViewPlacement();
 	Font_s* R_RegisterFont(const char* font);
 	Material* Material_RegisterHandle(const char* material);

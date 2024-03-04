@@ -8,6 +8,7 @@
 #include <utils/memory.hpp>
 #include <utils/string.hpp>
 #include <utils/io.hpp>
+#include "fastfiles.hpp"
 
 namespace command
 {
@@ -176,6 +177,45 @@ namespace command
 							}
 							console::info("\n%i commands\n", i);
 							console::info("================================ END COMMAND DUMP =================================\n");
+						});
+					add("listassetpool", [](const params& params)
+						{
+							if (params.size() < 2)
+							{
+								console::info("listassetpool <poolnumber> [filter]: list all the assets in the specified pool\n");
+
+								for (auto i = 0; i < game::XAssetType::ASSET_TYPE_COUNT; i++)
+								{
+									console::info("ASSET; %d %s\n", i, game::g_assetNames[i]);
+								}
+							}
+							else
+							{
+								const auto type = static_cast<game::XAssetType>(atoi(params.get(1)));
+								if (type < 0 || type >= game::XAssetType::ASSET_TYPE_COUNT)
+								{
+									console::info("Invalid pool passed must be between [0, %d]\n", game::XAssetType::ASSET_TYPE_COUNT - 1);
+									return;
+								}
+
+								console::info("Listing assets in pool %s\n", game::g_assetNames[type]);
+
+								auto total_assets = 0;
+								const std::string filter = params.get(2);
+
+								fastfiles::enum_assets(type, [type, filter](const game::XAssetHeader header)
+									{
+										auto asset = game::XAsset{ type, header };
+										const auto* const asset_name = game::DB_GetXAssetName(&asset);
+
+										if (!filter.empty() && !console::match_compare(filter, asset_name, false))
+										{
+											return;
+										}
+
+										console::info("%s\n", asset_name);
+									}, true);
+							}
 						});
 				}, scheduler::main);
 		}
