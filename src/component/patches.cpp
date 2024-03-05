@@ -50,6 +50,29 @@ namespace patches
 
 			return link_xasset_entry_hook.invoke<game::XAssetEntry*>(entry, override);
 		}
+
+
+		utils::hook::detour BG_GetPlayerJumpHeight_hook;
+		float BG_GetPlayerJumpHeight_stub(int a1)
+		{
+			auto jump_height = game::Dvar_FindVar("jump_height");
+
+			if (!jump_height)
+				return BG_GetPlayerJumpHeight_hook.invoke<float>(a1);
+
+			return jump_height->current.value;
+		}
+
+		utils::hook::detour BG_GetPlayerSpeed_hook;
+		float BG_GetPlayerSpeed_stub(int a1)
+		{
+			auto g_speed = game::Dvar_FindVar("g_speed");
+
+			if (!g_speed)
+				return BG_GetPlayerSpeed_hook.invoke<float>(a1);
+
+			return g_speed->current.value;
+		}
 	}
 
 	class component final : public component_interface
@@ -84,6 +107,10 @@ namespace patches
 
 			// LOD Scaling fix: Probably best way is to re-register the dvar and accept 0 as minimum value
 			// 0x1054688 + 10 (dvar pointer) --> set to 0 (r_lodScale)
+
+			// various hooks to return dvar functionality, thanks to Liam
+			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
+			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
 
 #ifdef DEBUG
 			// hook linkxassetentry to debug stuff
