@@ -9,6 +9,7 @@
 #include <utils/string.hpp>
 #include <utils/io.hpp>
 #include "fastfiles.hpp"
+#include <game/dvars.hpp>
 
 namespace command
 {
@@ -113,38 +114,39 @@ namespace command
 							printf("hello from Project: Consolation!\n");
 						});
 
-					/*add("dvarDump", [](const params& argument)
+					add("dvarDump", [](const params& argument)
+					{
+						std::string filename;
+						if (argument.size() == 2)
 						{
-							std::string filename;
-							if (argument.size() == 2)
+							filename = "consolation/";
+							filename.append(argument[1]);
+							if (!filename.ends_with(".txt"))
 							{
-								filename = "consolation/";
-								filename.append(argument[1]);
-								if (!filename.ends_with(".txt"))
-								{
-									filename.append(".txt");
-								}
+								filename.append(".txt");
 							}
+						}
 
-							console::info("================================ DVAR DUMP ========================================\n");
-							for (auto i = 0; i < *game::dvarCount; i++)
+						console::info("================================ DVAR DUMP ========================================\n");
+						for (auto i = 0; i < *game::dvarCount; i++)
+						{
+							auto* dvar = game::sortedDvars[i];
+							
+							if (dvar)
 							{
-								auto* dvar = game::sortedDvars[i];
-								if (dvar)
+								if (!filename.empty())
 								{
-									if (!filename.empty())
-									{
-										const auto line = std::format("{} \"{}\"\r\n", dvar->name, game::Dvar_ValueToString(dvar, dvar->current));
-										utils::io::write_file(filename, line, i != 0);
-									}
-
-									console::info("%s \"%s\"\n", dvar->name, game::Dvar_ValueToString(dvar, dvar->current));
+									const auto line = std::format("{} \"{}\"\r\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
+									utils::io::write_file(filename, line, i != 0);
 								}
-							}
 
-							console::info("\n%i dvars\n", *game::dvarCount);
-							console::info("================================ END DVAR DUMP ====================================\n");
-						});*/
+								console::info("%s \"%s\"\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
+							}
+						}
+
+						console::info("\n%i dvars\n", *game::dvarCount);
+						console::info("================================ END DVAR DUMP ====================================\n");
+					});
 
 					add("commandDump", [](const params& argument)
 						{

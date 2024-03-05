@@ -32,7 +32,6 @@ namespace game
 		R_AddCmdDrawText{ game_offset(0x103C02B0) };
 
 	WEAK symbol<int(const char* text, int maxChars, Font_s* font)> R_TextWidth{ game_offset(0x1037CFA0) };
-	WEAK symbol<const char* (dvar_s* dvar, DvarValue value)> Dvar_ValueToString{ game_offset(0x10274F80) };
 
 	WEAK symbol <dvar_s*(const char* dvarName, DvarType type, unsigned short flags, DvarValue value, DvarLimits domain)>
 		Dvar_RegisterNew{ game_offset(0x10276980) };
@@ -48,4 +47,6 @@ namespace game
 	WEAK symbol<unsigned int> scr_numParams{ game_offset(0x117384A4) };
 	WEAK symbol<scrVmPub_t> scrVmPub{ game_offset(0x11738488) };
 	WEAK symbol<void()> Con_DrawConsole{game_offset(0x10311F70)};
+	WEAK symbol<int> dvarCount{ game_offset(0x1149FCC8) };
+	WEAK symbol<dvar_s*> sortedDvars{ game_offset(0x1149FCD4) };
 }

@@ -143,4 +143,20 @@ namespace dvars
 		domain.vector.min = min_value;
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, value, domain);
 	}
+
+	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value)
+	{
+		unsigned int _func = game::game_offset(0x10274F80);
+		char* result;
+		_asm
+		{
+			push value;
+			mov ecx, dvar;
+			call _func;
+			add esp, 4;
+			mov result, eax;
+		}
+
+		return result;
+	}
 }
