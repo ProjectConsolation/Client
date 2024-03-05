@@ -149,7 +149,7 @@ namespace dvars
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, value, domain);
 	}
 
-	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, const char* description, int min_value, int max_value, std::uint16_t flags)
+	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, const char* description, std::uint16_t flags)
 	{
 		game::DvarValue value{};
 		value.enabled = 0;
