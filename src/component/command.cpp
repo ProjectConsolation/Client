@@ -109,9 +109,9 @@ namespace command
 		{
 			scheduler::once([&]()
 				{
-					add("hello", []()
+					add("marco", []()
 					{
-						printf("hello from Project: Consolation!\n");
+						printf("polo\n");
 					});
 
 					add("dvarDump", [](const params& argument)

@@ -22,6 +22,11 @@ namespace dvars
 	game::dvar_s* con_inputDvarInactiveValueColor = nullptr;
 	game::dvar_s* con_inputCmdMatchColor = nullptr;
 
+	/*
+	game::dvar_s* r_fullscreen = nullptr; //lazy to check if this exists?
+	game::dvar_s* r_borderless = nullptr;
+	*/
+
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain)
 	{
 		if (domain.vector.min == -FLT_MAX)
@@ -142,6 +147,17 @@ namespace dvars
 		domain.vector.max = max_value;
 		domain.vector.min = min_value;
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, value, domain);
+	}
+
+	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, const char* description, int min_value, int max_value, std::uint16_t flags)
+	{
+		game::DvarValue value{};
+		value.enabled = 0;
+
+		game::DvarLimits domain{};
+		domain.integer.max = 1;
+		domain.integer.min = 0;
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, value, domain);
 	}
 
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value)

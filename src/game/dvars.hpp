@@ -25,9 +25,15 @@ namespace dvars
 	extern game::dvar_s* con_inputDvarInactiveValueColor;
 	extern game::dvar_s* con_inputCmdMatchColor;
 
+	/*
+	extern game::dvar_s* r_fullscreen;
+	extern game::dvar_s* r_borderless;
+	*/
+
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain);
 	std::string dvar_get_domain(const game::dvar_type type, const game::DvarLimits& domain);
 
 	game::dvar_s* Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags);
+	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, const char* description, int min_value, int max_value, std::uint16_t flags);
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value);
 }

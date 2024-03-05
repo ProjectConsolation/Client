@@ -11,8 +11,8 @@
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
 
-#define FORCE_BORDERLESS // still needs a few things fixed
-#define XLIVELESS
+#define FORCE_BORDERLESS // still needs a few things fixed - 3rd of march, does it still?
+//#define XLIVELESS
 
 namespace patches
 {
