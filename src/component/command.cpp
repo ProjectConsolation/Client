@@ -109,9 +109,9 @@ namespace command
 		{
 			scheduler::once([&]()
 				{
-					add("hello", []()
+					add("marco", []()
 					{
-						printf("hello from Project: Consolation!\n");
+						printf("polo\n");
 					});
 
 					add("dvarDump", [](const params& argument)
@@ -134,6 +134,7 @@ namespace command
 							
 							if (dvar)
 							{
+								// TODO: fix this, there's a empty dvar (or multiple) caused string format crash which crashes game
 								if (!filename.empty())
 								{
 									try 

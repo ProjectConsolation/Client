@@ -160,6 +160,29 @@ namespace dvars
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, value, domain);
 	}
 
+	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, int value_default, const char* description, std::uint16_t flags)
+	{
+		game::DvarValue value{};
+		value.enabled = value_default;
+
+		game::DvarLimits domain{};
+		domain.integer.max = 1;
+		domain.integer.min = 0;
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, value, domain);
+	}
+
+	game::dvar_s* Dvar_RegisterInt(const char* dvar_name, int value_default, int min, int max, std::uint16_t flags)
+	{
+		game::DvarValue value{};
+		value.integer = value_default;
+
+		game::DvarLimits domain{};
+		domain.integer.max = INT_MAX;
+		domain.integer.min = 0;
+
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_INT, flags, value, domain);
+	}
+
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value)
 	{
 		unsigned int _func = game::game_offset(0x10274F80);

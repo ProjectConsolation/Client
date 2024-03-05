@@ -2,9 +2,6 @@
 
 namespace console
 {
-	HWND get_window();
-	void set_title(std::string title);
-	void set_size(int width, int height);
 	bool match_compare(const std::string& input, const std::string& text, const bool exact);
 
 	enum console_type
