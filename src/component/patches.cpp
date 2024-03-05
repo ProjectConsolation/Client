@@ -143,7 +143,7 @@ namespace patches
 			// 0x1054688 + 10 (dvar pointer) --> set to 0 (r_lodScale)
 
 			// various hooks to return dvar functionality, thanks to Liam
-			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
+			//BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
 			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
 
 #ifdef DEBUG
