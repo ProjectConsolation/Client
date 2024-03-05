@@ -83,7 +83,7 @@ namespace patches
 				}
 			}
 
-			if (type == game::DVAR_TYPE_FLOAT)
+			/*if (type == game::DVAR_TYPE_FLOAT)
 			{
 				auto* var = find_dvar(dvars::overrides::register_float_overrides, dvarName);
 				if (var)
@@ -93,7 +93,7 @@ namespace patches
 					domain.value.max = var->max;
 					flags = var->flags;
 				}
-			}
+			}*/
 
 			return dvar_registernew_hook.invoke<game::dvar_s*>(dvarName, type, flags, desc, unk, value, domain);
 		}
