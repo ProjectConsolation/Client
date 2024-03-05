@@ -29,6 +29,8 @@ namespace dvars
 	std::string dvar_get_domain(const game::dvar_type type, const game::DvarLimits& domain);
 
 	game::dvar_s* Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags);
-	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, const char* description, std::uint16_t flags);
+	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, int value_default, const char* description, std::uint16_t flags);
+	game::dvar_s* Dvar_RegisterInt(const char* dvar_name, int value_default, int min, int max, std::uint16_t flags);
+
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value);
 }
