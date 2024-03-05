@@ -89,14 +89,14 @@ namespace scheduler
 		//utils::hook::detour r_end_frame_hook;
 		//utils::hook::detour g_run_frame_hook;
 		utils::hook::detour main_frame_hook;
-		//utils::hook::detour g_shutdown_game_hook;
+		utils::hook::detour g_shutdown_game_hook;
 
 		std::vector<std::function<void()>> shutdown_callbacks;
 
 		void execute(const pipeline type)
 		{
 			assert(type >= 0 && type < pipeline::count);
-			pipelines[type].execute();
+			pipelines[type].execute(); //unused?
 		}
 
 		void main_frame_stub()
@@ -109,7 +109,7 @@ namespace scheduler
 			});
 		}
 
-		/*
+		
 		void g_shutdown_game_stub(const int free_scripts)
 		{
 			g_shutdown_game_hook.invoke<void>(free_scripts);
@@ -119,7 +119,7 @@ namespace scheduler
 				callback();
 			}
 		}
-		*/
+		
 	}
 
 	void on_shutdown(const std::function<void()>& callback)
@@ -181,7 +181,7 @@ namespace scheduler
 			//r_end_frame_hook.create(0x68A2AC, scheduler::r_end_frame_stub);
 			main_frame_hook.create(game::game_offset(0x103F7470), scheduler::main_frame_stub); // may be wrong?
 
-			//g_shutdown_game_hook.create(0x4FC800, g_shutdown_game_stub);
+			g_shutdown_game_hook.create(game::game_offset(0x101AB0B0), g_shutdown_game_stub);
 		}
 
 		void pre_destroy() override
