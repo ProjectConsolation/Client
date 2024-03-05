@@ -5,11 +5,11 @@
 #include "scheduler.hpp"
 
 #include "game/game.hpp"
-
-#include <mmeapi.h>
+#include "game/dvars.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
+#include <unordered_set>
 
 #define FORCE_BORDERLESS // still needs a few things fixed
 #define XLIVELESS
@@ -49,6 +49,41 @@ namespace patches
 			}
 
 			return link_xasset_entry_hook.invoke<game::XAssetEntry*>(entry, override);
+		}
+
+		template <typename T>
+		T* find_dvar(std::unordered_map<std::string, T>& map, const std::string& name)
+		{
+			auto i = map.find(name);
+			if (i != map.end())
+			{
+				return &i->second;
+			}
+
+			return nullptr;
+		}
+
+		bool find_dvar(std::unordered_set<std::string>& set, const std::string& name)
+		{
+			return set.find(name) != set.end();
+		}
+
+		utils::hook::detour dvar_registernew_hook;
+		game::dvar_s* Dvar_RegisterNew_Stub(const char* dvarName, game::DvarType type, unsigned short flags, char* desc, int unk, game::DvarValue value, game::DvarLimits domain)
+		{
+			if (type == game::DVAR_TYPE_INT)
+			{
+				auto* var = find_dvar(dvars::overrides::register_int_overrides, dvarName);
+				if (var)
+				{
+					value.integer = var->value;
+					domain.integer.max = var->max;
+					domain.integer.min = var->min;
+					flags = var->flags;
+				}
+			}
+
+			return dvar_registernew_hook.invoke<game::dvar_s*>(dvarName, type, flags, desc, unk, value, domain);
 		}
 	}
 
@@ -99,6 +134,12 @@ namespace patches
 			// allow map loading
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
 #endif
+			scheduler::once([]()
+			{
+				dvars::overrides::register_int("g_speed", 500, 0, 1000, game::dvar_flags::saved);
+				dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
+			}, scheduler::main);
+
 		}
 	};
 }

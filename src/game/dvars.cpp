@@ -130,6 +130,22 @@ namespace dvars
 		}
 	}
 
+
+	namespace overrides
+	{
+		std::unordered_map<std::string, dvar_int> register_int_overrides;
+
+		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags)
+		{
+			dvar_int values{};
+			values.value = value;
+			values.max = max;
+			values.min = min;
+			values.flags = flags;
+			register_int_overrides[name] = std::move(values);
+		}
+	}
+
 	game::dvar_s* Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags) 
 	{
 		game::DvarValue value{};

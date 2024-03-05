@@ -30,4 +30,62 @@ namespace dvars
 
 	game::dvar_s* Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags);
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value);
+
+	namespace overrides
+	{
+		struct dvar_base
+		{
+			unsigned int flags{};
+		};
+
+		struct dvar_bool : dvar_base
+		{
+			bool value{};
+		};
+
+		struct dvar_float : dvar_base
+		{
+			float value{};
+			float min{};
+			float max{};
+		};
+
+		struct dvar_vector2 : dvar_base
+		{
+			float x{};
+			float y{};
+			float min{};
+			float max{};
+		};
+
+		struct dvar_vector3 : dvar_base
+		{
+			float x{};
+			float y{};
+			float z{};
+			float min{};
+			float max{};
+		};
+
+		struct dvar_enum : dvar_base
+		{
+			const char* const* value_list{};
+			int default_index{};
+		};
+
+		struct dvar_int : dvar_base
+		{
+			int value{};
+			int min{};
+			int max{};
+		};
+
+		struct dvar_string : dvar_base
+		{
+			std::string value{};
+		};
+
+		extern std::unordered_map<std::string, dvar_int> register_int_overrides;
+		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags);
+	}
 }
