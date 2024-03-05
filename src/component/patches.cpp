@@ -162,7 +162,7 @@ namespace patches
 #endif
 			scheduler::once([]()
 			{
-				dvars::overrides::register_int("g_speed", 500, 0, 1000, game::dvar_flags::saved);
+				dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
 				dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 			}, scheduler::main);
 
