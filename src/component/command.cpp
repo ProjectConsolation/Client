@@ -110,9 +110,9 @@ namespace command
 			scheduler::once([&]()
 				{
 					add("hello", []()
-						{
-							printf("hello from Project: Consolation!\n");
-						});
+					{
+						printf("hello from Project: Consolation!\n");
+					});
 
 					add("dvarDump", [](const params& argument)
 					{
@@ -120,7 +120,7 @@ namespace command
 						if (argument.size() == 2)
 						{
 							filename = "consolation/";
-							filename.append(argument[1]);
+							filename.append(argument.get(1));
 							if (!filename.ends_with(".txt"))
 							{
 								filename.append(".txt");
@@ -136,11 +136,25 @@ namespace command
 							{
 								if (!filename.empty())
 								{
-									const auto line = std::format("{} \"{}\"\r\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
-									utils::io::write_file(filename, line, i != 0);
+									try 
+									{
+										const auto line = std::format("{} \"{}\"\r\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
+										utils::io::write_file(filename, line, i != 0);
+									}
+									catch (...)
+									{
+
+									}
 								}
 
-								console::info("%s \"%s\"\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
+								try
+								{
+									console::info("%s \"%s\"\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
+								}
+								catch (...)
+								{
+
+								}
 							}
 						}
 
@@ -156,7 +170,7 @@ namespace command
 							if (argument.size() == 2)
 							{
 								filename = "consolation/";
-								filename.append(argument[1]);
+								filename.append(argument.get(1));
 								if (!filename.ends_with(".txt"))
 								{
 									filename.append(".txt");
