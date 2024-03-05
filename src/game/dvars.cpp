@@ -22,11 +22,6 @@ namespace dvars
 	game::dvar_s* con_inputDvarInactiveValueColor = nullptr;
 	game::dvar_s* con_inputCmdMatchColor = nullptr;
 
-	/*
-	game::dvar_s* r_fullscreen = nullptr; //lazy to check if this exists?
-	game::dvar_s* r_borderless = nullptr;
-	*/
-
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain)
 	{
 		if (domain.vector.min == -FLT_MAX)
