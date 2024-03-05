@@ -134,6 +134,7 @@ namespace dvars
 	namespace overrides
 	{
 		std::unordered_map<std::string, dvar_int> register_int_overrides;
+		std::unordered_map<std::string, dvar_float> register_float_overrides;
 
 		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags)
 		{
@@ -143,6 +144,16 @@ namespace dvars
 			values.min = min;
 			values.flags = flags;
 			register_int_overrides[name] = std::move(values);
+		}
+
+		void register_float(const std::string& name, const float value, const float min, const float max, const unsigned int flags)
+		{
+			dvar_float values{};
+			values.value = value;
+			values.min = min;
+			values.max = max;
+			values.flags = flags;
+			register_float_overrides[name] = std::move(values);
 		}
 	}
 
