@@ -151,9 +151,6 @@ namespace patches
 			utils::hook::nop(game::game_offset(0x102E1284), 0x05);
 			// nop above call to Com_Printf for "unknown UI script %s in block:\n%s\n"
 
-			// LOD Scaling fix: Probably best way is to re-register the dvar and accept 0 as minimum value
-			// 0x1054688 + 10 (dvar pointer) --> set to 0 (r_lodScale)
-
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
 			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
@@ -173,12 +170,14 @@ namespace patches
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
 #endif
 
+			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
+
+			dvars::overrides::register_float("r_lodScale", 0.0, 0, 3, game::dvar_flags::saved); //Doesnt want to be set
+			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("jump_height", 39.0, 0, 99999, game::dvar_flags::saved);
-			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);	
-			dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved);
-			dvars::overrides::register_float("ui_smallFont", 0, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("ui_bigFont", 0, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("ui_extraBigFont", 0, 0, 1, game::dvar_flags::saved);
 			dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 		}
 	};

@@ -22,6 +22,8 @@ namespace dvars
 	game::dvar_s* con_inputDvarInactiveValueColor = nullptr;
 	game::dvar_s* con_inputCmdMatchColor = nullptr;
 
+	// TODO: remake: cg_drawVersion, cg_overheadNamesFont
+
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain)
 	{
 		if (domain.vector.min == -FLT_MAX)
