@@ -83,18 +83,6 @@ namespace patches
 				}
 			}
 
-			if (type == game::DVAR_TYPE_FLOAT)
-			{
-				auto* var = find_dvar(dvars::overrides::register_float_overrides, dvarName);
-				if (var)
-				{
-					value.value = var->value;
-					domain.value.min = var->min;
-					domain.value.max = var->max;
-					flags = var->flags;
-				}
-			}
-
 			return dvar_registernew_hook.invoke<game::dvar_s*>(dvarName, type, flags, desc, unk, value, domain);
 		}
 
@@ -144,12 +132,15 @@ namespace patches
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
 			// un-cap fps
-			utils::hook::nop(game::game_offset(0x103F696A), 0x01); //0x00 sets 30 whereas 0x01 sets -112 which uncaps...?
+			utils::hook::nop(game::game_offset(0x103F696A), 0x01);
 
 			// nop call to Com_Printf for "SCALEFORM: %s" messages
 			utils::hook::nop(game::game_offset(0x1000230F), 0x05); // TODO: Dvar toggle? Could be useful info
 			utils::hook::nop(game::game_offset(0x102E1284), 0x05);
 			// nop above call to Com_Printf for "unknown UI script %s in block:\n%s\n"
+
+			// LOD Scaling fix: Probably best way is to re-register the dvar and accept 0 as minimum value
+			// 0x1054688 + 10 (dvar pointer) --> set to 0 (r_lodScale)
 
 			// various hooks to return dvar functionality, thanks to Liam
 			//BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
@@ -172,13 +163,6 @@ namespace patches
 			scheduler::once([]()
 			{
 				dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
-				dvars::overrides::register_float("jump_height", 39, 0, 1000, game::dvar_flags::saved);
-				//dvars::overrides::register_float("com_maxfps", 30, 0, 1000, game::dvar_flags::saved); //Potential fix instead of nop?
-				dvars::overrides::register_float("r_lodScale", 1, 0, 3, game::dvar_flags::saved); //LOD scale fix (especially at high fov)
-
-				dvars::overrides::register_float("ui_smallFont", 0, 0, 1, game::dvar_flags::saved);
-				dvars::overrides::register_float("ui_bigFont", 0, 0, 1, game::dvar_flags::saved);
-				dvars::overrides::register_float("ui_extraBigFont", 0, 0, 1, game::dvar_flags::saved); //fixes for low quality fonts
 				dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 			}, scheduler::main);
 
