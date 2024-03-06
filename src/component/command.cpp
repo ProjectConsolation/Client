@@ -110,58 +110,74 @@ namespace command
 			scheduler::once([&]()
 				{
 					add("marco", []()
-					{
-						printf("polo\n");
-					});
+						{
+							printf("polo\n");
+						});
+
+					/*add("kick", [](const params& argument)
+						{
+							if (argument.size() < 2)
+							{
+								console::info("usage: kick <name>, <reason>(optional)\n");
+								return;
+							}
+							std::string reason;
+							if (reason.empty())
+							{
+								reason = "EXE_PLAYERKICKED";
+							}
+
+							game::SV_GameSendServerCommand(i, "r " + reason + "");
+						});*/
 
 					add("dvarDump", [](const params& argument)
-					{
-						std::string filename;
-						if (argument.size() == 2)
 						{
-							filename = "consolation/";
-							filename.append(argument.get(1));
-							if (!filename.ends_with(".txt"))
+							std::string filename;
+							if (argument.size() == 2)
 							{
-								filename.append(".txt");
-							}
-						}
-
-						console::info("================================ DVAR DUMP ========================================\n");
-						for (auto i = 0; i < *game::dvarCount; i++)
-						{
-							auto* dvar = game::sortedDvars[i];
-							
-							if (dvar)
-							{
-								// TODO: fix this, there's a empty dvar (or multiple) caused string format crash which crashes game
-								if (!filename.empty())
+								filename = "consolation/";
+								filename.append(argument.get(1));
+								if (!filename.ends_with(".txt"))
 								{
-									try 
+									filename.append(".txt");
+								}
+							}
+
+							console::info("================================ DVAR DUMP ========================================\n");
+							for (auto i = 0; i < *game::dvarCount; i++)
+							{
+								auto* dvar = game::sortedDvars[i];
+
+								if (dvar)
+								{
+									// TODO: fix this, there's a empty dvar (or multiple) caused string format crash which crashes game
+									if (!filename.empty())
 									{
-										const auto line = std::format("{} \"{}\"\r\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
-										utils::io::write_file(filename, line, i != 0);
+										try
+										{
+											const auto line = std::format("{} \"{}\"\r\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
+											utils::io::write_file(filename, line, i != 0);
+										}
+										catch (...)
+										{
+
+										}
+									}
+
+									try
+									{
+										console::info("%s \"%s\"\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
 									}
 									catch (...)
 									{
 
 									}
 								}
-
-								try
-								{
-									console::info("%s \"%s\"\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current));
-								}
-								catch (...)
-								{
-
-								}
 							}
-						}
 
-						console::info("\n%i dvars\n", *game::dvarCount);
-						console::info("================================ END DVAR DUMP ====================================\n");
-					});
+							console::info("\n%i dvars\n", *game::dvarCount);
+							console::info("================================ END DVAR DUMP ====================================\n");
+						});
 
 					add("commandDump", [](const params& argument)
 						{
@@ -229,7 +245,6 @@ namespace command
 										{
 											return;
 										}
-
 										console::info("%s\n", asset_name);
 									}, true);
 							}

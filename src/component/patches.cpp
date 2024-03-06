@@ -172,8 +172,13 @@ namespace patches
 			// allow map loading
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
 #endif
+
 			dvars::overrides::register_float("jump_height", 39.0, 0, 99999, game::dvar_flags::saved);
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);	
+			dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved);
+			dvars::overrides::register_float("ui_smallFont", 0, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("ui_bigFont", 0, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("ui_extraBigFont", 0, 0, 1, game::dvar_flags::saved);
 			dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 		}
 	};
