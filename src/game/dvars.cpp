@@ -168,7 +168,7 @@ namespace dvars
 		game::DvarLimits domain{};
 		domain.vector.max = max_value;
 		domain.vector.min = min_value;
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, 0, value, domain);
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, description, 0, value, domain);
 	}
 
 	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, int value_default, const char* description, std::uint16_t flags)
@@ -179,19 +179,7 @@ namespace dvars
 		game::DvarLimits domain{};
 		domain.integer.max = 1;
 		domain.integer.min = 0;
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, 0, value, domain);
-	}
-
-	game::dvar_s* Dvar_RegisterInt(const char* dvar_name, int value_default, int min, int max, std::uint16_t flags)
-	{
-		game::DvarValue value{};
-		value.integer = value_default;
-
-		game::DvarLimits domain{};
-		domain.integer.max = INT_MAX;
-		domain.integer.min = 0;
-
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_INT, flags, 0, value, domain);
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, description, 0, value, domain);
 	}
 
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value)

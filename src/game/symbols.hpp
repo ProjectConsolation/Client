@@ -26,14 +26,14 @@ namespace game
 	WEAK symbol<unsigned short> db_hashTable{ game_offset(0x1082ED60) };
 	WEAK symbol<XAssetEntryPoolEntry> g_assetEntryPool{ game_offset(0x108CB5C0) };
 	WEAK symbol<void(float x, float y, float width, float height, float s0, float t0, float s1, float t1,
-		float* color, Material* material, int unkown)> R_AddCmdDrawStretchPic{ game_offset(0x103C0820) };
+		float* color, Material* material, int unknown)> R_AddCmdDrawStretchPic{ game_offset(0x103C0820) };
 
 	WEAK symbol<void(const char* text, int maxChars, Font_s* font, double x, double y, double xScale, double yScale, double rotation, float* color, int style)> 
 		R_AddCmdDrawText{ game_offset(0x103C02B0) };
 
 	WEAK symbol<int(const char* text, int maxChars, Font_s* font)> R_TextWidth{ game_offset(0x1037CFA0) };
 
-	WEAK symbol <dvar_s*(const char* dvarName, DvarType type, unsigned short flags, int unk, DvarValue value, DvarLimits domain)>
+	WEAK symbol <dvar_s*(const char* dvarName, DvarType type, unsigned short flags, const char* description, int unk, DvarValue value, DvarLimits domain)>
 		Dvar_RegisterNew{ game_offset(0x10276980) };
 
 	WEAK symbol<int(char* dvar)> generateHashValue{ game_offset(0x10275260) };
