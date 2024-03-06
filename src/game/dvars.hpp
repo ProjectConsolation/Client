@@ -89,6 +89,8 @@ namespace dvars
 		};
 
 		extern std::unordered_map<std::string, dvar_int> register_int_overrides;
+		extern std::unordered_map<std::string, dvar_float> register_float_overrides;
 		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags);
+		void register_float(const std::string& name, const float value, const float min, const float max, const unsigned int flags);
 	}
 }

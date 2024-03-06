@@ -33,7 +33,7 @@ namespace game
 
 	WEAK symbol<int(const char* text, int maxChars, Font_s* font)> R_TextWidth{ game_offset(0x1037CFA0) };
 
-	WEAK symbol <dvar_s*(const char* dvarName, DvarType type, unsigned short flags, DvarValue value, DvarLimits domain)>
+	WEAK symbol <dvar_s*(const char* dvarName, DvarType type, unsigned short flags, int unk, DvarValue value, DvarLimits domain)>
 		Dvar_RegisterNew{ game_offset(0x10276980) };
 
 	WEAK symbol<int(char* dvar)> generateHashValue{ game_offset(0x10275260) };

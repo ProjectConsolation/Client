@@ -134,6 +134,17 @@ namespace dvars
 	namespace overrides
 	{
 		std::unordered_map<std::string, dvar_int> register_int_overrides;
+		std::unordered_map<std::string, dvar_float> register_float_overrides;
+
+		void register_float(const std::string& name, const float value, const float min, const float max, const unsigned int flags)
+		{
+			dvar_float values;
+			values.value = value;
+			values.min = min;
+			values.max = max;
+			values.flags = flags;
+			register_float_overrides[name] = std::move(values);
+		}
 
 		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags)
 		{
@@ -157,7 +168,7 @@ namespace dvars
 		game::DvarLimits domain{};
 		domain.vector.max = max_value;
 		domain.vector.min = min_value;
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, value, domain);
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, 0, value, domain);
 	}
 
 	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, int value_default, const char* description, std::uint16_t flags)
@@ -168,7 +179,7 @@ namespace dvars
 		game::DvarLimits domain{};
 		domain.integer.max = 1;
 		domain.integer.min = 0;
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, value, domain);
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, 0, value, domain);
 	}
 
 	game::dvar_s* Dvar_RegisterInt(const char* dvar_name, int value_default, int min, int max, std::uint16_t flags)
@@ -180,7 +191,7 @@ namespace dvars
 		domain.integer.max = INT_MAX;
 		domain.integer.min = 0;
 
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_INT, flags, value, domain);
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_INT, flags, 0, value, domain);
 	}
 
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value)

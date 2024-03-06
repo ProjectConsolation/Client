@@ -83,6 +83,18 @@ namespace patches
 				}
 			}
 
+			if (type == game::DVAR_TYPE_FLOAT)
+			{
+				auto* var = find_dvar(dvars::overrides::register_float_overrides, dvarName);
+				if (var)
+				{
+					value.value = var->value;
+					domain.value.max = var->max;
+					domain.value.min = var->min;
+					flags = var->flags;
+				}
+			}
+
 			return dvar_registernew_hook.invoke<game::dvar_s*>(dvarName, type, flags, desc, unk, value, domain);
 		}
 
@@ -143,7 +155,7 @@ namespace patches
 			// 0x1054688 + 10 (dvar pointer) --> set to 0 (r_lodScale)
 
 			// various hooks to return dvar functionality, thanks to Liam
-			//BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
+			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
 			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
 
 #ifdef DEBUG
@@ -163,6 +175,7 @@ namespace patches
 			scheduler::once([]()
 			{
 				dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
+				dvars::overrides::register_float("jump_height", 39.0, 0, 99999, game::dvar_flags::saved);
 				dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 			}, scheduler::main);
 
