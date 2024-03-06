@@ -403,7 +403,7 @@ namespace game_console
 		void draw_console()
 		{
 			check_resize();
-
+			game::Con_DrawConsole();
 			if (*game::keyCatchers & 1)
 			{
 				if (!(*game::keyCatchers & 1))
@@ -728,7 +728,6 @@ namespace game_console
 					dvars::con_inputDvarValueColor = dvars::Dvar_RegisterVec4("con_inputDvarValueColor", "color of console matched dvar value", 1.0f, 1.0f, 0.8f, 1.0f, 0.0f, 1.0f, game::dvar_flags::saved);
 					dvars::con_inputDvarInactiveValueColor = dvars::Dvar_RegisterVec4("con_inputDvarInactiveValueColor", "color of console inactive dvar value", 0.8f, 0.8f, 0.8f, 1.0f, 0.0f, 1.0f, game::dvar_flags::saved);
 					dvars::con_inputCmdMatchColor = dvars::Dvar_RegisterVec4("con_inputCmdMatchColor", "color of console matched command", 0.80f, 0.80f, 1.0f, 1.0f, 0.0f, 1.0f, game::dvar_flags::saved);
-					utils::hook::nop(game::game_offset(0x103121CD), 5);
 				}, scheduler::main);
 		}
 
@@ -739,4 +738,4 @@ namespace game_console
 	};
 }
 
-//REGISTER_COMPONENT(game_console::component)
+REGISTER_COMPONENT(game_console::component)
