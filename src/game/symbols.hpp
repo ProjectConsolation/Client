@@ -17,6 +17,9 @@ namespace game
 	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
 
+	WEAK symbol<void(int a1, int a2, int a3, char* Format, ...)> Com_Error{ game_offset(0x103F77B0) };
+	WEAK symbol<char*(char* result, int a2)> sub_1022D690{ game_offset(0x1022D690) };
+
 	WEAK symbol<DWORD> command_id{ game_offset(0x10752C70) };
 	WEAK symbol<DWORD> cmd_argc{ game_offset(0x10752CB4) };
 	WEAK symbol<char**> cmd_argv{ game_offset(0x10752CD4) };
