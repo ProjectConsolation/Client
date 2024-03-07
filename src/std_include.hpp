@@ -66,4 +66,6 @@
 #pragma warning(disable: 4100)
 #pragma warning(disable: 26812)
 
+#include <resources/resource.hpp>
+
 using namespace std::literals;

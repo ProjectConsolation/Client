@@ -4,6 +4,12 @@
 
 namespace utils::nt
 {
+	utils::nt::library get_host_module()
+	{
+		static utils::nt::library host{};
+		return host;
+	}
+
 	library library::load(const std::string& name)
 	{
 		return library(LoadLibraryA(name.data()));

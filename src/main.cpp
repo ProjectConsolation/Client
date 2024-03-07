@@ -9,6 +9,7 @@
 #include <utils/hook.hpp>
 
 #include <ShellScalingApi.h>
+#include <component/splash.hpp>
 
 namespace
 {
