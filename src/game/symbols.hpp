@@ -5,6 +5,7 @@
 namespace game
 {
 	WEAK symbol<void(int channel, const char* fmt, ...)> Com_Printf{ game_offset(0x103F6400) };
+	WEAK symbol<void(int a1, int a2, int a3, char* Format, ...)> Com_Error{ game_offset(0x103F77B0) };
 	WEAK symbol<void(int channel, const char* fmt)> Conbuf_AppendText{ game_offset(0x102C3CE0) };
 	WEAK symbol<void()> Con_DrawConsole{game_offset(0x10311F70)};
 
@@ -28,7 +29,6 @@ namespace game
 	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
 
-	WEAK symbol<void(int a1, int a2, int a3, char* Format, ...)> Com_Error{ game_offset(0x103F77B0) };
 	WEAK symbol<char*(char* result, int a2)> sub_1022D690{ game_offset(0x1022D690) };
 
 	WEAK symbol<DWORD> command_id{ game_offset(0x10752C70) };

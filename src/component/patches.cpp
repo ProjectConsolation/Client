@@ -152,8 +152,8 @@ namespace patches
 			// nop above call to Com_Printf for "unknown UI script %s in block:\n%s\n"
 
 			// various hooks to return dvar functionality, thanks to Liam
-			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
-			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
+			//BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
+			//BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
 
 #ifdef DEBUG
 			// hook linkxassetentry to debug stuff
