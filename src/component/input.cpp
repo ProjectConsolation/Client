@@ -61,4 +61,5 @@ namespace input
 	};
 }
 
-REGISTER_COMPONENT(input::component)
+//REGISTER_COMPONENT(input::component)
+//commented cus else i cant do anything, shoot, move, etc
