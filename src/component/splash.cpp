@@ -13,7 +13,9 @@ namespace splash
 		void post_start() override
 		{
 			const utils::nt::library self;
-			image_ = LoadImageA(self, MAKEINTRESOURCE(IMAGE_SPLASH), IMAGE_BITMAP, 0, 0, LR_DEFAULTCOLOR);
+			//image_ = LoadImageA(self, MAKEINTRESOURCE(IMAGE_SPLASH), IMAGE_BITMAP, 0, 0, LR_DEFAULTCOLOR);
+			image_ = static_cast<HBITMAP>(LoadImageW(nullptr, L"splash.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION | LR_DEFAULTSIZE));
+
 		}
 
 		void post_load() override
@@ -63,7 +65,6 @@ namespace splash
 
 		void show()
 		{
-			MessageBoxA(NULL, "show()", "SPLASH", MB_DEFBUTTON1); //passed
 			WNDCLASSA wnd_class;
 
 			const auto self = utils::nt::get_host_module();
@@ -81,13 +82,11 @@ namespace splash
 
 			if (RegisterClassA(&wnd_class))
 			{
-				MessageBoxA(NULL, "wnd_class", "SPLASH", MB_DEFBUTTON1); //passed
 				const auto x_pixels = GetSystemMetrics(SM_CXFULLSCREEN);
 				const auto y_pixels = GetSystemMetrics(SM_CYFULLSCREEN);
 
 				if (image_)
 				{
-					MessageBoxA(NULL, "_image", "SPLASH", MB_DEFBUTTON1); //never passes
 					this->window_ = CreateWindowExA(WS_EX_APPWINDOW, "Project: Consolation Splash Screen", "Project: Consolation",
 						WS_POPUP | WS_SYSMENU,
 						(x_pixels - 320) / 2, (y_pixels - 100) / 2, 320, 100, nullptr,
@@ -96,13 +95,11 @@ namespace splash
 
 					if (this->window_)
 					{
-						MessageBoxA(NULL, "_window", "SPLASH", MB_DEFBUTTON1); //never passes
 						auto* const image_window = CreateWindowExA(0, "Static", nullptr, WS_CHILD | WS_VISIBLE | 0xEu,
 							0, 0,
 							320, 100, this->window_, nullptr, self, nullptr);
 						if (image_window)
 						{
-							MessageBoxA(NULL, "image_window", "SPLASH", MB_DEFBUTTON1); //never passes
 							RECT rect;
 							SendMessageA(image_window, 0x172u, 0, reinterpret_cast<LPARAM>(image_));
 							GetWindowRect(image_window, &rect);
