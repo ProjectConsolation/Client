@@ -39,18 +39,6 @@ namespace patches
 			return CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
 		}
 
-		utils::hook::detour link_xasset_entry_hook;
-		game::XAssetEntry* link_xasset_entry_stub(game::XAssetEntry* entry, int override)
-		{
-			if (entry->asset.type == game::ASSET_TYPE_GFXWORLD)
-			{
-				//const auto troll = entry->asset.header.gfxWorld;
-				//printf("");
-			}
-
-			return link_xasset_entry_hook.invoke<game::XAssetEntry*>(entry, override);
-		}
-
 		template <typename T>
 		T* find_dvar(std::unordered_map<std::string, T>& map, const std::string& name)
 		{
@@ -134,10 +122,10 @@ namespace patches
 			utils::hook::set<std::uint8_t>(game::game_offset(0x103BD70C) + 3, 0x00);
 			utils::hook::set<std::uint8_t>(game::game_offset(0x103BD70C) + 4, 0x90);
 
-			scheduler::once([]()
+			/*scheduler::once([]()
 				{
 					r_borderless = game::Dvar_RegisterBool("r_borderless", true, 0, "Remove the windows border when in windowed mode.");
-				}, scheduler::main);
+				}, scheduler::main);*/
 
 #endif
 			// branding - intercept import for CreateWindowExA to change window title
@@ -154,11 +142,6 @@ namespace patches
 			// various hooks to return dvar functionality, thanks to Liam
 			//BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
 			//BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
-
-#ifdef DEBUG
-			// hook linkxassetentry to debug stuff
-			link_xasset_entry_hook.create(game::game_offset(0x103E0640), link_xasset_entry_stub);
-#endif
 
 			// support xliveless emulator
 #ifdef XLIVELESS
