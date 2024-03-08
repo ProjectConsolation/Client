@@ -5,6 +5,8 @@
 #include <utils/nt.hpp>
 #include <utils/hook.hpp>
 
+
+
 namespace splash
 {
 	class component final : public component_interface
@@ -14,7 +16,7 @@ namespace splash
 		{
 			const utils::nt::library self;
 			//image_ = LoadImageA(self, MAKEINTRESOURCE(IMAGE_SPLASH), IMAGE_BITMAP, 0, 0, LR_DEFAULTCOLOR);
-			image_ = static_cast<HBITMAP>(LoadImageW(nullptr, L"splash.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION | LR_DEFAULTSIZE));
+			image_ = static_cast<HBITMAP>(LoadImageW(self, L"splash.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_DEFAULTCOLOR));
 
 		}
 
@@ -118,6 +120,8 @@ namespace splash
 
 							ShowWindow(this->window_, SW_SHOW);
 							UpdateWindow(this->window_);
+							std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+							DestroyWindow(this->window_);
 						}
 					}
 				}
