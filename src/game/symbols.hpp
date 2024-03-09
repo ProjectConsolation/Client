@@ -22,7 +22,7 @@ namespace game
 
 	WEAK symbol<void(float x, float y, float width, float height, float s0, float t0, float s1, float t1,
 		float* color, Material* material, int unknown)> R_AddCmdDrawStretchPic{ game_offset(0x103C0820) };
-	WEAK symbol<void(const char* text, int maxChars, Font_s* font, double x, double y, double xScale, double yScale, double rotation, float* color, int style)>
+	WEAK symbol<void(const char* text, int maxChars, Font_s* font, float x, float y, float xScale, float yScale, float rotation, const float* color, int style)>
 		R_AddCmdDrawText{ game_offset(0x103C02B0) };
 	WEAK symbol<int(const char* text, int maxChars, Font_s* font)> R_TextWidth{ game_offset(0x1037CFA0) };
 
