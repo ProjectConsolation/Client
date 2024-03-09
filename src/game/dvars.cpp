@@ -159,6 +159,17 @@ namespace dvars
 		}
 	}
 
+	game::dvar_s* Dvar_RegisterFloat(const char* dvar_name, const char* description, float float_value, float min_value, float max_value, std::uint16_t flags)
+	{
+		game::DvarValue value{};
+		value.value = float_value;
+
+		game::DvarLimits domain{};
+		domain.value.max = max_value;
+		domain.value.min = min_value;
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT, flags, description, 0, value, domain);
+	}
+
 	game::dvar_s* Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags) 
 	{
 		game::DvarValue value{};

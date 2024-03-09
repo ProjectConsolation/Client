@@ -12,7 +12,7 @@
 #include <unordered_set>
 
 #define FORCE_BORDERLESS // still needs a few things fixed - 3rd of march, does it still?
-//#define XLIVELESS
+#define XLIVELESS
 
 namespace patches
 {
@@ -107,6 +107,87 @@ namespace patches
 
 			return g_speed->current.integer;
 		}
+
+
+		float __cdecl Jump_GetLandFactor(DWORD* ps)
+		{
+			__int64 v1; // r10
+			double v2; // fp1
+
+			auto jump_slowdownEnable = game::Dvar_FindVar("jump_slowdownEnable");
+			if (jump_slowdownEnable->current.enabled)
+			{
+				if (*(DWORD*)(ps + 24) < 1700)
+				{
+					v1 = *(DWORD*)(ps + 24);
+					v2 = (float)((float)((float)v1 * (float)0.00088235294) + (float)1.0);
+				}
+				else
+				{
+					v2 = 2.5;
+				}
+			}
+			else
+			{
+				v2 = 1.0;
+			}
+			return *((float*)&v2 + 1);
+		}
+
+		utils::hook::detour Jump_Start_hook;
+		int Jump_Start_stub(int unused, int unused2, DWORD* pml_t)
+		{
+			DWORD* pmove_t{};
+			float jump_height = game::Dvar_FindVar("jump_height")->current.value;
+
+			_asm
+			{
+				mov  edi, DWORD PTR[edi]; edi = *edi
+				mov  DWORD PTR[pmove_t], edi
+
+			}
+
+			auto v3 = *pmove_t;
+			auto gravity = *(int*)(*pmove_t + 0x68);
+			auto calculatedGravity = (double)gravity * (jump_height + jump_height);
+
+			if ((*(DWORD*)(*pmove_t + 12) & 0x4000) != 0 && *(DWORD*)(v3 + 24) <= 1800)
+			{
+				auto landFactor = Jump_GetLandFactor(pmove_t);
+				calculatedGravity = (float)((float)calculatedGravity / (float)landFactor);
+			}
+
+			pml_t[12] = 0;
+			pml_t[13] = 0;
+			pml_t[11] = 0;
+
+			auto zOrigin = *(float*)(v3 + 40);
+			*(DWORD*)(v3 + 128) = 1023; // groundEntityNum
+			auto serverTime = pmove_t[1];
+			*(float*)(v3 + 140) = zOrigin;
+
+			*(DWORD*)(v3 + 136) = serverTime;
+			auto v9 = sqrt(calculatedGravity);
+			auto v11 = *(DWORD*)(v3 + 12) & 0xFFFFFE7F | 0x4000;
+			*(float*)(v3 + 52) = v9;
+			*(DWORD*)(v3 + 12) = v11;
+			*(DWORD*)(v3 + 24) = 0;
+			*(DWORD*)(v3 + 3900) = 0;
+
+			auto v13 = game::Dvar_FindVar("jump_spreadAdd")->current.value;
+			auto v14 = *(float*)(v3 + 4340) + v13;
+			*(float*)(v3 + 4340) = v14;
+			if (v14 > 255.0)
+				*(DWORD*)(v3 + 4340) = 255.0;
+
+			return v13;
+		}
+
+		utils::hook::detour dvar_registerlodscale_hook;
+		game::dvar_s* dvar_registerlodscale_stub()
+		{
+			return dvars::Dvar_RegisterFloat("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0, 0, 3, game::dvar_flags::saved);
+		}
 	}
 
 	class component final : public component_interface
@@ -140,8 +221,10 @@ namespace patches
 			// nop above call to Com_Printf for "unknown UI script %s in block:\n%s\n"
 
 			// various hooks to return dvar functionality, thanks to Liam
-			//BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
-			//BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
+			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
+			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
+
+			Jump_Start_hook.create(game::game_offset(0x101DB390), Jump_Start_stub);
 
 			// support xliveless emulator
 #ifdef XLIVELESS
@@ -153,15 +236,19 @@ namespace patches
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
 #endif
 
-			//dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
-
-			dvars::overrides::register_float("r_lodScale", 0.0, 0, 3, game::dvar_flags::saved); //Doesnt want to be set
+			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
-			//dvars::overrides::register_float("jump_height", 39.0, 0, 99999, game::dvar_flags::saved); //doesnt work for me but works for liam
+			dvars::overrides::register_float("jump_height", 39.0, 0, 99999, game::dvar_flags::saved); //doesnt work for me but works for liam
 			dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
+
+			scheduler::once([]
+			{
+				utils::hook::nop(game::game_offset(0x103AF41F), 5);
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054688)) = dvars::Dvar_RegisterFloat("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0, 0, 3, game::dvar_flags::saved);
+			}, scheduler::main);
 		}
 	};
 }

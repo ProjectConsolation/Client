@@ -9,7 +9,6 @@
 #include <utils/hook.hpp>
 
 #include <ShellScalingApi.h>
-#include <component/splash.hpp>
 
 namespace
 {
@@ -100,11 +99,11 @@ namespace
 				*/
 				//utils::hook::set(0x5931B8, exit_hook); // ExitProcess import, might not be good to hook this but iat isn't working
 
+				MessageBoxA(NULL, "CONNECT DEBUGGER", "DEBUG", MB_DEFBUTTON1);
 				if (!component_loader::post_start())
 				{
 					throw "component post start failed";
 				}
-				MessageBoxA(NULL, "CONNECT DEBUGGER", "DEBUG", MB_DEFBUTTON1);
 				if (!component_loader::post_load())
 				{
 					throw "component post load failed";

@@ -403,7 +403,7 @@ namespace game_console
 		void draw_console()
 		{
 			check_resize();
-			game::Con_DrawConsole();
+			//game::Con_DrawConsole();
 			if (*game::keyCatchers & 1)
 			{
 				if (!(*game::keyCatchers & 1))
@@ -738,4 +738,4 @@ namespace game_console
 	};
 }
 
-//REGISTER_COMPONENT(game_console::component)
+REGISTER_COMPONENT(game_console::component)

@@ -48,4 +48,5 @@ namespace game
 	WEAK symbol<scrVmPub_t> scrVmPub{ game_offset(0x11738488) };
 	WEAK symbol<int> dvarCount{ game_offset(0x1149FCC8) };
 	WEAK symbol<dvar_s*> sortedDvars{ game_offset(0x1149FCD4) };
+	WEAK symbol<dvar_s> r_LodScale{ game_offset(0x11054688) };
 }
