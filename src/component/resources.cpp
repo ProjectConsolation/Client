@@ -13,7 +13,7 @@ namespace resources
 			const UINT load)
 		{
 			const utils::nt::library self;
-			if (!IS_INTRESOURCE(name) && name == "logo.bmp"s) return logo;
+			if (!IS_INTRESOURCE(name) && name == "logo.bmp"s) return logo; //if for ext. console, remove it. just put "jblogo.bmp" in root, i can provide mine :)
 			if (self.get_handle() == handle && name == LPCSTR(0x64)) return splash;
 
 			return LoadImageA(handle, name, type, c_x, c_y, load);

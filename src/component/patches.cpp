@@ -240,7 +240,7 @@ namespace patches
 			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("jump_height", 39.0, 0, 99999, game::dvar_flags::saved); //doesnt work for me but works for liam
+			dvars::overrides::register_float("jump_height", 48.0, 0, 99999, game::dvar_flags::saved); //adjusted to 48 to allow cod4-like jump onto ledges
 			dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 
 			scheduler::once([]
