@@ -144,7 +144,6 @@ namespace patches
 			{
 				mov  edi, DWORD PTR[edi]; edi = *edi
 				mov  DWORD PTR[pmove_t], edi
-
 			}
 
 			auto v3 = *pmove_t;
