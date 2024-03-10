@@ -12,7 +12,7 @@
 #include <unordered_set>
 
 #define FORCE_BORDERLESS // still needs a few things fixed - 3rd of march, does it still?
-#define XLIVELESS
+//#define XLIVELESS
 
 namespace patches
 {
