@@ -238,7 +238,7 @@ namespace game_console
 			/*game::R_AddCmdDrawText(con.buffer, 0x7FFFFFFF, console_font, con.globals.x,
 				con.globals.y + con.globals.font_height, 1.0f, 1.0f, 0, color_white, 0);*/
 
-			// check if using a prefixed '/' or not
+				// check if using a prefixed '/' or not
 			const auto input = con.buffer[1] && (con.buffer[0] == '/' || con.buffer[0] == '\\')
 				? std::string(con.buffer).substr(1)
 				: std::string(con.buffer);
@@ -539,13 +539,10 @@ namespace game_console
 				return false;
 			}
 
-			const auto shift_down = game::playerKeys[local_client_num].keys[game::keyNum_t::K_SHIFT].down;
-			if (shift_down)
+			if (game::playerKeys[local_client_num].keys[game::keyNum_t::K_SHIFT].down)
 			{
 				if (!(*game::keyCatchers & 1))
-				{
 					toggle_console();
-				}
 
 				toggle_console_output();
 				return false;
