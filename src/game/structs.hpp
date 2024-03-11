@@ -1047,4 +1047,15 @@ namespace game
 		int anyKeyDown;
 		KeyState keys[256];
 	};
+
+	struct field_t
+	{
+		int cursor;
+		int scroll;
+		int drawWidth;
+		int widthInPixels;
+		float charHeight;
+		int fixedSize;
+		char buffer[256];
+	};
 }

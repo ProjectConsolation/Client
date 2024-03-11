@@ -319,7 +319,9 @@ namespace console
 			const auto result = format(&ap, fmt);
 			va_end(ap);
 
-			game::Com_Printf(0, "%s", result.data()); // this eventually leads to Com_PrintMessage, which leads to com_printf_stub below and will dispatch to our console
+			game::CL_ConsolePrint(0, 6, result.c_str(), 0, 0, 0);
+
+			//game::Com_Printf(0, "%s", result.data()); // this eventually leads to Com_PrintMessage, which leads to com_printf_stub below and will dispatch to our console
 
 			return invoke_printf("%s", result.data()); // return the status of normal printf, which is what we are hooking
 		}

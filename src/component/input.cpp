@@ -3,8 +3,6 @@
 
 #include "game/game.hpp"
 
-#include "game_console.hpp"
-
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
 #include "console.hpp"
@@ -13,40 +11,75 @@ namespace input
 {
 	namespace
 	{
+		struct con
+		{
+			bool toggled;
+		};
+
+		con game_console{};
+
 		utils::hook::detour cl_char_event_hook;
 		utils::hook::detour cl_key_event_hook;
 
-		void cl_key_event_stub(const int key, const int down)
+		void Field_Clear(game::field_t* edit)
 		{
-			if (!game_console::console_key_event(0, key, down))
-			{
-				return;
-			}
-
-			cl_key_event_hook.invoke<void>(key, down);
+			memset(edit->buffer, 0, sizeof(edit->buffer));
+			edit->cursor = 0;
+			edit->scroll = 0;
+			edit->drawWidth = 256;
 		}
-		
 
-		void cl_char_event_stub(int unk)
+		void Con_ToggleConsole()
 		{
-			int _key;
-			__asm
-			{
-				mov _key, ecx;
-			}
-			
+			Field_Clear(game::g_consoleField);
+			game::Con_CancelAutoComplete();
+			game::g_consoleField->widthInPixels = *game::g_console_field_width;
+			game::g_consoleField->charHeight = 16.0;
+			game::g_consoleField->fixedSize = 1;
+			*game::con_outputVisible = 0;
+			*game::keyCatchers ^= 1;
+			game_console.toggled = true;
+		}
 
-			if (!game_console::console_char_event(0, _key))
+		bool Con_IsActive()
+		{
+			return (*game::keyCatchers & 1) != 0;
+		}
+
+		void Con_ToggleConsoleOutput()
+		{
+			*game::con_outputVisible = ~*game::con_outputVisible;
+		}
+
+		void cl_key_event_stub(const int key, const int down, const unsigned int time)
+		{
+			if (down)
 			{
-				return;
+				auto con_restricted = game::Dvar_FindVar("monkeytoy");
+				if (con_restricted && !con_restricted->current.enabled)
+				{
+					if (key == game::K_GRAVE || key == game::K_TILDE)
+					{
+						if (game::playerKeys[0].keys[game::keyNum_t::K_SHIFT].down)
+						{
+							if (!Con_IsActive())
+								Con_ToggleConsole();
+							Con_ToggleConsoleOutput();
+							return;
+						}
+
+						Con_ToggleConsole();
+						return;
+					}
+				}
 			}
 
-			__asm
+			if (Con_IsActive() && game_console.toggled)
 			{
-				mov ecx, _key;
+				Field_Clear(game::g_consoleField);
 			}
 
-			cl_char_event_hook.invoke<void>(unk);
+			cl_key_event_hook.invoke<void>(key, down, time);
 		}
 	}
 
@@ -55,11 +88,9 @@ namespace input
 	public:
 		void post_load() override
 		{
-			cl_char_event_hook.create(game::game_offset(0x1031A1D0), cl_char_event_stub);
 			cl_key_event_hook.create(game::game_offset(0x1031A680), cl_key_event_stub);
 		}
 	};
 }
 
-//REGISTER_COMPONENT(input::component)
-//commented cus else i cant do anything, shoot, move, etc
+REGISTER_COMPONENT(input::component)
