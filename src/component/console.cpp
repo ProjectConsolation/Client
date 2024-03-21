@@ -420,8 +420,8 @@ namespace console
 						}
 					}
 				}
-
-				dispatch_message(type, new_result);
+				else
+					dispatch_message(type, new_result);
 			}
 		}
 

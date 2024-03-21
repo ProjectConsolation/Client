@@ -60,17 +60,6 @@ namespace patches
 		game::dvar_s* Dvar_RegisterNew_Stub(const char* dvarName, game::DvarType type, unsigned short flags, char* desc, int unk, game::DvarValue value, game::DvarLimits domain)
 		{
 
-			if (type == game::DVAR_TYPE_BOOL)
-			{
-				auto* var = find_dvar(dvars::overrides::register_bool_overrides, dvarName);
-				if (var)
-				{
-
-					value.value = var->value;
-					flags = var->flags;
-				}
-			}
-
 			if (type == game::DVAR_TYPE_INT)
 			{
 				auto* var = find_dvar(dvars::overrides::register_int_overrides, dvarName);
@@ -247,20 +236,22 @@ namespace patches
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
 #endif
 
-			dvars::Dvar_RegisterBool("g_debugVelocity", 0, "Print velocity debug information to console", game::dvar_flags::none); //testing stuff
+			//dvars::Dvar_RegisterBool("g_debugVelocity", 0, "Print velocity debug information to console", game::dvar_flags::none); //testing stuff
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none); //testing stuff
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
-			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("jump_height", 48.0, 0, 99999, game::dvar_flags::saved); //adjusted to 48 to allow cod4-like jump onto ledges
+			
 			dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 
 			scheduler::once([]
 			{
 				utils::hook::nop(game::game_offset(0x103AF41F), 5);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054688)) = dvars::Dvar_RegisterFloat("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0, 0, 3, game::dvar_flags::saved);
+				dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
+				dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
+				dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved);
+				dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
+				dvars::overrides::register_float("jump_height", 48.0, 0, 99999, game::dvar_flags::saved); //adjusted to 48 to allow cod4-like jump onto ledges
+				dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); 
 			}, scheduler::main);
 		}
 	};
