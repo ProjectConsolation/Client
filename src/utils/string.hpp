@@ -78,6 +78,7 @@ namespace utils::string
 	std::string to_upper(std::string text);
 	bool starts_with(const std::string& text, const std::string& substring);
 	bool ends_with(const std::string& text, const std::string& substring);
+	bool string_contains(const std::string_view& s1, const std::string_view s2);
 
 	std::wstring convert(const std::string& str);
 

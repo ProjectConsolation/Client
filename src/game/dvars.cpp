@@ -21,6 +21,7 @@ namespace dvars
 	game::dvar_s* con_inputDvarValueColor = nullptr;
 	game::dvar_s* con_inputDvarInactiveValueColor = nullptr;
 	game::dvar_s* con_inputCmdMatchColor = nullptr;
+	game::dvar_s* g_debugVelocity = nullptr;
 
 	// TODO: remake: cg_drawVersion, cg_overheadNamesFont
 
@@ -135,17 +136,16 @@ namespace dvars
 
 	namespace overrides
 	{
+		std::unordered_map<std::string, dvar_bool> register_bool_overrides;
 		std::unordered_map<std::string, dvar_int> register_int_overrides;
 		std::unordered_map<std::string, dvar_float> register_float_overrides;
 
-		void register_float(const std::string& name, const float value, const float min, const float max, const unsigned int flags)
+		void register_bool(const std::string& name, const bool value, const unsigned int flags)
 		{
-			dvar_float values;
+			dvar_bool values{};
 			values.value = value;
-			values.min = min;
-			values.max = max;
 			values.flags = flags;
-			register_float_overrides[name] = std::move(values);
+			register_bool_overrides[name] = std::move(values);
 		}
 
 		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags)
@@ -157,6 +157,16 @@ namespace dvars
 			values.flags = flags;
 			register_int_overrides[name] = std::move(values);
 		}
+
+		void register_float(const std::string& name, const float value, const float min, const float max, const unsigned int flags)
+		{
+			dvar_float values;
+			values.value = value;
+			values.min = min;
+			values.max = max;
+			values.flags = flags;
+			register_float_overrides[name] = std::move(values);
+		}
 	}
 
 	game::dvar_s* Dvar_RegisterFloat(const char* dvar_name, const char* description, float float_value, float min_value, float max_value, std::uint16_t flags)
@@ -167,6 +177,7 @@ namespace dvars
 		game::DvarLimits domain{};
 		domain.value.max = max_value;
 		domain.value.min = min_value;
+		console::debug("registered dvar '%s'\n", dvar_name);
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT, flags, description, 0, value, domain);
 	}
 
@@ -181,6 +192,7 @@ namespace dvars
 		game::DvarLimits domain{};
 		domain.vector.max = max_value;
 		domain.vector.min = min_value;
+		console::debug("registered dvar '%s'\n", dvar_name);
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, description, 0, value, domain);
 	}
 
@@ -192,6 +204,7 @@ namespace dvars
 		game::DvarLimits domain{};
 		domain.integer.max = 1;
 		domain.integer.min = 0;
+		console::debug("registered dvar '%s'\n", dvar_name);
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, description, 0, value, domain);
 	}
 

@@ -47,6 +47,17 @@ namespace utils::string
 		return std::equal(substring.rbegin(), substring.rend(), text.rbegin());
 	}
 
+	bool string_contains(const std::string_view& s1, const std::string_view s2)
+	{
+		const auto it = s1.find(s2);
+		if (it != std::string::npos)
+		{
+			return true;
+		}
+
+		return false;
+	}
+
 	std::wstring convert(const std::string& str)
 	{
 		std::wstring result;

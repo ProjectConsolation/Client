@@ -24,6 +24,7 @@ namespace dvars
 	extern game::dvar_s* con_inputDvarValueColor;
 	extern game::dvar_s* con_inputDvarInactiveValueColor;
 	extern game::dvar_s* con_inputCmdMatchColor;
+	extern game::dvar_s* g_debugVelocity;
 
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain);
 	std::string dvar_get_domain(const game::dvar_type type, const game::DvarLimits& domain);
@@ -88,8 +89,10 @@ namespace dvars
 			std::string value{};
 		};
 
+		extern std::unordered_map<std::string, dvar_bool> register_bool_overrides;
 		extern std::unordered_map<std::string, dvar_int> register_int_overrides;
 		extern std::unordered_map<std::string, dvar_float> register_float_overrides;
+		void register_bool(const std::string& name, const bool value, const unsigned int flags);
 		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags);
 		void register_float(const std::string& name, const float value, const float min, const float max, const unsigned int flags);
 	}

@@ -362,12 +362,63 @@ namespace console
 					new_result.erase(0, 2); // example: '^1'
 				}
 
-				if (std::string(result).contains("Unable to")
-					|| std::string(result).contains("Missing asset")
-					|| std::string(result).contains("Couldn't find")
-					|| std::string(result).contains("Unknown command"))
+				if (utils::string::string_contains(result, "Unable to")
+					|| utils::string::string_contains(result, "Couldn't reset")
+					|| utils::string::string_contains(result, "nat type is Strict"))
 				{
-					type = con_type_warning; // QoL stuff i guess?
+					type = con_type_error;
+				}
+
+				if (utils::string::string_contains(result, "Unable to")
+					|| utils::string::string_contains(result, "Missing asset")
+					|| utils::string::string_contains(result, "Couldn't find")
+					|| utils::string::string_contains(result, "Unknown command")
+					|| utils::string::string_contains(result, "is read only")
+					|| utils::string::string_contains(result, "is not a valid value")
+					|| utils::string::string_contains(result, "is write protected")
+					|| utils::string::string_contains(result, "already defined")
+					|| utils::string::string_contains(result, "Adding channel:")
+					|| utils::string::string_contains(result, "Hiding channel:")
+					|| utils::string::string_contains(result, "will use the shock")
+					|| utils::string::string_contains(result, "WARNING:")
+					|| utils::string::string_contains(result, "nat type is Moderate"))
+					{
+						type = con_type_warning;
+					}
+
+				if (utils::string::string_contains(result, "GamerProfile_LogInProfile took")
+					|| utils::string::string_contains(result, "connection status has changed")
+					|| utils::string::string_contains(result, "signed in to live")
+					|| utils::string::string_contains(result, "Reading profile")
+					|| utils::string::string_contains(result, "Loaded zone")
+					|| utils::string::string_contains(result, "Loading fastfile")
+					|| utils::string::string_contains(result, "nat type is Open")
+					|| utils::string::string_contains(result, "LOADING...")
+					|| utils::string::string_contains(result, "xuid")
+					|| utils::string::string_contains(result, "execing"))
+					{
+						type = con_type_debug;
+					}
+
+				static bool xsignin = false;
+
+				if (utils::string::string_contains(result, "XUserReadProfileSettings"))
+				{
+					if (xsignin == false)
+					{
+						//reduce xsignin spam
+						dispatch_message(con_type_debug, "Reading XUserProfileSettings");
+						xsignin = true;
+
+						if (utils::string::string_contains(result, "took 0ms"))
+						{
+							return;
+						}
+						else
+						{
+							dispatch_message(con_type_debug, result);
+						}
+					}
 				}
 
 				dispatch_message(type, new_result);

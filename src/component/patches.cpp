@@ -59,6 +59,18 @@ namespace patches
 		utils::hook::detour dvar_registernew_hook;
 		game::dvar_s* Dvar_RegisterNew_Stub(const char* dvarName, game::DvarType type, unsigned short flags, char* desc, int unk, game::DvarValue value, game::DvarLimits domain)
 		{
+
+			if (type == game::DVAR_TYPE_BOOL)
+			{
+				auto* var = find_dvar(dvars::overrides::register_bool_overrides, dvarName);
+				if (var)
+				{
+
+					value.value = var->value;
+					flags = var->flags;
+				}
+			}
+
 			if (type == game::DVAR_TYPE_INT)
 			{
 				auto* var = find_dvar(dvars::overrides::register_int_overrides, dvarName);
@@ -235,6 +247,8 @@ namespace patches
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
 #endif
 
+			dvars::Dvar_RegisterBool("g_debugVelocity", 0, "Print velocity debug information to console", game::dvar_flags::none); //testing stuff
+			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none); //testing stuff
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
