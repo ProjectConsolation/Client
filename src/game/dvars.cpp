@@ -1,6 +1,8 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 
+#include <component/scheduler.hpp>
+
 #include <utils/string.hpp>
 
 #include "game.hpp"
@@ -22,6 +24,8 @@ namespace dvars
 	game::dvar_s* con_inputDvarInactiveValueColor = nullptr;
 	game::dvar_s* con_inputCmdMatchColor = nullptr;
 	game::dvar_s* g_debugVelocity = nullptr;
+	game::dvar_s* g_debugLocalization = nullptr;
+	game::dvar_s* r_borderless = nullptr;
 
 	// TODO: remake: cg_drawVersion, cg_overheadNamesFont
 
@@ -181,7 +185,7 @@ namespace dvars
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT, flags, description, 0, value, domain);
 	}
 
-	game::dvar_s* Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags) 
+	game::dvar_s* Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags)
 	{
 		game::DvarValue value{};
 		value.vector[0] = x;
@@ -223,4 +227,19 @@ namespace dvars
 
 		return result;
 	}
+
+	class component final : public component_interface
+	{
+	public:
+		void post_load() override
+		{
+			scheduler::once([]
+				{
+					dvars::Dvar_RegisterBool("g_debugVelocity", 0, "[DEBUG] Print velocity information to console", game::dvar_flags::none);
+					dvars::Dvar_RegisterBool("g_debugLocalization", 0, "[DEBUG] Print information to console about unlocalized strings", game::dvar_flags::none);
+				}, scheduler::main);
+		}
+	};
 }
+
+REGISTER_COMPONENT(dvars::component)

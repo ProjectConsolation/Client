@@ -409,9 +409,18 @@ namespace console
 					{
 						dispatch_message(con_type_debug, result);
 					}
+				}
+
+				/*if (utils::string::string_contains(result, "ASSET_TYPE_LOCALIZE_ENTRY"))
+				{
+					auto g_debugLocalization = game::Dvar_FindVar("g_debugLocalization");
+					if (g_debugLocalization->current.enabled)
+					{
+						dispatch_message(con_type_debug, result);
+					}
 					else
 						return;
-				}
+				}*/
 
 				if (utils::string::string_contains(result, "XUserReadProfileSettings"))
 				{

@@ -18,7 +18,6 @@ namespace patches
 {
 	namespace
 	{
-		game::dvar_s* r_borderless = nullptr;
 
 		int ret_zero()
 		{
@@ -254,7 +253,7 @@ namespace patches
 
 			scheduler::once([]
 			{
-				utils::hook::nop(game::game_offset(0x103AF41F), 5);
+				utils::hook::nop(game::game_offset(0x103AF41F), 5); //can someone tell me what this is? the dvar lodscale?
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054688)) = dvars::Dvar_RegisterFloat("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0, 0, 3, game::dvar_flags::saved);
 				dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
 				dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
@@ -262,8 +261,6 @@ namespace patches
 				dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
 				dvars::overrides::register_float("jump_height", 48.0, 0, 99999, game::dvar_flags::saved); //adjusted to 48 to allow cod4-like jump onto ledges
 				dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); 
-				dvars::Dvar_RegisterBool("g_debugVelocity", 0, "Print velocity debug information to console", game::dvar_flags::none); //testing stuff
-
 			}, scheduler::main);
 		}
 	};
