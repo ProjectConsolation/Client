@@ -402,6 +402,17 @@ namespace console
 
 				static bool xsignin = false;
 
+				if (utils::string::string_contains(result, "Velocity change:"))
+				{
+					auto g_debugVelocity = game::Dvar_FindVar("g_debugVelocity");
+					if (g_debugVelocity->current.enabled)
+					{
+						dispatch_message(con_type_debug, result);
+					}
+					else
+						return;
+				}
+
 				if (utils::string::string_contains(result, "XUserReadProfileSettings"))
 				{
 					if (xsignin == false)

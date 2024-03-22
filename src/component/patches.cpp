@@ -247,7 +247,6 @@ namespace patches
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
 #endif
 
-			dvars::Dvar_RegisterBool("g_debugVelocity", 0, "Print velocity debug information to console", game::dvar_flags::none); //testing stuff
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none); //testing stuff
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
 			
@@ -263,6 +262,8 @@ namespace patches
 				dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
 				dvars::overrides::register_float("jump_height", 48.0, 0, 99999, game::dvar_flags::saved); //adjusted to 48 to allow cod4-like jump onto ledges
 				dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); 
+				dvars::Dvar_RegisterBool("g_debugVelocity", 0, "Print velocity debug information to console", game::dvar_flags::none); //testing stuff
+
 			}, scheduler::main);
 		}
 	};
