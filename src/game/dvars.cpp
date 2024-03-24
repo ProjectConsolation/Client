@@ -173,7 +173,7 @@ namespace dvars
 		}
 	}
 
-	game::dvar_s* Dvar_RegisterFloat(const char* dvar_name, const char* description, float float_value, float min_value, float max_value, std::uint16_t flags)
+	game::dvar_s* Dvar_RegisterFloat(const char* dvar_name, const char* description, double float_value, double min_value, double max_value, std::uint16_t flags)
 	{
 		game::DvarValue value{};
 		value.value = float_value;
@@ -228,6 +228,8 @@ namespace dvars
 		return result;
 	}
 
+
+
 	class component final : public component_interface
 	{
 	public:
@@ -235,6 +237,7 @@ namespace dvars
 		{
 			scheduler::once([]
 				{
+					dvars::Dvar_RegisterBool("r_borderless", 0, "Do not use a border in windowed mode", game::dvar_flags::none);
 					dvars::Dvar_RegisterBool("g_debugVelocity", 0, "[DEBUG] Print velocity information to console", game::dvar_flags::none);
 					dvars::Dvar_RegisterBool("g_debugLocalization", 0, "[DEBUG] Print information to console about unlocalized strings", game::dvar_flags::none);
 				}, scheduler::main);

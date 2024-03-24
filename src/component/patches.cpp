@@ -248,19 +248,31 @@ namespace patches
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none); //testing stuff
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved);
+			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved); 
+			dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
 			
 			dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 
 			scheduler::once([]
 			{
-				utils::hook::nop(game::game_offset(0x103AF41F), 5); //can someone tell me what this is? the dvar lodscale?
+				utils::hook::nop(game::game_offset(0x103AF41F), 5);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054688)) = dvars::Dvar_RegisterFloat("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0, 0, 3, game::dvar_flags::saved);
-				dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
-				dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
-				dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved);
-				dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
-				dvars::overrides::register_float("jump_height", 48.0, 0, 99999, game::dvar_flags::saved); //adjusted to 48 to allow cod4-like jump onto ledges
-				dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); 
+				
+				utils::hook::nop(game::game_offset(0x102BE942), 5);
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x1148BECC)) = dvars::Dvar_RegisterFloat("cg_fovScale", "Scale applied to the field of view", 1, 0, 2, game::dvar_flags::saved); //resets on server start
+				
+				utils::hook::nop(game::game_offset(0x102BE908), 5);
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x1148F6A4)) = dvars::Dvar_RegisterFloat("cg_fov", "The field of view angle in degrees", 65, 0, 160, game::dvar_flags::saved);
+
+				
+				//dvars::Dvar_RegisterFloat("cg_fovScale", "Scale applied to the field of view", 1.0, 0, 2.0, game::dvar_flags::saved); //doesnt save
+
+				dvars::overrides::register_float("jump_height", 48.0, 0, 1000, game::dvar_flags::saved); //adjusted to 48 to allow cod4-like jump onto ledges
+				//dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
+				dvars::overrides::register_float("input_viewSensitivity", 1, 0.01, 30, game::dvar_flags::saved); //- idk what to do, loading a profile resets this and dvar never saves
 			}, scheduler::main);
 		}
 	};
