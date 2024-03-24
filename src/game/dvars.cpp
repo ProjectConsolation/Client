@@ -212,6 +212,18 @@ namespace dvars
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, description, 0, value, domain);
 	}
 
+	game::dvar_s* Dvar_RegisterInt(const char* dvar_name, const char* description, int value_default, int min, int max, std::uint16_t flags)
+	{
+		game::DvarValue value{};
+		value.value = value_default;
+
+		game::DvarLimits domain{};
+		domain.integer.max = max;
+		domain.integer.min = min;
+		console::debug("registered dvar '%s'\n", dvar_name);
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_INT, flags, description, 0, value, domain);
+	}
+
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value)
 	{
 		unsigned int _func = game::game_offset(0x10274F80);
