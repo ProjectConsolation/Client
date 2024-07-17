@@ -23,7 +23,7 @@ A work-in-progress project aimed at extending and improving upon the PC port of 
 - Certain localizations have different offsets despite being same game version (only known example so far is russian, read localization and add offset)
 - ``Probably more i forgot...``
 
-## Planned & started features
+## Planned and/or started features
 - In-Game console
 - Re-add prone functionality
 - Adding toggle to enable/disable cover, and prone (DVAR)
@@ -38,6 +38,7 @@ A work-in-progress project aimed at extending and improving upon the PC port of 
 - Replace scaleform in favor of .menu files for easy cross compatibility with COD assets
 - Patch mouse input to get real raw mouse input
 - Steam proxy, so it would show you're playing ``Project: Consolation`` on your friend's Steam friendslist.
+- DW Emulator to allow matchmaking without a legit copy as it is impossible to obtain anymore.
 - ``Probably more i forgot...``
 
 # Credits 
