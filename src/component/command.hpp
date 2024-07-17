@@ -12,7 +12,7 @@ namespace command
 		std::string join(int index) const;
 		std::vector<std::string> get_all() const;
 
-		const char* operator[](const int index) const
+		const char* operator[](const int index) const	
 		{
 			return this->get(index); //
 		}
