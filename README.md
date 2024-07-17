@@ -2,6 +2,45 @@
 
 A work-in-progress project aimed at extending and improving upon the PC port of [007: Quantum of Solace](https://en.wikipedia.org/wiki/007:_Quantum_of_Solace), a game that runs on the Call of Duty engine between <i>Call of Duty: 4</i> & <i>Call of Duty: World at War.</i>
 
+ ## Current features
+ - Fully working External Console
+ - Various DVARs have been unlocked & edited from their defaults. (e.g [changes to movement to match IW3 movement closer](https://youtu.be/5LNlgfV1z-k), in-game fonts are HD now, etc)
+ - Custom GSC script loading as well as overriding stock scripts
+ - Borderless fullscreen
+ - FPS unlocked
+ - ``Probably more i forgot...``
+
+
+## Custom Gun Game GSC Gameplay (Click to Play)
+[![Custom GSC Gamemode Gameplay Video](https://img.youtube.com/vi/0Zu-5G9qdcg/maxresdefault.jpg)](https://www.youtube.com/watch?v=0Zu-5G9qdcg)
+
+
+## Current issues
+- Unable to debug much at all, due to the game having heavy anti debug
+- "input" module for in-game console breaks mouse input completely
+- Some RCE exploits may be present still
+- dvarDump command's string formatting is broken, game finds empty dvar and crashes
+- Certain localizations have different offsets despite being same game version (only known example so far is russian, read localization and add offset)
+- ``Probably more i forgot...``
+
+## Planned and/or started features
+- In-Game console
+- Re-add prone functionality
+- Adding toggle to enable/disable cover, and prone (DVAR)
+- Adding toggle for mantling without third person, and make it 1:1 to IW3 (DVAR)
+- Adding toggle for climbing without third person, and make it 1:1 to IW3 (DVAR)
+- Allow aiming to interrupt sprinting without letting go of any keys. (in other words, make it 1:1 to IW3)
+- Force ``r_lodScale`` to ``0`` to prevent pop
+- Patch ``com_maxfps``
+- Patch overhead font for readability.
+- Patch BG_GetPlayerMaxHealth to read DVAR & fix bot movement (Refer to other COD clients of the era)
+- Custom Zones via [qos-xport](https://github.com/mjkzy/qos-xport/) & port Xbox/PS3/Wii maps & weapons that QOS PC didn't get.
+- Replace scaleform in favor of .menu files for easy cross compatibility with COD assets
+- Patch mouse input to get real raw mouse input
+- Steam proxy, so it would show you're playing ``Project: Consolation`` on your friend's Steam friendslist.
+- DW Emulator to allow matchmaking without a legit copy as it is impossible to obtain anymore.
+- ``Probably more i forgot...``
+
 # Credits 
 
  - [mjkzy](https://github.com/mjkzy) for working on zones & zonetool, finishing GSC support & providing a base + patches, upkeep
@@ -11,10 +50,8 @@ A work-in-progress project aimed at extending and improving upon the PC port of 
  - [Rackover](https://github.com/Rackover) for IW3/IW4 research & [iw3x-port](https://github.com/iw4x/iw3x-port)
  - [MrReeko](https://github.com/MrReekoFTWxD) for initial GSC injection
  - [ujicos](https://github.com/ujicos) for initially starting the project, with additions & general upkeep
- 
 
 ## Fun facts
-
 - QoS is abandonware!
 - QoS was drastically different on the Wii version and even recieved updates
 - QoS seems to be <i><b>very</i></b> similar to the IW3 engine, even though it was developed by [a small team at] Treyarch during <i>World at War</i>
