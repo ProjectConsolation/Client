@@ -38,6 +38,7 @@ A work-in-progress project aimed at extending and improving upon the Multiplayer
 - Replace scaleform in favor of .menu files for easy cross compatibility with COD assets
 - Patch mouse input to get real raw mouse input
 - Steam proxy, so it would show you're playing ``Project: Consolation`` on your friend's Steam friendslist.
+- Discord RPC
 - DW Emulator to allow matchmaking without a legit copy as it is impossible to obtain anymore.
 - ``Probably more i forgot...``
 
