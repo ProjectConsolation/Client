@@ -1,6 +1,6 @@
 # Project: Consolation
 
-A work-in-progress project aimed at extending and improving upon the PC port of [007: Quantum of Solace](https://en.wikipedia.org/wiki/007:_Quantum_of_Solace), a game that runs on the Call of Duty engine between <i>Call of Duty: 4</i> & <i>Call of Duty: World at War.</i>
+A work-in-progress project aimed at extending and improving upon the Multiplayer PC port experience of [007: Quantum of Solace](https://en.wikipedia.org/wiki/007:_Quantum_of_Solace), a game that runs on the Call of Duty engine between <i>Call of Duty: 4</i> & <i>Call of Duty: World at War.</i>
 
  ## Current features
  - Fully working External Console
