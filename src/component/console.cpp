@@ -435,6 +435,44 @@ namespace console
 					dispatch_message(type, new_result);
 			}
 		}
+
+		/*
+		utils::hook::detour compiler_error_2_hook;
+
+		void compiler_error_2_stub(int a1, const char* fmt, ...)
+		{
+			fmt = utils::string::va("^1%s", fmt);
+			compiler_error_2_hook.invoke<void>(a1, "%s", fmt);
+		}
+		*/
+
+		/*
+		void com_printf_error(int channel, const char* message)
+		{
+			message = utils::string::va("^1%s", message);
+			utils::hook::invoke<void>(0x431D10, channel, message);
+		}
+
+		void print_prev_code_pos_errors(int print_dest, const char* unk, bool unk2)
+		{
+			utils::hook::set<const char*>(0x47F1DD + 1, "^1script runtime warning: potential infinite loop in script.\n");
+			utils::hook::set<const char*>(0x476931 + 1, "^1<frozen thread>\n");
+			utils::hook::set<const char*>(0x476972 + 1, "^1@ %d\n");
+			utils::hook::set<const char*>(0x4769CF + 1, "^1%s\n\n");
+			utils::hook::set<const char*>(0x4769F0 + 1, "^1<removed thread>\n");
+			utils::hook::invoke<void>(0x476920, print_dest, unk, unk2);
+		}
+
+		void print_prev_code_pos_warnings(int print_dest, const char* unk, bool unk2)
+		{
+			utils::hook::set<const char*>(0x47F1DD + 1, "^3script runtime warning: potential infinite loop in script.\n");
+			utils::hook::set<const char*>(0x476931 + 1, "^3<frozen thread>\n");
+			utils::hook::set<const char*>(0x476972 + 1, "^3@ %d\n");
+			utils::hook::set<const char*>(0x4769CF + 1, "^3%s\n\n");
+			utils::hook::set<const char*>(0x4769F0 + 1, "^3<removed thread>\n");
+			utils::hook::invoke<void>(0x476920, print_dest, unk, unk2);
+		}
+		*/
 	}
 
 	void print(const int type, const char* fmt, ...)
@@ -491,6 +529,9 @@ namespace console
 //#ifndef DEBUG
 			com_printf_hook.create(game::game_offset(0x103F6400), com_printf_stub);
 //#endif
+
+			//CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(showDevConsole), nullptr, 0, 0);
+
 			// setup external console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);
 			SetConsoleTitle("Project: Consolation - Console");
