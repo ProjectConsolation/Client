@@ -88,6 +88,7 @@ namespace input
 	public:
 		void post_load() override
 		{
+			//scheduler::loop(cg_draw_version, scheduler::pipeline::renderer);
 			cl_key_event_hook.create(game::game_offset(0x1031A680), cl_key_event_stub);
 		}
 	};

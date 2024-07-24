@@ -13,8 +13,8 @@ namespace resources
 			const UINT load)
 		{
 			const utils::nt::library self;
-			if (!IS_INTRESOURCE(name) && name == "logo.bmp"s) return logo; //if for ext. console, remove it. just put "jblogo.bmp" in root, i can provide mine :)
-			if (self.get_handle() == handle && name == LPCSTR(0x64)) return splash;
+			//if (!IS_INTRESOURCE(name) && name == "logo.bmp"s) return logo; //if for ext. console, remove it. just put "jblogo.bmp" in root, i can provide mine :)
+			//if (self.get_handle() == handle && name == LPCSTR(0x64)) return splash;
 
 			return LoadImageA(handle, name, type, c_x, c_y, load);
 		}
@@ -42,8 +42,8 @@ namespace resources
 		{
 			const utils::nt::library self;
 
-			icon = LoadIconA(self.get_handle(), MAKEINTRESOURCEA(ID_ICON));
-			splash = LoadImageA(self.get_handle(), MAKEINTRESOURCEA(IMAGE_SPLASH), 0, 0, 0, LR_COPYFROMRESOURCE);
+			//icon = LoadIconA(self.get_handle(), MAKEINTRESOURCEA(ID_ICON));
+			//splash = LoadImageA(self.get_handle(), MAKEINTRESOURCEA(IMAGE_SPLASH), 0, 0, 0, LR_COPYFROMRESOURCE);
 		}
 
 		void* load_import(const std::string& library, const std::string& function) override
