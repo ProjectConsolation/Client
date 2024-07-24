@@ -86,7 +86,7 @@ namespace scheduler
 		volatile bool kill = false;
 		std::thread thread;
 		task_pipeline pipelines[pipeline::count];
-		//utils::hook::detour r_end_frame_hook;
+		utils::hook::detour r_end_frame_hook;
 		//utils::hook::detour g_run_frame_hook;
 		utils::hook::detour main_frame_hook;
 		utils::hook::detour g_shutdown_game_hook;
@@ -96,7 +96,12 @@ namespace scheduler
 		void execute(const pipeline type)
 		{
 			assert(type >= 0 && type < pipeline::count);
-			pipelines[type].execute(); //unused?
+			if (type < 0 || type >= pipeline::count)
+			{
+				return;
+			}
+
+			pipelines[type].execute();
 		}
 
 		void main_frame_stub()
@@ -107,6 +112,12 @@ namespace scheduler
 			{
 				execute(pipeline::main);
 			});
+		}
+
+		void render_frame_stub()
+		{
+			execute(pipeline::renderer);
+			r_end_frame_hook.invoke<void>();
 		}
 
 		
@@ -178,7 +189,7 @@ namespace scheduler
 		void post_load() override
 		{
 			//utils::hook::call(0x4FD7AB, scheduler::server_frame_stub);
-			//r_end_frame_hook.create(0x68A2AC, scheduler::r_end_frame_stub);
+			r_end_frame_hook.create(0x102DFB60, scheduler::render_frame_stub);
 			main_frame_hook.create(game::game_offset(0x103F7470), scheduler::main_frame_stub); // may be wrong?
 
 			g_shutdown_game_hook.create(game::game_offset(0x101AB0B0), g_shutdown_game_stub);
