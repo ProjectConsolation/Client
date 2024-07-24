@@ -1,6 +1,6 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
-
+#include <component/scheduler.hpp>
 #include "game/game.hpp"
 
 #include <utils/hook.hpp>
@@ -88,9 +88,13 @@ namespace input
 	public:
 		void post_load() override
 		{
-			cl_key_event_hook.create(game::game_offset(0x1031A680), cl_key_event_stub);
+			scheduler::loop([]
+				{
+					cl_key_event_hook.create(game::game_offset(0x1031A680), cl_key_event_stub);
+				}, scheduler::renderer);
+			//scheduler::loop(cg_draw_version, scheduler::pipeline::renderer);
 		}
 	};
 }
 
-//REGISTER_COMPONENT(input::component)
+REGISTER_COMPONENT(input::component)
