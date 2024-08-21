@@ -8,7 +8,7 @@ A work-in-progress project aimed at extending and improving upon the Multiplayer
  - Custom GSC script loading as well as overriding stock scripts
  - Borderless fullscreen
  - FPS unlocked
- - ``Probably more i forgot...``
+- ``Probably more that i forgot...``
 
 
 ## Custom Gun Game GSC Gameplay (Click to Play)
@@ -21,7 +21,7 @@ A work-in-progress project aimed at extending and improving upon the Multiplayer
 - Some RCE exploits may be present still
 - dvarDump command's string formatting is broken, game finds empty dvar and crashes
 - Certain localizations have different offsets despite being same game version (only known example so far is russian, read localization and add offset)
-- ``Probably more i forgot...``
+- ``Probably more that i forgot...``
 
 ## Planned and/or started features
 - In-Game console
@@ -40,7 +40,7 @@ A work-in-progress project aimed at extending and improving upon the Multiplayer
 - Steam proxy, so it would show you're playing ``Project: Consolation`` on your friend's Steam friendslist.
 - Discord RPC
 - DW Emulator to allow matchmaking without a legit copy as it is impossible to obtain anymore.
-- ``Probably more i forgot...``
+- ``Probably more that i forgot...``
 
 # Credits 
 
