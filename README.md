@@ -55,6 +55,6 @@ Currently this has only been tested and confirmed to work on the English 1.1 ver
 ## Fun facts
 - QoS is abandonware!
 - QoS was drastically different on the Wii version and even recieved updates
-- QoS seems to be <i><b>very</i></b> similar to the IW3 engine, even though it was developed by [a small team at] Treyarch during <i>World at War, though structs seem to be a mix of 3arc and IW style.</i>
+- QoS seems to be <i><b>very</i></b> similar to the IW3 engine, even though it was developed by [a small team at] Treyarch during <i>World at War</i>, though structs seem to be a mix of 3arc and IW style.
 - the game had a very messy development process, and their deadline was 9 months (source: [Treyarch's 007 Quantum of Solace tie-in game](https://www.youtube.com/watch?v=bU4FkHVYYdU))
 - the developers had to improvise 70% of the plot of the Singleplayer based off their own research into 007
