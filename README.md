@@ -1,13 +1,15 @@
 # Project: Consolation
 
-A work-in-progress project aimed at extending and improving upon the Multiplayer PC port experience of [007: Quantum of Solace](https://en.wikipedia.org/wiki/007:_Quantum_of_Solace), a game that runs on the Call of Duty engine between <i>Call of Duty: 4</i> & <i>Call of Duty: World at War.</i>
+A work-in-progress project aimed at extending and improving upon the Multiplayer PC port experience of [007: Quantum of Solace](https://en.wikipedia.org/wiki/007:_Quantum_of_Solace), a game that runs on the Call of Duty engine between <i>Call of Duty: 4</i> (IW3) & <i>Call of Duty: World at War. (T4)</i>
+Currently this has only been tested and confirmed to work on the English 1.1 version.
 
  ## Current features
  - Fully working External Console
  - Various DVARs have been unlocked & edited from their defaults. (e.g [changes to movement to match IW3 movement closer](https://youtu.be/5LNlgfV1z-k), in-game fonts are HD now, etc)
- - Custom GSC script loading as well as overriding stock scripts
+ - Custom GSC script loading + overriding stock scripts
  - Borderless fullscreen
- - FPS unlocked
+ - Force ``r_lodScale`` to ``0`` to prevent pop
+ - Patch ``com_maxfps``
 - ``Probably more that i forgot...``
 
 
@@ -24,14 +26,12 @@ A work-in-progress project aimed at extending and improving upon the Multiplayer
 - ``Probably more that i forgot...``
 
 ## Planned and/or started features
-- In-Game console
+- In-Game console (input module, started)
 - Re-add prone functionality
 - Adding toggle to enable/disable cover, and prone (DVAR)
 - Adding toggle for mantling without third person, and make it 1:1 to IW3 (DVAR)
 - Adding toggle for climbing without third person, and make it 1:1 to IW3 (DVAR)
 - Allow aiming to interrupt sprinting without letting go of any keys. (in other words, make it 1:1 to IW3)
-- Force ``r_lodScale`` to ``0`` to prevent pop
-- Patch ``com_maxfps``
 - Patch overhead font for readability.
 - Patch BG_GetPlayerMaxHealth to read DVAR & fix bot movement (Refer to other COD clients of the era)
 - Custom Zones via [qos-xport](https://github.com/mjkzy/qos-xport/) & port Xbox/PS3/Wii maps & weapons that QOS PC didn't get.
@@ -39,7 +39,7 @@ A work-in-progress project aimed at extending and improving upon the Multiplayer
 - Patch mouse input to get real raw mouse input
 - Steam proxy, so it would show you're playing ``Project: Consolation`` on your friend's Steam friendslist.
 - Discord RPC
-- DW Emulator to allow matchmaking without a legit copy as it is impossible to obtain anymore.
+- DW Emulator to allow matchmaking without a legit copy as it is hard to obtain and obsolete.
 - ``Probably more that i forgot...``
 
 # Credits 
@@ -55,7 +55,6 @@ A work-in-progress project aimed at extending and improving upon the Multiplayer
 ## Fun facts
 - QoS is abandonware!
 - QoS was drastically different on the Wii version and even recieved updates
-- QoS seems to be <i><b>very</i></b> similar to the IW3 engine, even though it was developed by [a small team at] Treyarch during <i>World at War</i>
+- QoS seems to be <i><b>very</i></b> similar to the IW3 engine, even though it was developed by [a small team at] Treyarch during <i>World at War, though structs seem to be a mix of 3arc and IW style.</i>
 - the game had a very messy development process, and their deadline was 9 months (source: [Treyarch's 007 Quantum of Solace tie-in game](https://www.youtube.com/watch?v=bU4FkHVYYdU))
 - the developers had to improvise 70% of the plot of the Singleplayer based off their own research into 007
-- we could call this "T3", but it's not really a COD game so it wouldn't make much sense and is just a standalone Treyarch title between IW3 & T4
