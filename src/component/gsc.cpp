@@ -388,7 +388,7 @@ namespace gsc
 			console::error("%s: ", result.c_str());
 			Scr_PrintSourcePos(*reinterpret_cast<char**>(game::game_offset(0x118B5224)), *reinterpret_cast<char**>(game::game_offset(0x118B522C)), a1);
 			console::error("************************************\n");
-			game::Com_Error((int)".\\scr_parser.cpp", 1467, 5, (char*)"script compile error\n%s\n%s\n(see console for details)\n", result.c_str(), "");
+			game::Com_Error((int)".\\gsc.cpp", 1467, 5, (char*)"script compile error\n%s\n%s\n(see console for details)\n", result.c_str(), "");
 		}
 
 		utils::hook::detour compile_error_2_hook;
@@ -409,10 +409,10 @@ namespace gsc
 			console::error("******* script compile error *******\n");
 			console::error("%s: ", result.c_str());
 
-			auto errorMessage = game::sub_1022D690((char*)a1, 0);
+			auto errorMessage = game::Scr_FormatCodePos((char*)a1, 0);
 			console::error("%s", errorMessage);
 			console::error("************************************\n");
-			game::Com_Error((int)".\\scr_parser.cpp", 1507, 5, (char*)"script compile error\n%s\n%s\n(see console for details)\n", result.c_str(), errorMessage);
+			game::Com_Error((int)".\\gsc.cpp", 1507, 5, (char*)"script compile error\n%s\n%s\n(see console for details)\n", result.c_str(), errorMessage);
 		}
 	}
 
