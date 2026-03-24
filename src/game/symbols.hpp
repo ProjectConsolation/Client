@@ -29,7 +29,7 @@ namespace game
 	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
 
-	WEAK symbol<char* (char* result, int a2)> sub_1022D690{ game_offset(0x1022D690) };
+	WEAK symbol<char* (char* result, int a2)> Scr_FormatCodePos{ game_offset(0x1022D690) };
 
 	WEAK symbol<void()> Con_CancelAutoComplete{ game_offset(0x10312B20) };
 	WEAK symbol<void(int localClientNum, int channel, const char* txt, int duration, int pixelWidth, int flags)> CL_ConsolePrint{ game_offset(0x10315D20) };
