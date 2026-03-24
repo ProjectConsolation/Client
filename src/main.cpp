@@ -10,6 +10,9 @@
 
 #include <ShellScalingApi.h>
 
+#include "component/xlive.hpp"         // ADD - just this one include
+
+
 namespace
 {
 	static BYTE original_code[5];
@@ -100,6 +103,10 @@ namespace
 				//utils::hook::set(0x5931B8, exit_hook); // ExitProcess import, might not be good to hook this but iat isn't working
 
 				MessageBoxA(NULL, "CONNECT DEBUGGER", "DEBUG", MB_DEFBUTTON1);
+
+				xlive::apply_early();
+
+
 				if (!component_loader::post_start())
 				{
 					throw "component post start failed";
