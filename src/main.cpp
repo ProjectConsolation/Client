@@ -103,18 +103,14 @@ namespace
 				//utils::hook::set(0x5931B8, exit_hook); // ExitProcess import, might not be good to hook this but iat isn't working
 
 				MessageBoxA(NULL, "CONNECT DEBUGGER", "DEBUG", MB_DEFBUTTON1);
+				// NO apply_early() needed or useful here - xlive already loaded
 
-				xlive::apply_early();
+				if (!component_loader::post_start()) throw "post start failed";
+				if (!component_loader::post_load()) throw "post load failed";
 
-
-				if (!component_loader::post_start())
-				{
-					throw "component post start failed";
-				}
-				if (!component_loader::post_load())
-				{
-					throw "component post load failed";
-				}
+				// xlive has now fully initialized successfully
+				MessageBoxA(NULL, "XLIVE DONE - ATTACH FOR GAME CODE", "DEBUG", MB_DEFBUTTON1);
+				// Attach VS here for debugging game/component code
 			}
 			catch (std::string& error)
 			{
