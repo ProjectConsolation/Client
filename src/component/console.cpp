@@ -534,7 +534,13 @@ namespace console
 
 			// setup external console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);
-			SetConsoleTitle("Project: Consolation - Console");
+			//SetConsoleTitle("Project: Consolation - Console");
+#ifndef GIT_VERSION
+#define GIT_VERSION "unknown"
+#endif
+
+			std::string title = std::string("Project: Consolation [") + GIT_VERSION + "]";
+			SetConsoleTitleA(title.c_str());
 
 			con.kill_event = CreateEvent(NULL, TRUE, FALSE, NULL);
 
