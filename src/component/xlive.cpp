@@ -120,84 +120,152 @@ namespace xlive
             const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
             const size_t sz = nt->OptionalHeader.SizeOfImage;
 
-            // Fix 1: redirect xlive's IsDebuggerPresent IAT entry
+            // Helper: scan and apply a patch to all matches.
+            // patch_offset/patch_data/patch_len describe what to overwrite relative to match start.
+            const auto patch_all = [&](const uint8_t* pat, size_t pat_len,
+                size_t patch_offset, const uint8_t* patch_data, size_t patch_len)
+                {
+                    uint8_t* p = scan(base, sz, pat, pat_len);
+                    while (p)
+                    {
+                        mem_write(p + patch_offset, patch_data, patch_len);
+                        p = scan(p + 1, sz - (p - base) - 1, pat, pat_len);
+                    }
+                };
+
+            static const uint8_t nop1 = 0x90;
+            static const uint8_t nop2[2] = { 0x90, 0x90 };
+            static const uint8_t nop6[6] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
+            static const uint8_t nop12[12] = {
+                0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+            };
+
+            // Fix 1: redirect xlive's IsDebuggerPresent IAT entry to always return FALSE
             patch_isdebugger(base, sz);
 
-            // Fix 2: NOP pointer corruption after PEB.BeingDebugged check
+            // Fix 2: NOP pointer corruption triggered when PEB.BeingDebugged == 1
+            //   sub edi, 135h  (81 EF 35 01 00 00)
+            //   sub esi, 1F620h (81 EE 20 F6 01 00)
             {
-                static const uint8_t corr_pat[] = {
+                static const uint8_t pat[] = {
                     0x81,0xEF,0x35,0x01,0x00,0x00,
                     0x81,0xEE,0x20,0xF6,0x01,0x00
                 };
-                uint8_t* p = scan(base, sz, corr_pat, sizeof(corr_pat));
-                while (p)
-                {
-                    uint8_t nops[12]; memset(nops, 0x90, 12);
-                    mem_write(p, nops, 12);
-                    p = scan(p + 1, sz - (p - base) - 1, corr_pat, sizeof(corr_pat));
-                }
+                patch_all(pat, sizeof(pat), 0, nop12, 12);
             }
 
-            // Fix 3: NOP all SEH-based debugger traps (int 1 / int 3)
-            //   xlive uses exception traps inside SEH frames to detect debuggers.
-            //   Its SEH handlers catch the exception and set "clean" flags.
-            //   With a debugger, VS intercepts the exception first -> flags never set -> detection.
-            //   Fixing: NOP just the trap instruction so execution falls through directly
-            //   to the "survived" path, identical to what the SEH handler produces.
-            //
-            //   A) int 1 in sub_53D016 + sub_987D5C (2 occurrences):
-            //      83 65 FC 00  (and [TryLevel], 0)
-            //      CD 01        (int 1)    <- NOP these 2 bytes
+            // Fix 3A: NOP int 1 SEH traps (2 occurrences — sub_53D016 + sub_987D5C)
+            //   and [TryLevel], 0 / int 1
+            //   NOP: just the CD 01
             {
-                static const uint8_t pat[] = { 0x83,0x65,0xFC,0x00,0xCD,0x01 };
-                uint8_t* p = scan(base, sz, pat, sizeof(pat));
-                while (p)
-                {
-                    uint8_t nop2[2] = { 0x90, 0x90 };
-                    mem_write(p + 4, nop2, 2);  // NOP just the CD 01
-                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
-                }
+                static const uint8_t pat[] = { 0x83,0x65,0xFC,0x00, 0xCD,0x01 };
+                patch_all(pat, sizeof(pat), 4, nop2, 2);
             }
 
-            //   B) int 3 with magic SI/DI values in sub_9883C3:
-            //      66 BE 47 46  (mov si, 4647h)
-            //      66 BF 4D 4A  (mov di, 4A4Dh)
-            //      CC           (int 3)    <- NOP this 1 byte
+            // Fix 3B: NOP int 3 SEH trap with magic SI/DI sentinel (sub_9883C3)
+            //   mov si, 4647h / mov di, 4A4Dh / int 3
+            //   NOP: just the CC
             {
                 static const uint8_t pat[] = {
                     0x66,0xBE,0x47,0x46,
                     0x66,0xBF,0x4D,0x4A,
                     0xCC
                 };
-                uint8_t* p = scan(base, sz, pat, sizeof(pat));
-                while (p)
-                {
-                    uint8_t nop = 0x90;
-                    mem_write(p + 8, &nop, 1);  // NOP just the CC
-                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
-                }
+                patch_all(pat, sizeof(pat), 8, &nop1, 1);
             }
 
-            //   C) int 3 in sub_9887CD:
-            //      C7 45 FC 02 00 00 00  (mov [TryLevel], 2)
-            //      CC                    (int 3)    <- NOP this 1 byte
+            // Fix 3C: NOP ud2 SEH trap (sub_53D016)
+            //   mov [TryLevel], 2 / ud2
+            //   NOP: just the 0F 0B
             {
                 static const uint8_t pat[] = {
                     0xC7,0x45,0xFC,0x02,0x00,0x00,0x00,
-                    0xCC
+                    0x0F,0x0B
                 };
+                patch_all(pat, sizeof(pat), 7, nop2, 2);
+            }
+
+            // Fix 4: NOP int 41h SEH traps (5 occurrences)
+            //   mov ax, 4Fh / int 41h — invalid interrupt, SEH catches it
+            //   NOP: just the CD 41 — AX stays 0x4F, falls through to "mov [var], ax"
+            {
+                static const uint8_t pat[] = { 0x66,0xB8,0x4F,0x00, 0xCD,0x41 };
+                patch_all(pat, sizeof(pat), 4, nop2, 2);
+            }
+
+            // Fix 5: NOP divide-by-zero SEH traps (4 occurrences)
+            //   xor eax, eax / div eax — intentional #DE, SEH catches it
+            //   NOP: just the F7 F0 — EAX stays 0, falls through
+            {
+                static const uint8_t pat[] = { 0x33,0xC0, 0xF7,0xF0 };
+                patch_all(pat, sizeof(pat), 2, nop2, 2);
+            }
+
+            // Fix 6: NOP POPFW trap-flag traps (4 occurrences)
+            //   push word [ebp+var] / popfw — sets TF, causes single-step exception
+            //   Scan first 3 bytes (66 FF 75), verify popfw (66 9D) at +4, NOP it
+            {
+                static const uint8_t pat[] = { 0x66,0xFF,0x75 };
                 uint8_t* p = scan(base, sz, pat, sizeof(pat));
                 while (p)
                 {
-                    uint8_t nop = 0x90;
-                    mem_write(p + 7, &nop, 1);  // NOP just the CC
+                    if (p[4] == 0x66 && p[5] == 0x9D)
+                        mem_write(p + 4, nop2, 2);
                     p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
                 }
             }
 
-            // NOTE: mask_pat (NtQIP thread check) removed — sub_53D016 is a function
-            // pointer resolver, not just anti-debug. Patching its return path nulls
-            // xlive's entire function dispatch table causing crashes.
+            // Fix 7: NOP JB in sub_53D016 thread exit-code mask check
+            //   xlive spawns threads using handle values as fn ptrs (dynamically mapped
+            //   detection stubs). Thread exit codes carry the result, masked and compared.
+            //   JB = "clean" -> returns 0 (correct not-detected state).
+            //   Fall-through = "detected" -> computes kill function pointers.
+            //   NOP the JB so execution always falls through to the clean return.
+            {
+                static const uint8_t pat[] = {
+                    0x25,0x9C,0x25,0xBB,0xD9,       // and eax, 0D9BB259Ch
+                    0x3D,0xB2,0x53,0xC1,0x00,       // cmp eax, 0C153B2h
+                    0x0F,0x82,0xD6,0xFE,0xFF,0xFF   // jb loc_53D05B
+                };
+                patch_all(pat, sizeof(pat), 10, nop6, 6);
+            }
+
+            // Fix 8: JNB -> JMP in sub_4FF9D4 thread exit-code check
+            //   Same thread detection, different structure. JNB jumps to success path.
+            //   With debugger: masked result >= threshold -> JNB not taken -> error path.
+            //   Change JNB (73) to JMP (EB), keeping the same offset byte (26).
+            {
+                static const uint8_t pat[] = {
+                    0x25,0x9C,0x25,0xBB,0xD9,   // and eax, 0D9BB259Ch
+                    0x3D,0xB2,0x53,0xC1,0x00,   // cmp eax, 0C153B2h
+                    0x73,0x26                    // jnb +26h
+                };
+                static const uint8_t jmp = 0xEB;
+                patch_all(pat, sizeof(pat), 10, &jmp, 1);
+            }
+
+            // Fix 9: NOP state XOR in XLiveInitialize path (sub_500A56)
+            //   Reads PEB.BeingDebugged, stores it, then XORs xlive's state variable
+            //   with 0x2B7 if nonzero — corrupting internal state -> XNetStartup fails.
+            //   NOP the XOR (10 bytes). Without debugger, the preceding JZ already
+            //   skips it; with debugger, our NOP prevents the corruption.
+            {
+                static const uint8_t pat[] = {
+                    0x64,0xA1,0x18,0x00,0x00,0x00,  // mov eax, fs:[18h]
+                    0x8B,0x40,0x30,                  // mov eax, [eax+30h]
+                    0x0F,0xB6,0x40,0x02,             // movzx eax, [eax+2]
+                    0x8B,0x4D,0xD4,                  // mov ecx, [hModule]
+                    0x89,0x01,                        // mov [ecx], eax
+                    0x39,0x55,0xD8,                  // cmp [var_28], edx
+                    0x74,0x0A                         // jz +A
+                };
+                static const uint8_t nop10[10] = {
+                    0x90,0x90,0x90,0x90,0x90,
+                    0x90,0x90,0x90,0x90,0x90
+                };
+                patch_all(pat, sizeof(pat), sizeof(pat), nop10, 10);
+            }
         }
 
         void clear_being_debugged()
