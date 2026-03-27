@@ -1,14 +1,45 @@
 /*
  * xlive.cpp — GFWL (Games for Windows Live) anti-debug bypass
  *
- * The retail xlive.dll wraps its public API (XLiveInitialize, XNetStartup,
- * XCloseHandle etc.) inside a protection layer that detects debuggers through
- * multiple independent mechanisms and corrupts internal state on detection.
- * This component patches all known checks in-process so VS can attach freely.
+ * The retail xlive.dll wraps its public API inside a protection layer that
+ * detects debuggers and corrupts internal state on detection. This component
+ * patches all known checks so VS can attach freely.
  *
- * All scan patterns target the retail SysWOW64\xlive.dll. The security-disabled
- * SDK build (xlive_debuggable.dll) has none of these protection functions —
- * they are purely injected DRM code absent from the SDK.
+ * ── How xlive's thread-based detection works ─────────────────────────────────
+ *
+ * xlive (2009) uses two independent detection mechanisms:
+ *
+ *   Mechanism A — hardware breakpoint detction (sub_4F8A59):
+ *     DuplicateHandle(current_thread) -> TargetHandle
+ *     CreateThread(lpStart=sub_5F75F8, lpParam=TargetHandle)
+ *     sub_5F75F8: SuspendThread(param) -> GetThreadContext -> checks Dr7
+ *       Dr7 == 0 (no HW BPs): exit code = 0xF3B02C90
+ *       Dr7 != 0 (HW BPs set): exit code = 1
+ *     Parent reads exit code, applies mask 0xD9BB259C / threshold 0xC153B2.
+ *
+ *   Mechanism B — low-memory stub execution (sub_5072BB):
+ *     DuplicateHandle(current_thread) -> TargetHandle (a small integer like 0x968)
+ *     CreateThread(lpStart=TargetHandle, ...) — executes code AT the handle address
+ *     This relied on xlive pre-mapping executable stubs at handle-range addresses
+ *     using VirtualAlloc on Windows XP/Vista/7, where the first 64 KB was
+ *     allocatable. On Windows 10/11 this is impossible — the kernel permanently
+ *     reserves the first 64 KB — so CreateThread crashes with AV at 0x968 etc.
+ *
+ * ── Why naive byte patches don't fix it ──────────────────────────────────────
+ *
+ * The "detcted" fall-through path in sub_5072BB leads to sub_8DC4BC which
+ * performs the actual low-mmeory setup. Patching the branch that skips to the
+ * early return (which we previously called Fix 7/8/11) also skips sub_8DC4BC,
+ * leaving the thread stub unmapped — same crash, different address each run.
+ *
+ * ── The correct fix ───────────────────────────────────────────────────────────
+ *
+ * Hook CreateThread in xlive's own IAT. When lpStartAddress < 0x10000 (a
+ * handle-value execution attempt), skip the thread entirely and return a fake
+ * HANDLE whose subsequent WaitForSingleObject / GetExitCodeThread calls return
+ * a clean exit code (0xF3B02C90) that keeps xlive's state machine healthy.
+ *
+ * All other CreateThread calls (lpStart >= 0x10000) are forwarded normally.
  *
  * Ordinal reference (from xlive.lib):
  *   xlive_5000 = XLiveInitialize
@@ -58,7 +89,146 @@ namespace xlive
                 ntqip_hook.get_original())(hProcess, infoClass, pInfo, infoLen, pRetLen);
         }
 
-        // ---------------------------------------------------------------------------
+        // -------------------------------------------------------------------------
+        // Low-memory thread intercept
+        //
+        // xlive's Mechanism B creates threads with lpStartAddress = a handle value
+        // (typically < 0x10000). On Windows XP/Vista/7 these pages were allocatable;
+        // on Windows 10/11 the kernel owns the first 64 KB and attempting to execute
+        // there crashes with AV regardless of any protection bypass.
+        //
+        // This stub intercepts those calls and returns a fake HANDLE backed by a
+        // real event object. WaitForSingleObject on it returns WAIT_OBJECT_0
+        // immediately, and GetExitCodeThread returns 0xF3B02C90 — the "no hardware
+        // breakpoints" clean value that xlive's mask checks expect.
+        //
+        // All CreateThread calls with lpStartAddress >= 0x10000 are forwarded
+        // unchanged so xlive's legitimate threading still works.
+
+        // Sentinel exit code: the value sub_5F75F8 returns when Dr7 == 0.
+        // Both xlive mask checks (0xD9BB259C and 0xE5937CB2) produce results
+        // below their respective thresholds with this value, satisfying xlive.
+        static constexpr DWORD CLEAN_EXIT_CODE = 0xF3B02C90;
+
+        // A thread-local "fake handle" pool. xlive holds at most a handful of
+        // these concurrently so a fixed-size ring is sufficient.
+        static constexpr size_t FAKE_POOL_SIZE = 32;
+        struct FakeThread
+        {
+            HANDLE event = nullptr; // manual-reset event, pre-signalled
+            DWORD  exit_code = CLEAN_EXIT_CODE;
+            bool   active = false;
+        };
+        static FakeThread fake_pool[FAKE_POOL_SIZE];
+        static CRITICAL_SECTION fake_pool_cs;
+        static bool fake_pool_init = false;
+
+        static void ensure_fake_pool()
+        {
+            if (fake_pool_init) return;
+            InitializeCriticalSection(&fake_pool_cs);
+            fake_pool_init = true;
+        }
+
+        // Encode a FakeThread* as a pseudo-HANDLE using a sentinel tag bit.
+        // Real handles are always multiples of 4 and have bits 0-1 clear.
+        // We use the lowest bit to tag our fake handles; real code never sees
+        // them except through our hooked GetExitCodeThread/WaitForSingleObject.
+        static HANDLE encode_fake(FakeThread* ft)
+        {
+            return reinterpret_cast<HANDLE>(
+                reinterpret_cast<uintptr_t>(ft) | 1u);
+        }
+        static FakeThread* decode_fake(HANDLE h)
+        {
+            const auto v = reinterpret_cast<uintptr_t>(h);
+            if ((v & 1u) == 0) return nullptr;
+            auto* ft = reinterpret_cast<FakeThread*>(v & ~uintptr_t(1));
+            // Bounds-check against pool
+            if (ft < fake_pool || ft >= fake_pool + FAKE_POOL_SIZE) return nullptr;
+            return ft->active ? ft : nullptr;
+        }
+
+        static HANDLE alloc_fake_thread()
+        {
+            ensure_fake_pool();
+            EnterCriticalSection(&fake_pool_cs);
+            FakeThread* ft = nullptr;
+            for (auto& slot : fake_pool)
+            {
+                if (!slot.active) { ft = &slot; break; }
+            }
+            if (!ft)
+            {
+                LeaveCriticalSection(&fake_pool_cs);
+                return nullptr;
+            }
+            if (!ft->event)
+                ft->event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            ft->exit_code = CLEAN_EXIT_CODE;
+            ft->active = true;
+            SetEvent(ft->event); // pre-signalled so WaitForSingleObject returns immediately
+            LeaveCriticalSection(&fake_pool_cs);
+            return encode_fake(ft);
+        }
+
+        static void free_fake_thread(FakeThread* ft)
+        {
+            EnterCriticalSection(&fake_pool_cs);
+            ResetEvent(ft->event);
+            ft->active = false;
+            LeaveCriticalSection(&fake_pool_cs);
+        }
+
+        // Hooked CreateThread — intercepted in xlive's own IAT.
+        static HANDLE WINAPI CreateThread_hook(
+            LPSECURITY_ATTRIBUTES sec, SIZE_T stack,
+            LPTHREAD_START_ROUTINE start, LPVOID param,
+            DWORD flags, LPDWORD tid)
+        {
+            if (reinterpret_cast<uintptr_t>(start) < 0x10000u)
+            {
+                // Low-memory stub thread — cannot execute on Win10/11.
+                // Return a fake signalled handle; callers see immediate completion
+                // with the clean exit code.
+                if (tid) *tid = 0;
+                HANDLE h = alloc_fake_thread();
+                return h ? h : INVALID_HANDLE_VALUE;
+            }
+            return CreateThread(sec, stack, start, param, flags, tid);
+        }
+
+        // Hooked WaitForSingleObject — passes fake handles without blocking.
+        static DWORD WINAPI WaitForSingleObject_hook(HANDLE h, DWORD timeout)
+        {
+            if (FakeThread* ft = decode_fake(h))
+                return WAIT_OBJECT_0;
+            return WaitForSingleObject(h, timeout);
+        }
+
+        // Hooked GetExitCodeThread — returns the clean exit code for fake handles.
+        static BOOL WINAPI GetExitCodeThread_hook(HANDLE h, LPDWORD exit_code)
+        {
+            if (FakeThread* ft = decode_fake(h))
+            {
+                if (exit_code) *exit_code = ft->exit_code;
+                return TRUE;
+            }
+            return GetExitCodeThread(h, exit_code);
+        }
+
+        // Hooked CloseHandle — recycles fake handles silently.
+        static BOOL WINAPI CloseHandle_hook(HANDLE h)
+        {
+            if (FakeThread* ft = decode_fake(h))
+            {
+                free_fake_thread(ft);
+                return TRUE;
+            }
+            return CloseHandle(h);
+        }
+
+        // -------------------------------------------------------------------------
         // Patch helpers
 
         bool mem_write(void* dst, const void* src, size_t len)
@@ -80,7 +250,7 @@ namespace xlive
             return nullptr;
         }
 
-        // ---------------------------------------------------------------------------
+        // -------------------------------------------------------------------------
         // Fix 1 — redirect IsDebuggerPresent in xlive's own IAT
 
         void patch_isdebugger(uint8_t* base, size_t image_size)
@@ -121,19 +291,24 @@ namespace xlive
                         const auto name_off = reinterpret_cast<const uint8_t*>(ibn->Name) - base;
                         if (name_off >= static_cast<ptrdiff_t>(image_size)) continue;
 
-                        if (strcmp(reinterpret_cast<const char*>(ibn->Name), "IsDebuggerPresent") == 0)
-                        {
-                            const auto stub = reinterpret_cast<void*>(&IsDebuggerPresent_stub);
+                        const char* fn_name = reinterpret_cast<const char*>(ibn->Name);
+                        void* stub = nullptr;
+
+                        if (strcmp(fn_name, "IsDebuggerPresent") == 0) stub = reinterpret_cast<void*>(&IsDebuggerPresent_stub);
+                        else if (strcmp(fn_name, "CreateThread") == 0) stub = reinterpret_cast<void*>(&CreateThread_hook);
+                        else if (strcmp(fn_name, "WaitForSingleObject") == 0) stub = reinterpret_cast<void*>(&WaitForSingleObject_hook);
+                        else if (strcmp(fn_name, "GetExitCodeThread") == 0) stub = reinterpret_cast<void*>(&GetExitCodeThread_hook);
+                        else if (strcmp(fn_name, "CloseHandle") == 0) stub = reinterpret_cast<void*>(&CloseHandle_hook);
+
+                        if (stub)
                             mem_write(&ft->u1.Function, &stub, sizeof(stub));
-                            return;
-                        }
                     }
                 }
             }
             __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
 
-        // ---------------------------------------------------------------------------
+        // -------------------------------------------------------------------------
 
         void patch_xlive()
         {
@@ -144,7 +319,6 @@ namespace xlive
             const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
             const size_t sz = nt->OptionalHeader.SizeOfImage;
 
-            // Scan for a pattern and write replacement bytes at every match.
             const auto patch_all = [&](const uint8_t* pat, size_t pat_len,
                 size_t off, const uint8_t* data, size_t data_len)
                 {
@@ -158,16 +332,17 @@ namespace xlive
 
             static const uint8_t NOP1 = 0x90;
             static const uint8_t NOP2[2] = { 0x90, 0x90 };
-            static const uint8_t NOP6[6] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
             static const uint8_t NOP10[10] = { 0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90 };
             static const uint8_t NOP12[12] = { 0x90,0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90,0x90 };
             static const uint8_t JMP_SHORT = 0xEB;
 
             // -------------------------------------------------------------------
-            // Fix 1: IsDebuggerPresent IAT redirect
+            // Fix 1: IAT hooks — IsDebuggerPresent + CreateThread intercept
             //
-            // xlive's CRT startup calls IsDebuggerPresent via its own IAT slot.
-            // Redirect that slot to a stub that always returns FALSE.
+            // Redirects xlive's own IAT slots. CreateThread_hook intercepts the
+            // low-memory thread creation (Mechanism B) that crashes on Win10/11.
+            // WaitForSingleObject/GetExitCodeThread/CloseHandle hooks complete
+            // the illusion so xlive's state machine sees a "clean" thread result.
             patch_isdebugger(base, sz);
 
             // -------------------------------------------------------------------
@@ -187,34 +362,26 @@ namespace xlive
             }
 
             // -------------------------------------------------------------------
-            // Fix 2B: bypass INT3 breakpoint scans on the thread-inspect function
+            // Fix 2B: bypass INT3 breakpoint scans (Mechanism A — 0xCC checks)
             //
-            // The protection layer calls XCloseHandle (xlive_5251) as a wrapper
-            // for thread handle cleanup after thread-context inspection.
-            // xlive checks whether the first byte of this function is 0xCC
-            // (an INT3 that VS injects when setting a thread-entry breakpoint)
-            // at 14 different call sites. Detection either:
-            //   (a) corrupts a function pointer by XOR/SAR/SUB then calls it
-            //       -> crash at the mangled address
-            //   (b) causes the detection setup function to return early, leaving
-            //       the low-memory thread stub region unmapped -> crash on execute
-            //
-            // Fix: change every JNZ following the 0xCC comparison to JMP so the
-            // "detected" branch is never taken regardless of VS breakpoints.
+            // xlive checks whether the first byte of the thread-inspect function
+            // (sub_5F75F8) is 0xCC (an INT3 that VS injects on thread creation)
+            // at 14+ call sites. Detection either corrupts a function pointer
+            // (crash at mangled address) or causes early exit (stub unmapped).
+            // Fix: change every JNZ following the 0xCC comparison to JMP.
             {
-                // Primary checks -- 5-byte form: cmp [reg], 0CCh / jnz +xx
-                // JNZ is always at byte offset 3; patch only that byte (75->EB).
+                // Primary checks — 5-byte form: cmp [reg], 0CCh / jnz +xx
                 static const uint8_t cc_primary[][5] = {
-                    {0x80,0x39,0xCC,0x75,0x1D},  // AntiDbg_CheckThreadExitCode: early exit
-                    {0x80,0x39,0xCC,0x75,0x05},  // AntiDbg_CheckBreakpointAndInit: sub eax,221h
-                    {0x80,0x3A,0xCC,0x75,0x08},  // AntiDbg_CheckBreakpointAndInit: add eax,2BBh
-                    {0x80,0x38,0xCC,0x75,0x10},  // AntiDbg_DetectionChainF: corrupts counter
-                    {0x80,0x38,0xCC,0x75,0x04},  // AntiDbg_DetectionChainD: sar [var],1Ah
-                    {0x80,0x3A,0xCC,0x75,0x0A},  // AntiDbg_DetectionChainE: or [var],0CCh
-                    {0x80,0x38,0xCC,0x75,0x0F},  // AntiDbg_DetectionChainG: sets error 80004005h
-                    {0x80,0x38,0xCC,0x75,0x0A},  // AntiDbg_DetectionChainB: imul state by 182h
-                    {0x80,0x3A,0xCC,0x75,0x07},  // AntiDbg_DetectionChainA: or [hModule],0CCh
-                    {0x80,0x3E,0xCC,0x75,0x0A},  // AntiDbg_DetectionChainC: or [var],0CCh
+                    {0x80,0x39,0xCC,0x75,0x1D},
+                    {0x80,0x39,0xCC,0x75,0x05},
+                    {0x80,0x3A,0xCC,0x75,0x08},
+                    {0x80,0x38,0xCC,0x75,0x10},
+                    {0x80,0x38,0xCC,0x75,0x04},
+                    {0x80,0x3A,0xCC,0x75,0x0A},
+                    {0x80,0x38,0xCC,0x75,0x0F},
+                    {0x80,0x38,0xCC,0x75,0x0A},
+                    {0x80,0x3A,0xCC,0x75,0x07},
+                    {0x80,0x3E,0xCC,0x75,0x0A},
                 };
                 for (const auto& pat : cc_primary)
                 {
@@ -226,30 +393,18 @@ namespace xlive
                     }
                 }
 
-                // Variable-length checks -- JNZ offset and pattern length differ.
+                // Variable-length checks — JNZ offset and pattern length differ.
                 struct CcPatch { const uint8_t* pat; size_t len; size_t jnz_off; };
                 static const CcPatch cc_var[] = {
-                    // Value-corrupting: crash at XOR'd/shifted/subtracted address
                     {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4},
-                    // AntiDbg_CheckThreadExitCode: xor [var_44], 0DBh -> crash at XOR'd addr
                     {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A",             10, 4},
-                    // AntiDbg_DetectionChainD: sar [var_44], 1Ah -> near-zero fn ptr
                     {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7},
-                    // AntiDbg_DetectionHub: and [var_144], 81h -> masks detection flags
                     {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4},
-                    // AntiDbg_Int41Traps: add [ebx+4], 0C3h -> writes RET into live code
                     {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4},
-                    // AntiDbg_DetectionChainA: add [Src], 110h -> corrupts string ptr
-
-                    // Early-exit paths: abort detection setup -> low-memory stub unmapped
                     {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x1D",  9, 7},
-                    // AntiDbg_DetectionHub: returns early before XCloseHandle stub setup
                     {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1B",              6, 4},
-                    // AntiDbg_Int41Traps: early return path
                     {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1C",              6, 4},
-                    // AntiDbg_DetectionChainA: early return path
                     {(const uint8_t*)"\x80\xBD\xDB\xFE\xFF\xFF\xCC\x75\x18",  9, 7},
-                    // AntiDbg_DetectionChainG: calls AntiDbg_ReportDetection before abort
                 };
                 for (const auto& e : cc_var)
                 {
@@ -264,177 +419,94 @@ namespace xlive
 
             // -------------------------------------------------------------------
             // Fix 3A: NOP int 1 SEH traps
-            //
-            // Two locations set TryLevel=0 then execute INT 1 inside an SEH frame.
-            // The SEH handler catches it and sets a "survived" flag.
-            // With a debugger attached VS intercepts INT 1 first; the flag is never
-            // set, causing downstream detection.
-            // NOP: just the CD 01 -- falls through to the "survived" path directly.
             {
                 static const uint8_t pat[] = {
-                    0x83,0x65,0xFC,0x00,  // and [TryLevel], 0   (enter SEH try block)
-                    0xCD,0x01             // int 1               <- NOP these 2 bytes
+                    0x83,0x65,0xFC,0x00,  // and [TryLevel], 0
+                    0xCD,0x01             // int 1  <- NOP
                 };
                 patch_all(pat, sizeof(pat), 4, NOP2, 2);
             }
 
-            // Fix 3B: NOP int 3 SEH trap -- magic SI/DI sentinel
-            //
-            // AntiDbg_IntSentinelTrap loads magic constants (SI=4647h, DI=4A4Dh)
-            // then executes INT 3 inside an SEH frame. The handler verifies the
-            // sentinel values to confirm it was the expected trap source.
-            // NOP: just the CC byte -- SI/DI stay set, execution falls through.
+            // Fix 3B: NOP int 3 SEH trap — magic SI/DI sentinel
             {
                 static const uint8_t pat[] = {
                     0x66,0xBE,0x47,0x46,  // mov si, 4647h
                     0x66,0xBF,0x4D,0x4A,  // mov di, 4A4Dh
-                    0xCC                  // int 3  <- NOP this 1 byte
+                    0xCC                  // int 3  <- NOP
                 };
                 patch_all(pat, sizeof(pat), 8, &NOP1, 1);
             }
 
             // Fix 3C: NOP ud2 SEH trap
-            //
-            // Sets TryLevel=2 then executes UD2 (undefined instruction) inside an
-            // SEH frame. Handler catches EXCEPTION_ILLEGAL_INSTRUCTION and sets
-            // a "survived" flag; the state variable [ebx+4] carries the result.
-            // NOP: just the 0F 0B -- EBX state falls through unchanged.
             {
                 static const uint8_t pat[] = {
                     0xC7,0x45,0xFC,0x02,0x00,0x00,0x00,  // mov [TryLevel], 2
-                    0x0F,0x0B                              // ud2  <- NOP these 2 bytes
+                    0x0F,0x0B                              // ud2  <- NOP
                 };
                 patch_all(pat, sizeof(pat), 7, NOP2, 2);
             }
 
             // -------------------------------------------------------------------
             // Fix 4: NOP int 41h SEH traps (5 occurrences)
-            //
-            // Loads AX=4Fh then executes INT 41h (invalid interrupt vector on x86).
-            // The SEH handler stores AX as the "detection passed" result value.
-            // NOP: just the CD 41 -- AX stays 0x4F, falls through to
-            // "mov [var], ax" which is the identical post-handler write.
             {
                 static const uint8_t pat[] = {
                     0x66,0xB8,0x4F,0x00,  // mov ax, 4Fh
-                    0xCD,0x41             // int 41h  <- NOP these 2 bytes
+                    0xCD,0x41             // int 41h  <- NOP
                 };
                 patch_all(pat, sizeof(pat), 4, NOP2, 2);
             }
 
             // -------------------------------------------------------------------
             // Fix 5: NOP divide-by-zero SEH traps (4 occurrences)
-            //
-            // Executes "xor eax, eax / div eax" -- deliberate #DE fault inside
-            // an SEH frame. The handler inspects the EXCEPTION_RECORD to verify
-            // the expected exception code.
-            // NOP: just the F7 F0 -- EAX stays 0, falls through to success path.
             {
                 static const uint8_t pat[] = {
                     0x33,0xC0,  // xor eax, eax
-                    0xF7,0xF0   // div eax  <- NOP these 2 bytes
+                    0xF7,0xF0   // div eax  <- NOP
                 };
                 patch_all(pat, sizeof(pat), 2, NOP2, 2);
             }
 
             // -------------------------------------------------------------------
             // Fix 6: NOP POPFW trap-flag traps (4 occurrences)
-            //
-            // Pushes a FLAGS word with the Trap Flag (TF, bit 8) set onto the stack
-            // then executes POPFW to load it into EFLAGS. The CPU immediately raises
-            // a single-step exception (#DB) on the next instruction; the SEH handler
-            // catches it and records the result.
-            // NOP: just the 66 9D (16-bit POPFW) -- FLAGS unchanged, no #DB raised.
             {
                 static const uint8_t pat[] = { 0x66,0xFF,0x75 };  // push word [ebp+var]
                 uint8_t* p = scan(base, sz, pat, sizeof(pat));
                 while (p)
                 {
-                    if (p[4] == 0x66 && p[5] == 0x9D)  // followed by popfw
+                    if (p[4] == 0x66 && p[5] == 0x9D)
                         mem_write(p + 4, NOP2, 2);
                     p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
                 }
             }
 
             // -------------------------------------------------------------------
-            // Fix 9: NOP PEB.BeingDebugged XOR in XLiveInitialize (xlive_5000)
+            // Fix 7: NOP PEB.BeingDebugged XOR in XLiveInitialize (xlive_5000)
             //
-            // During XLiveInitialize, xlive reads PEB.BeingDebugged (PEB+2),
-            // stores it in an internal struct field, then XORs xlive's central
-            // state variable with 0x2B7 if the field is nonzero. This corrupts
-            // the state machine that drives _XNetStartup (xlive_51) and all
-            // subsequent networking calls -> XNetStartup returns error.
-            //
-            // The 10 bytes that follow the pattern perform the XOR; NOP them.
-            // When BeingDebugged == 0 (no debugger) the preceding JZ already
-            // skips them, so this patch has zero effect on undebugged runs.
+            // During XLiveInitialize, xlive reads PEB.BeingDebugged and XORs
+            // xlive's central state variable with 0x2B7 if set, corrupting the
+            // state machine that drives _XNetStartup and all networking calls.
             {
                 static const uint8_t pat[] = {
-                    0x64,0xA1,0x18,0x00,0x00,0x00,  // mov eax, fs:[18h]  (-> TEB)
-                    0x8B,0x40,0x30,                  // mov eax, [eax+30h] (-> PEB)
-                    0x0F,0xB6,0x40,0x02,             // movzx eax, [eax+2] (BeingDebugged)
+                    0x64,0xA1,0x18,0x00,0x00,0x00,  // mov eax, fs:[18h]
+                    0x8B,0x40,0x30,                  // mov eax, [eax+30h]
+                    0x0F,0xB6,0x40,0x02,             // movzx eax, [eax+2]
                     0x8B,0x4D,0xD4,                  // mov ecx, [ebp+hModule]
-                    0x89,0x01,                        // mov [ecx], eax     (store flag)
+                    0x89,0x01,                        // mov [ecx], eax
                     0x39,0x55,0xD8,                  // cmp [ebp+var_28], edx
-                    0x74,0x0A                         // jz +Ah             (skip XOR)
+                    0x74,0x0A                         // jz +Ah
                 };
                 patch_all(pat, sizeof(pat), sizeof(pat), NOP10, 10);
             }
-
-            // -------------------------------------------------------------------
-            // Fix 10: patch secondary thread exit-code checks (mask 0xE5937CB2)
-            //
-            // Three additional detection points use a different mask/threshold pair
-            // (0xE5937CB2 / 0x4C9FA) for the same thread-context inspection result.
-            // These are distinct from Fix 7/8 which use mask 0xD9BB259C.
-            // Each has a different branch direction and consequence:
-            {
-                // (a) JNB +21h: JNB taken = clean path, fall-through calls
-                //     AntiDbg_ReportDetection. Change JNB (73) -> JMP (EB).
-                {
-                    static const uint8_t pat[] = {
-                        0x25,0xB2,0x7C,0x93,0xE5,   // and eax, 0E5937CB2h
-                        0x3D,0xFA,0xC9,0x04,0x00,   // cmp eax, 4C9FAh
-                        0x73,0x21                    // jnb +21h
-                    };
-                    patch_all(pat, sizeof(pat), 10, &JMP_SHORT, 1);
-                }
-
-                // (b) JB (long): JB taken = early exit/error, fall-through = success.
-                //     NOP the 6-byte JB so execution always falls through to success.
-                {
-                    static const uint8_t pat[] = {
-                        0x25,0xB2,0x7C,0x93,0xE5,       // and eax, 0E5937CB2h
-                        0x3D,0xFA,0xC9,0x04,0x00,       // cmp eax, 4C9FAh
-                        0x0F,0x82,0xE6,0x07,0x00,0x00   // jb def_511801  <- NOP 6 bytes
-                    };
-                    patch_all(pat, sizeof(pat), 10, NOP6, 6);
-                }
-
-                // (c) JNB +5h: JNB taken = detected path (decrements counter and
-                //     calls sub_5060B2), fall-through = returns 1 (clean).
-                //     NOP the 2-byte JNB so execution always falls through.
-                {
-                    static const uint8_t pat[] = {
-                        0x25,0xB2,0x7C,0x93,0xE5,   // and eax, 0E5937CB2h
-                        0x3D,0xFA,0xC9,0x04,0x00,   // cmp eax, 4C9FAh
-                        0x73,0x05                    // jnb +5h  <- NOP these 2 bytes
-                    };
-                    patch_all(pat, sizeof(pat), 10, NOP2, 2);
-                }
-            }
         }
 
-        // ---------------------------------------------------------------------------
+        // -------------------------------------------------------------------------
         // PEB.BeingDebugged cleaner
 
         void clear_being_debugged()
         {
-            // Clear only PEB.BeingDebugged (byte at PEB+2).
-            // Single-byte writes are atomic on x86 so this is safe from any thread.
-            // We deliberately do NOT touch NtGlobalFlag or the heap debug flags --
-            // those fields are read concurrently by HeapAlloc/HeapFree and writing
-            // them from a separate thread causes heap corruption.
+            // Clear only PEB.BeingDebugged (byte at PEB+2). Single-byte writes are
+            // atomic on x86. Do NOT touch NtGlobalFlag or heap flags — those are
+            // accessed concurrently by HeapAlloc/HeapFree and would cause corruption.
             const DWORD teb = __readfsdword(0x18);
             reinterpret_cast<BYTE*>(*reinterpret_cast<ULONG_PTR*>(teb + 0x30))[2] = 0;
         }
@@ -456,18 +528,16 @@ namespace xlive
 
     } // anonymous namespace
 
-    // ---------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     void apply_early()
     {
-        // Called before the first game MessageBox -- xlive.dll is already loaded
-        // but XLiveInitialize has not been called yet, so all patches land before
-        // any protection check executes.
         if (!GetModuleHandleA("xlive.dll"))
         {
-            MessageBoxA(nullptr, "xlive.dll not loaded -- patches skipped", "xlive", MB_OK);
+            MessageBoxA(nullptr, "xlive.dll not loaded — patches skipped", "xlive", MB_OK);
             return;
         }
+        ensure_fake_pool();
         patch_xlive();
         clear_being_debugged();
         hook_ntqip();
@@ -479,7 +549,6 @@ namespace xlive
     public:
         void post_load() override
         {
-            // Re-apply after all components load in case any reload xlive.
             patch_xlive();
             clear_being_debugged();
         }
