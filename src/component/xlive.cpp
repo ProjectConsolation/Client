@@ -140,11 +140,13 @@ namespace xlive
             }
 
             // Fix 2B: bypass all INT3 breakpoint scans on sub_62D7A0
-            //   VS patches sub_62D7A0[0] = 0xCC during thread creation. xlive checks this
-            //   byte at 10 locations, corrupting function pointers or crashing on detection.
-            //   Fix: JNZ -> JMP at each check so the "detected" branch is never taken.
+//   VS patches sub_62D7A0[0] = 0xCC during thread creation. xlive checks this
+//   byte at multiple locations, corrupting pointers or aborting detection setup.
+//   Fix: JNZ -> JMP at each check so the harmful branch is never taken.
             {
-                // Primary checks — scan sub_62D7A0[0] directly (80 3x CC 75 xx)
+                static const uint8_t jmp_eb = 0xEB;
+
+                // Primary checks: cmp [reg], 0CCh / jnz +xx (all 5 bytes, jnz at offset 3)
                 static const uint8_t cc_primary[][5] = {
                     {0x80,0x39,0xCC,0x75,0x1D},  // sub_53D016
                     {0x80,0x39,0xCC,0x75,0x05},  // sub_53A1DB: sub eax, 221h
@@ -162,6 +164,30 @@ namespace xlive
                     uint8_t* p = scan(base, sz, pat, 5);
                     while (p) { mem_write(p + 3, &jmp_eb, 1); p = scan(p + 1, sz - (p - base) - 1, pat, 5); }
                 }
+
+                // Secondary checks: longer patterns with varying jnz offset.
+                // Covers both value-corrupting branches and early-exit paths that
+                // abort detection setup (preventing low-memory stub mapping).
+                struct CcPatch { const uint8_t* pat; size_t len; size_t jnz_off; };
+                static const CcPatch cc_secondary[] = {
+                    // Value-corrupting — crash at XOR'd/shifted address
+                    {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4},  // sub_53D016: xor [var_44], 0DBh
+                    {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A",             10, 4},  // sub_5493AF: sar [var_44], 1Ah
+                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7},  // sub_987D5C: and [var_144], 81h
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4},  // sub_988B71: add [ebx+4], 0C3h (writes RET)
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4},  // sub_988E34: add [Src], 110h
+                    // Early-exit paths — abort detection setup, preventing low-memory mapping
+                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x1D",  9, 7},  // sub_987D5C: returns early
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1B",              6, 4},  // sub_988B71: returns early
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1C",              6, 4},  // sub_988E34: returns early
+                    {(const uint8_t*)"\x80\xBD\xDB\xFE\xFF\xFF\xCC\x75\x18",  9, 7},  // sub_8D44XX: calls sub_90BB64
+                };
+                for (const auto& e : cc_secondary)
+                {
+                    uint8_t* p = scan(base, sz, e.pat, e.len);
+                    while (p) { mem_write(p + e.jnz_off, &jmp_eb, 1); p = scan(p + 1, sz - (p - base) - 1, e.pat, e.len); }
+                }
+            
 
                 // Secondary checks — compare decoded stack buffer against 0xCC.
                 // These corrupt return values, write RET into live code, or shift values.
