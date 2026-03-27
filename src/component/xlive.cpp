@@ -9,7 +9,6 @@ namespace xlive
     {
         utils::hook::detour ntqip_hook;
 
-        // Always returns FALSE — xlive checks this before network init
         static BOOL WINAPI debugger_stub() { return FALSE; }
 
         LONG __stdcall ntqip_stub(HANDLE hProcess, UINT infoClass,
@@ -51,7 +50,6 @@ namespace xlive
             return nullptr;
         }
 
-        // Walk xlive's PE import table to find and redirect IsDebuggerPresent.
         void patch_isdebugger(uint8_t* base, size_t image_size)
         {
             __try
@@ -59,20 +57,17 @@ namespace xlive
                 const auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
                 if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
 
-                const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(
-                    base + dos->e_lfanew);
+                const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
                 if (nt->Signature != IMAGE_NT_SIGNATURE) return;
 
                 const DWORD import_rva = nt->OptionalHeader.DataDirectory[
                     IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
                 if (!import_rva || import_rva >= image_size) return;
 
-                auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(
-                    base + import_rva);
+                auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + import_rva);
 
                 for (; desc->Name && desc->Name < image_size; ++desc)
                 {
-                    // Only process KERNEL32
                     const char* dll = reinterpret_cast<char*>(base + desc->Name);
                     if (_stricmp(dll, "KERNEL32.dll") != 0 &&
                         _stricmp(dll, "KERNEL32") != 0)
@@ -80,10 +75,8 @@ namespace xlive
 
                     if (!desc->OriginalFirstThunk || !desc->FirstThunk) continue;
 
-                    auto* oft = reinterpret_cast<IMAGE_THUNK_DATA*>(
-                        base + desc->OriginalFirstThunk);
-                    auto* ft = reinterpret_cast<IMAGE_THUNK_DATA*>(
-                        base + desc->FirstThunk);
+                    auto* oft = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->OriginalFirstThunk);
+                    auto* ft = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->FirstThunk);
 
                     for (; oft->u1.AddressOfData; ++oft, ++ft)
                     {
@@ -92,18 +85,14 @@ namespace xlive
 
                         const auto* ibn = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(
                             base + oft->u1.AddressOfData);
-
-                        // Bounds-check the name pointer
-                        const auto name_off =
-                            reinterpret_cast<const uint8_t*>(ibn->Name) - base;
+                        const auto name_off = reinterpret_cast<const uint8_t*>(ibn->Name) - base;
                         if (name_off >= static_cast<ptrdiff_t>(image_size)) continue;
 
-                        if (strcmp(reinterpret_cast<const char*>(ibn->Name),
-                            "IsDebuggerPresent") == 0)
+                        if (strcmp(reinterpret_cast<const char*>(ibn->Name), "IsDebuggerPresent") == 0)
                         {
                             const auto stub = reinterpret_cast<void*>(&debugger_stub);
                             mem_write(&ft->u1.Function, &stub, sizeof(stub));
-                            return; // done
+                            return;
                         }
                     }
                 }
@@ -120,73 +109,48 @@ namespace xlive
             const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
             const size_t sz = nt->OptionalHeader.SizeOfImage;
 
-            // Helper: scan and apply a patch to all matches.
-            // patch_offset/patch_data/patch_len describe what to overwrite relative to match start.
             const auto patch_all = [&](const uint8_t* pat, size_t pat_len,
-                size_t patch_offset, const uint8_t* patch_data, size_t patch_len)
+                size_t off, const uint8_t* data, size_t data_len)
                 {
                     uint8_t* p = scan(base, sz, pat, pat_len);
                     while (p)
                     {
-                        mem_write(p + patch_offset, patch_data, patch_len);
+                        mem_write(p + off, data, data_len);
                         p = scan(p + 1, sz - (p - base) - 1, pat, pat_len);
                     }
                 };
 
             static const uint8_t nop1 = 0x90;
             static const uint8_t nop2[2] = { 0x90, 0x90 };
-            static const uint8_t nop6[6] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
+            static const uint8_t nop10[10] = {
+                0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90
+            };
             static const uint8_t nop12[12] = {
-                0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
-                0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+                0x90,0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90,0x90
             };
 
             // Fix 1: redirect xlive's IsDebuggerPresent IAT entry to always return FALSE
             patch_isdebugger(base, sz);
 
-            // Fix 2: NOP pointer corruption triggered when PEB.BeingDebugged == 1
-            //   sub edi, 135h  (81 EF 35 01 00 00)
-            //   sub esi, 1F620h (81 EE 20 F6 01 00)
+            // Fix 2: NOP PEB.BeingDebugged pointer corruption
+            //   sub edi, 135h / sub esi, 1F620h — only reached when BeingDebugged==1
             {
                 static const uint8_t pat[] = {
-                    0x81,0xEF,0x35,0x01,0x00,0x00,
-                    0x81,0xEE,0x20,0xF6,0x01,0x00
+                    0x81,0xEF,0x35,0x01,0x00,0x00,   // sub edi, 135h
+                    0x81,0xEE,0x20,0xF6,0x01,0x00    // sub esi, 1F620h
                 };
                 patch_all(pat, sizeof(pat), 0, nop12, 12);
             }
 
-            // Fix 3A: NOP int 1 SEH traps (2 occurrences — sub_53D016 + sub_987D5C)
-            //   and [TryLevel], 0 / int 1
-            //   NOP: just the CD 01
+            // Fix 3A: NOP int 1 SEH traps (sub_53D016 + sub_987D5C)
+            //   and [TryLevel], 0 / int 1 — NOP just the CD 01
             {
                 static const uint8_t pat[] = { 0x83,0x65,0xFC,0x00, 0xCD,0x01 };
                 patch_all(pat, sizeof(pat), 4, nop2, 2);
             }
 
-            // Fix 3A-extra: preserve function pointer after int 1 NOP in sub_53D016.
-            //   The int 1 SEH handler sets var_39=1 if caught (signals "clean/caught").
-            //   A JNZ uses var_39 to decide whether to clear var_4C (the function pointer).
-            //   Since we NOP'd the int 1, var_39 is never set -> JNZ not taken -> var_4C cleared
-            //   -> sub_4D436C called with null ptr -> low-memory thread fn not mapped -> AV at 0x8918.
-            //   Fix: change JNZ (75 04) to JMP (EB 04) so var_4C is always preserved.
-            {
-                static const uint8_t pat[] = {
-                    0x80,0x7D,0xC7,0x00,  // cmp [ebp+var_39], 0
-                    0x75,0x04,            // jnz +4  <- change 75 to EB
-                    0x83,0x65,0xB4,0x00   // and [ebp+var_4C], 0
-                };
-                static const uint8_t jmp = 0xEB;
-                uint8_t* p = scan(base, sz, pat, sizeof(pat));
-                while (p)
-                {
-                    mem_write(p + 4, &jmp, 1);  // 75 -> EB
-                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
-                }
-            }
-
-            // Fix 3B: NOP int 3 SEH trap with magic SI/DI sentinel (sub_9883C3)
-            //   mov si, 4647h / mov di, 4A4Dh / int 3
-            //   NOP: just the CC
+            // Fix 3B: NOP int 3 SEH trap — magic SI/DI sentinel (sub_9883C3)
+            //   mov si, 4647h / mov di, 4A4Dh / int 3 — NOP just the CC
             {
                 static const uint8_t pat[] = {
                     0x66,0xBE,0x47,0x46,
@@ -197,8 +161,7 @@ namespace xlive
             }
 
             // Fix 3C: NOP ud2 SEH trap (sub_53D016)
-            //   mov [TryLevel], 2 / ud2
-            //   NOP: just the 0F 0B
+            //   mov [TryLevel], 2 / ud2 — NOP just the 0F 0B
             {
                 static const uint8_t pat[] = {
                     0xC7,0x45,0xFC,0x02,0x00,0x00,0x00,
@@ -208,24 +171,24 @@ namespace xlive
             }
 
             // Fix 4: NOP int 41h SEH traps (5 occurrences)
-            //   mov ax, 4Fh / int 41h — invalid interrupt, SEH catches it
-            //   NOP: just the CD 41 — AX stays 0x4F, falls through to "mov [var], ax"
+            //   mov ax, 4Fh / int 41h — NOP just the CD 41
+            //   AX stays 0x4F, falls through to "mov [var], ax" (clean state)
             {
                 static const uint8_t pat[] = { 0x66,0xB8,0x4F,0x00, 0xCD,0x41 };
                 patch_all(pat, sizeof(pat), 4, nop2, 2);
             }
 
             // Fix 5: NOP divide-by-zero SEH traps (4 occurrences)
-            //   xor eax, eax / div eax — intentional #DE, SEH catches it
-            //   NOP: just the F7 F0 — EAX stays 0, falls through
+            //   xor eax, eax / div eax — NOP just the F7 F0
+            //   EAX stays 0, falls through to success path
             {
                 static const uint8_t pat[] = { 0x33,0xC0, 0xF7,0xF0 };
                 patch_all(pat, sizeof(pat), 2, nop2, 2);
             }
 
             // Fix 6: NOP POPFW trap-flag traps (4 occurrences)
-            //   push word [ebp+var] / popfw — sets TF, causes single-step exception
-            //   Scan first 3 bytes (66 FF 75), verify popfw (66 9D) at +4, NOP it
+            //   push word [ebp+var] / popfw — sets TF causing single-step exception
+            //   Match first 3 bytes (66 FF 75), verify 66 9D at +4, NOP it
             {
                 static const uint8_t pat[] = { 0x66,0xFF,0x75 };
                 uint8_t* p = scan(base, sz, pat, sizeof(pat));
@@ -237,25 +200,26 @@ namespace xlive
                 }
             }
 
-            // Fix 7: NOP JB in sub_53D016 thread exit-code mask check
-            //   xlive spawns threads using handle values as fn ptrs (dynamically mapped
-            //   detection stubs). Thread exit codes carry the result, masked and compared.
-            //   JB = "clean" -> returns 0 (correct not-detected state).
-            //   Fall-through = "detected" -> computes kill function pointers.
-            //   NOP the JB so execution always falls through to the clean return.
+            // Fix 7: JB -> JMP in sub_53D016 thread exit-code mask check
+            //   xlive creates threads via handle-value fn ptrs (dynamically mapped stubs).
+            //   Exit codes carry detection results, masked and compared to a threshold.
+            //   JB = "clean" path -> returns 0 (correct not-detected state).
+            //   Fall-through = "detected" -> invokes sub_4D436C with corrupted state -> AV.
+            //   Change JB (0F 82) to JMP (E9) so it always takes the clean early-exit path.
             {
                 static const uint8_t pat[] = {
                     0x25,0x9C,0x25,0xBB,0xD9,       // and eax, 0D9BB259Ch
                     0x3D,0xB2,0x53,0xC1,0x00,       // cmp eax, 0C153B2h
                     0x0F,0x82,0xD6,0xFE,0xFF,0xFF   // jb loc_53D05B
                 };
-                patch_all(pat, sizeof(pat), 10, nop6, 6);
+                static const uint8_t jmp6[6] = { 0xE9,0xD6,0xFE,0xFF,0xFF, 0x90 };
+                patch_all(pat, sizeof(pat), 10, jmp6, 6);
             }
 
             // Fix 8: JNB -> JMP in sub_4FF9D4 thread exit-code check
-            //   Same thread detection, different structure. JNB jumps to success path.
-            //   With debugger: masked result >= threshold -> JNB not taken -> error path.
-            //   Change JNB (73) to JMP (EB), keeping the same offset byte (26).
+            //   Same thread detection mechanism, different branch direction.
+            //   JNB jumps to success path — with debugger it's not taken.
+            //   Change JNB (73) to JMP (EB), same offset byte, to always succeed.
             {
                 static const uint8_t pat[] = {
                     0x25,0x9C,0x25,0xBB,0xD9,   // and eax, 0D9BB259Ch
@@ -267,10 +231,10 @@ namespace xlive
             }
 
             // Fix 9: NOP state XOR in XLiveInitialize path (sub_500A56)
-            //   Reads PEB.BeingDebugged, stores it, then XORs xlive's state variable
-            //   with 0x2B7 if nonzero — corrupting internal state -> XNetStartup fails.
-            //   NOP the XOR (10 bytes). Without debugger, the preceding JZ already
-            //   skips it; with debugger, our NOP prevents the corruption.
+            //   Reads PEB.BeingDebugged into a struct, then XORs xlive's state var
+            //   with 0x2B7 if nonzero — corrupting init state -> XNetStartup fails.
+            //   NOP the XOR (10 bytes at pattern end). Safe without debugger since
+            //   the preceding JZ already skips it when BeingDebugged==0.
             {
                 static const uint8_t pat[] = {
                     0x64,0xA1,0x18,0x00,0x00,0x00,  // mov eax, fs:[18h]
@@ -281,22 +245,18 @@ namespace xlive
                     0x39,0x55,0xD8,                  // cmp [var_28], edx
                     0x74,0x0A                         // jz +A
                 };
-                static const uint8_t nop10[10] = {
-                    0x90,0x90,0x90,0x90,0x90,
-                    0x90,0x90,0x90,0x90,0x90
-                };
                 patch_all(pat, sizeof(pat), sizeof(pat), nop10, 10);
             }
         }
 
         void clear_being_debugged()
         {
-            // ONLY clear PEB.BeingDebugged — single byte write, safe from any thread.
-            // Do NOT touch NtGlobalFlag or heap flags: those writes race with
-            // HeapAlloc/HeapFree and corrupt the heap, crashing the game at runtime.
+            // Only clear PEB.BeingDebugged (byte at PEB+2). Single-byte write is
+            // atomic on x86 and safe from any thread. Do NOT touch NtGlobalFlag or
+            // heap flags — those race with HeapAlloc/HeapFree and corrupt the heap.
             const DWORD teb = __readfsdword(0x18);
             auto* peb = *reinterpret_cast<BYTE**>(teb + 0x30);
-            peb[2] = 0; // BeingDebugged
+            peb[2] = 0;
         }
 
         void hook_ntqip()
@@ -310,11 +270,7 @@ namespace xlive
 
         DWORD WINAPI cleaner_thread(LPVOID)
         {
-            while (true)
-            {
-                clear_being_debugged();
-                Sleep(1);
-            }
+            while (true) { clear_being_debugged(); Sleep(1); }
             return 0;
         }
 
@@ -322,10 +278,9 @@ namespace xlive
 
     void apply_early()
     {
-        const auto xlive = GetModuleHandleA("xlive.dll");
-        if (!xlive)
+        if (!GetModuleHandleA("xlive.dll"))
         {
-            MessageBoxA(nullptr, "xlive.dll not loaded yet - patches not applied!", "xlive", MB_OK);
+            MessageBoxA(nullptr, "xlive.dll not loaded — patches skipped", "xlive", MB_OK);
             return;
         }
         patch_xlive();
