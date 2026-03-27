@@ -142,6 +142,26 @@ namespace xlive
                 patch_all(pat, sizeof(pat), 0, nop12, 12);
             }
 
+            // Fix 2B: bypass INT3 breakpoint scan on sub_62D7A0 in sub_53D016
+            //   At startup, sub_53D016 checks if the first byte of sub_62D7A0 is 0xCC.
+            //   VS patches that byte with INT3 during thread creation/stepping, so this
+            //   check fires -> sub_53D016 returns 0 early -> sub_4D436C never maps
+            //   low-memory detection stubs -> threads execute at unmapped addresses -> AV.
+            //   Fix: change JNZ (75 1D) to JMP (EB 1D) — always skip the error path.
+            {
+                static const uint8_t pat[] = {
+                    0x80,0x39,0xCC,  // cmp byte ptr [ecx], 0CCh
+                    0x75,0x1D        // jnz +1Dh  <- change 75 to EB
+                };
+                static const uint8_t jmp = 0xEB;
+                uint8_t* p = scan(base, sz, pat, sizeof(pat));
+                while (p)
+                {
+                    mem_write(p + 3, &jmp, 1);
+                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
+                }
+            }
+
             // Fix 3A: NOP int 1 SEH traps (sub_53D016 + sub_987D5C)
             //   and [TryLevel], 0 / int 1 — NOP just the CD 01
             {
