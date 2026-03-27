@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef GIT_VERSION
+#define GIT_VERSION "unknown"
+#endif
+
 namespace console
 {
 	bool match_compare(const std::string& input, const std::string& text, const bool exact);

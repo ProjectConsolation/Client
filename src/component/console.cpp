@@ -321,8 +321,6 @@ namespace console
 
 			game::CL_ConsolePrint(0, 6, result.c_str(), 0, 0, 0);
 
-			//game::Com_Printf(0, "%s", result.data()); // this eventually leads to Com_PrintMessage, which leads to com_printf_stub below and will dispatch to our console
-
 			return invoke_printf("%s", result.data()); // return the status of normal printf, which is what we are hooking
 		}
 
@@ -333,107 +331,79 @@ namespace console
 			const auto result = format(&ap, fmt);
 			va_end(ap);
 
-			com_printf_hook.invoke<void>(channel, "%s", result); // invoke Com_PrintMessage with the clean result
+			com_printf_hook.invoke<void>(channel, "%s", result);
 
-			// TODO: add dvar to stop this function from running
+			int type = con_type_info;
+			std::string_view rv(result);
 
-			// pretty sure channel 4 is used for debugging, but the normal user doesn't usually see it. remove this if you want every single print.
-			//if (channel != 4)
+			if (rv.starts_with("^1"))      type = con_type_error;
+			else if (rv.starts_with("^3")) type = con_type_warning;
+			else if (rv.starts_with("^5")) type = con_type_debug;
+
+			std::string display = (type != con_type_info)
+				? std::string(rv.substr(2))
+				: std::string(rv);
+
+			// Keyword overrides — error
+			static constexpr const char* error_substrings[] = {
+				"Unable to", "Couldn't reset", "nat type is Strict"
+			};
+			for (const char* s : error_substrings)
+				if (utils::string::string_contains(result, s))
+				{
+					type = con_type_error; break;
+				}
+
+			// Keyword overrides — warning
+			static constexpr const char* warning_substrings[] = {
+				"Unable to", "Missing asset", "Couldn't find", "Unknown command",
+				"is read only", "is not a valid value", "is write protected",
+				"already defined", "Adding channel:", "Hiding channel:",
+				"will use the shock", "WARNING:", "nat type is Moderate"
+			};
+			for (const char* s : warning_substrings)
+				if (utils::string::string_contains(result, s))
+				{
+					type = con_type_warning; break;
+				}
+
+			// Keyword overrides — debug
+			static constexpr const char* debug_substrings[] = {
+				"GamerProfile_LogInProfile took", "connection status has changed",
+				"signed in to live", "Reading profile", "Loaded zone",
+				"Loading fastfile", "nat type is Open", "LOADING...",
+				"xuid", "execing"
+			};
+			for (const char* s : debug_substrings)
+				if (utils::string::string_contains(result, s))
+				{
+					type = con_type_debug; break;
+				}
+
+			// Velocity debug — only dispatch if dvar is enabled
+			if (utils::string::string_contains(result, "Velocity change:"))
 			{
-				std::string new_result(result);
-
-				// parse color strings from the game's text to support our console
-				int type = con_type_info;
-				if (utils::string::starts_with(result, "^1"))
-				{
-					type = con_type_error;
-				}
-				else if (utils::string::starts_with(result, "^3"))
-				{
-					type = con_type_warning;
-				}
-				else if (utils::string::starts_with(result, "^5"))
-				{
-					type = con_type_debug;
-				}
-
-				if (type != con_type_info)
-				{
-					new_result.erase(0, 2); // example: '^1'
-				}
-
-				if (utils::string::string_contains(result, "Unable to")
-					|| utils::string::string_contains(result, "Couldn't reset")
-					|| utils::string::string_contains(result, "nat type is Strict"))
-				{
-					type = con_type_error;
-				}
-
-				if (utils::string::string_contains(result, "Unable to")
-					|| utils::string::string_contains(result, "Missing asset")
-					|| utils::string::string_contains(result, "Couldn't find")
-					|| utils::string::string_contains(result, "Unknown command")
-					|| utils::string::string_contains(result, "is read only")
-					|| utils::string::string_contains(result, "is not a valid value")
-					|| utils::string::string_contains(result, "is write protected")
-					|| utils::string::string_contains(result, "already defined")
-					|| utils::string::string_contains(result, "Adding channel:")
-					|| utils::string::string_contains(result, "Hiding channel:")
-					|| utils::string::string_contains(result, "will use the shock")
-					|| utils::string::string_contains(result, "WARNING:")
-					|| utils::string::string_contains(result, "nat type is Moderate"))
-					{
-						type = con_type_warning;
-					}
-
-				if (utils::string::string_contains(result, "GamerProfile_LogInProfile took")
-					|| utils::string::string_contains(result, "connection status has changed")
-					|| utils::string::string_contains(result, "signed in to live")
-					|| utils::string::string_contains(result, "Reading profile")
-					|| utils::string::string_contains(result, "Loaded zone")
-					|| utils::string::string_contains(result, "Loading fastfile")
-					|| utils::string::string_contains(result, "nat type is Open")
-					|| utils::string::string_contains(result, "LOADING...")
-					|| utils::string::string_contains(result, "xuid")
-					|| utils::string::string_contains(result, "execing"))
-					{
-						type = con_type_debug;
-					}
-
-				static bool xsignin = false;
-
-
-				if (utils::string::string_contains(result, "Velocity change:"))
-				{
-					auto g_debugVelocity = game::Dvar_FindVar("g_debugVelocity");
-					if (g_debugVelocity->current.enabled)
-					{
-						dispatch_message(con_type_debug, result);
-					}
-				}
-
-
-				if (utils::string::string_contains(result, "XUserReadProfileSettings"))
-				{
-					if (xsignin == false)
-					{
-						//reduce xsignin spam
-						dispatch_message(con_type_debug, "Reading XUserProfileSettings");
-						xsignin = true;
-
-						if (utils::string::string_contains(result, "took 0ms"))
-						{
-							return;
-						}
-						else
-						{
-							dispatch_message(con_type_debug, result);
-						}
-					}
-				}
-				else
-					dispatch_message(type, new_result);
+				auto g_debugVelocity = game::Dvar_FindVar("g_debugVelocity");
+				if (g_debugVelocity && g_debugVelocity->current.enabled)
+					dispatch_message(con_type_debug, result);
+				return;
 			}
+
+			// XUserReadProfileSettings — suppress repeated spam
+			if (utils::string::string_contains(result, "XUserReadProfileSettings"))
+			{
+				static bool xsignin = false;
+				if (!xsignin)
+				{
+					xsignin = true;
+					dispatch_message(con_type_debug, "Reading XUserProfileSettings");
+					if (!utils::string::string_contains(result, "took 0ms"))
+						dispatch_message(con_type_debug, result);
+				}
+				return;
+			}
+
+			dispatch_message(type, display);
 		}
 
 		/*
@@ -504,7 +474,6 @@ namespace console
 			TranslateMessage(&message);
 			DispatchMessageA(&message);
 		}
-		//exit(0);
 	}
 
 	class component final : public component_interface
@@ -529,17 +498,11 @@ namespace console
 //#ifndef DEBUG
 			com_printf_hook.create(game::game_offset(0x103F6400), com_printf_stub);
 //#endif
-
-			//CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(showDevConsole), nullptr, 0, 0);
-
+// 
 			// setup external console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);
-			//SetConsoleTitle("Project: Consolation - Console");
-#ifndef GIT_VERSION
-#define GIT_VERSION "unknown"
-#endif
 
-			std::string title = std::string("Project: Consolation [") + GIT_VERSION + "]";
+			std::string title = std::string("Project: Consolation [") + GIT_DESCRIBE + "] - Console";
 			SetConsoleTitleA(title.c_str());
 
 			con.kill_event = CreateEvent(NULL, TRUE, FALSE, NULL);

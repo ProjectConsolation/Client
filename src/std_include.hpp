@@ -67,5 +67,6 @@
 #pragma warning(disable: 26812)
 
 #include "resource.hpp"
+#include "version.hpp"
 
 using namespace std::literals;
