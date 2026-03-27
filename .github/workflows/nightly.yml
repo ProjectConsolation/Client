@@ -1,8 +1,11 @@
 name: Nightly (Experimental) Build
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "0 3 * * *"  # 03:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -16,11 +19,31 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build solution
-        run: msbuild Client.sln /p:Configuration=Release
+      - name: Clean old d3d9.dll
+        run: |
+          echo "Removing old d3d9.dll if it exists..."
+          del /Q "bin\Release\d3d9.dll" || echo "No old DLL found."
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Build solution (override output)
+        run: msbuild Client.sln /p:Configuration=Release /p:OutDir=bin\Release\
+
+      - name: Create/Update Nightly Release with commit hash
+        uses: softprops/action-gh-release@v2
         with:
-          name: ConsolationClient-nightly
-          path: "**/bin/Release/"
+          tag_name: nightly
+          name: Nightly Build
+          body: Nightly build from commit ${{ github.sha::7 }}
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload d3d9.dll to nightly release (replace if exists)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: d3d9.dll
+          files: "bin\Release\d3d9.dll"
+          replace: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
