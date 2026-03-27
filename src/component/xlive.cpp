@@ -173,6 +173,31 @@ namespace xlive
                 }
             }
 
+            // Fix 2B (continued): secondary 0xCC checks that corrupt values rather than
+            // taking an error path. These check decoded stack buffers or other locals.
+            // Same fix: JNZ -> JMP to always skip the corrupting branch.
+            static const struct { uint8_t pat[19]; size_t len; } cc_corrupt[] = {
+                // 0x53d493 sub_53D016:  xor [var_44], 0DBh — corrupts return value -> crash at XOR'd addr
+                {{0x80,0x7D,0xC7,0xCC, 0x75,0x07, 0x81,0x75,0xBC,0xDB,0x00,0x00,0x00}, 13},
+                // 0x5495cc sub_5493AF:  sar [var_44], 1Ah — right-shifts return value to near-zero
+                {{0x80,0x7D,0xC3,0xCC, 0x75,0x04, 0xC1,0x7D,0xBC,0x1A}, 10},
+                // 0x988297 sub_987D5C:  and [var_144], 81h — masks detection state flags
+                {{0x80,0xBD,0xC3,0xFE,0xFF,0xFF,0xCC, 0x75,0x0A, 0x81,0xA5,0xBC,0xFE,0xFF,0xFF,0x81,0x00,0x00,0x00}, 19},
+                // 0x988d9a sub_988B71:  add [ebx+4], 0C3h — writes RET opcode into live code
+                {{0x80,0x7D,0xAB,0xCC, 0x75,0x07, 0x81,0x43,0x04,0xC3,0x00,0x00,0x00}, 13},
+                // 0x989161 sub_988E34:  add [Src], 110h — corrupts a string pointer
+                {{0x80,0x7D,0xAB,0xCC, 0x75,0x10, 0x81,0x45,0xA0,0x10,0x01,0x00,0x00}, 13},
+            };
+            for (const auto& e : cc_corrupt)
+            {
+                uint8_t* p = scan(base, sz, e.pat, e.len);
+                while (p)
+                {
+                    mem_write(p + 4, &jmp, 1);  // 75 -> EB, offset byte stays
+                    p = scan(p + 1, sz - (p - base) - 1, e.pat, e.len);
+                }
+            }
+
             // Fix 3A: NOP int 1 SEH traps (sub_53D016 + sub_987D5C)
             //   and [TryLevel], 0 / int 1 — NOP just the CD 01
             {
