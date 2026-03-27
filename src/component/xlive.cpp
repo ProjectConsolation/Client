@@ -357,49 +357,6 @@ namespace xlive
             }
 
             // -------------------------------------------------------------------
-            // Fix 7: force "clean" path in AntiDbg_CheckThreadExitCode
-            //
-            // xlive spawns threads whose start address is a Windows handle value
-            // (a small integer pointing into a dynamically VirtualAlloc'd stub
-            // region). The stub executes, then the parent reads the exit code and
-            // runs it through:
-            //   and eax, 0D9BB259Ch
-            //   cmp eax, 0C153B2h
-            //   jb  loc_53D05B        <- "clean" path -> returns 0
-            //   ; fall-through:  "detected" -> invokes AntiDbg_MapLowMemoryStub
-            //                    with stale state -> crash in obfuscated dispatch
-            //
-            // With a debugger the thread exit code exceeds the threshold so the
-            // JB is never taken. Changing JB (0F 82) to JMP (E9) forces the clean
-            // early-exit return (0 = "not detected") unconditionally.
-            {
-                static const uint8_t pat[] = {
-                    0x25,0x9C,0x25,0xBB,0xD9,       // and eax, 0D9BB259Ch
-                    0x3D,0xB2,0x53,0xC1,0x00,       // cmp eax, 0C153B2h
-                    0x0F,0x82,0xD6,0xFE,0xFF,0xFF   // jb  loc_53D05B
-                };
-                static const uint8_t FORCE_JMP[6] = { 0xE9,0xD6,0xFE,0xFF,0xFF, 0x90 };
-                patch_all(pat, sizeof(pat), 10, FORCE_JMP, 6);
-            }
-
-            // -------------------------------------------------------------------
-            // Fix 8: force success in AntiDbg_ThreadExitMaskCheck (_XCloseHandle path)
-            //
-            // Same thread-detection mechanism as Fix 7 but in a separate function
-            // (AntiDbg_ThreadExitMaskCheck). This one branches with JNB (jump if
-            // result >= threshold -> success). With a debugger the threshold
-            // comparison fails so JNB is not taken -> falls to error return.
-            // Change JNB (73) to JMP (EB) -- always takes the success path.
-            {
-                static const uint8_t pat[] = {
-                    0x25,0x9C,0x25,0xBB,0xD9,   // and eax, 0D9BB259Ch
-                    0x3D,0xB2,0x53,0xC1,0x00,   // cmp eax, 0C153B2h
-                    0x73,0x26                    // jnb +26h (success)
-                };
-                patch_all(pat, sizeof(pat), 10, &JMP_SHORT, 1);
-            }
-
-            // -------------------------------------------------------------------
             // Fix 9: NOP PEB.BeingDebugged XOR in XLiveInitialize (xlive_5000)
             //
             // During XLiveInitialize, xlive reads PEB.BeingDebugged (PEB+2),
@@ -465,18 +422,6 @@ namespace xlive
                     };
                     patch_all(pat, sizeof(pat), 10, NOP2, 2);
                 }
-            }
-            // Fix 11: NOP JNB +7h in sub_94F8A8 (third D9BB259C mask check)
-            //   Same thread exit-code mechanism as Fix 7/8. JNB taken = clean path,
-            //   fall-through corrupts [ebx+4] with AND 101h -> downstream state damage.
-            //   NOP the 2-byte JNB so execution always falls through to clean path.
-            {
-                static const uint8_t pat[] = {
-                    0x25,0x9C,0x25,0xBB,0xD9,   // and eax, 0D9BB259Ch
-                    0x3D,0xB2,0x53,0xC1,0x00,   // cmp eax, 0C153B2h
-                    0x73,0x07                    // jnb +7h  <- NOP these 2 bytes
-                };
-                patch_all(pat, sizeof(pat), 10, NOP2, 2);
             }
         }
 
