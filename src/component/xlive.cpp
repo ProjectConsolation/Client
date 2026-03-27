@@ -122,12 +122,9 @@ namespace xlive
 
             static const uint8_t nop1 = 0x90;
             static const uint8_t nop2[2] = { 0x90, 0x90 };
-            static const uint8_t nop10[10] = {
-                0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90
-            };
-            static const uint8_t nop12[12] = {
-                0x90,0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90,0x90
-            };
+            static const uint8_t nop10[10] = { 0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90 };
+            static const uint8_t nop12[12] = { 0x90,0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90,0x90 };
+            static const uint8_t jmp_eb = 0xEB;  // shared short-JMP byte for all CC-check patches
 
             // Fix 1: redirect xlive's IsDebuggerPresent IAT entry to always return FALSE
             patch_isdebugger(base, sz);
@@ -136,170 +133,134 @@ namespace xlive
             //   sub edi, 135h / sub esi, 1F620h — only reached when BeingDebugged==1
             {
                 static const uint8_t pat[] = {
-                    0x81,0xEF,0x35,0x01,0x00,0x00,   // sub edi, 135h
-                    0x81,0xEE,0x20,0xF6,0x01,0x00    // sub esi, 1F620h
+                    0x81,0xEF,0x35,0x01,0x00,0x00,
+                    0x81,0xEE,0x20,0xF6,0x01,0x00
                 };
                 patch_all(pat, sizeof(pat), 0, nop12, 12);
             }
 
             // Fix 2B: bypass all INT3 breakpoint scans on sub_62D7A0
-            //   xlive scans sub_62D7A0[0] for 0xCC (INT3) at 10 locations. VS patches that
-            //   byte during thread creation/stepping, causing each check to fire and either
-            //   corrupt function pointers, counters, or handles — eventually crashing.
-            //   Fix: change every JNZ (75 xx) after the check to JMP (EB xx) so the
-            //   "0xCC detected" branch is never taken. All patterns are unique in xlive.
+            //   VS patches sub_62D7A0[0] = 0xCC during thread creation. xlive checks this
+            //   byte at 10 locations, corrupting function pointers or crashing on detection.
+            //   Fix: JNZ -> JMP at each check so the "detected" branch is never taken.
             {
-                static const struct { uint8_t pat[5]; } cc_checks[] = {
-                    {{0x80,0x39,0xCC,0x75,0x1D}},  // sub_53D016:  jnz +1Dh
-                    {{0x80,0x39,0xCC,0x75,0x05}},  // sub_53A1DB:  jnz +5  (sub eax,221h)
-                    {{0x80,0x3A,0xCC,0x75,0x08}},  // sub_53A1DB:  jnz +8  (add eax,2BBh)
-                    {{0x80,0x38,0xCC,0x75,0x10}},  // sub_540EXX:  jnz +10h
-                    {{0x80,0x38,0xCC,0x75,0x04}},  // sub_5493AF:  jnz +4
-                    {{0x80,0x3A,0xCC,0x75,0x0A}},  // sub_545CAB:  jnz +Ah
-                    {{0x80,0x38,0xCC,0x75,0x0F}},  // sub_8D43XX:  jnz +Fh
-                    {{0x80,0x38,0xCC,0x75,0x0A}},  // sub_989182:  jnz +Ah
-                    {{0x80,0x3A,0xCC,0x75,0x07}},  // sub_988E34:  jnz +7
-                    {{0x80,0x3E,0xCC,0x75,0x0A}},  // sub_989E34:  jnz +Ah
+                // Primary checks — scan sub_62D7A0[0] directly (80 3x CC 75 xx)
+                static const uint8_t cc_primary[][5] = {
+                    {0x80,0x39,0xCC,0x75,0x1D},  // sub_53D016
+                    {0x80,0x39,0xCC,0x75,0x05},  // sub_53A1DB: sub eax, 221h
+                    {0x80,0x3A,0xCC,0x75,0x08},  // sub_53A1DB: add eax, 2BBh
+                    {0x80,0x38,0xCC,0x75,0x10},  // sub_540EXX
+                    {0x80,0x38,0xCC,0x75,0x04},  // sub_5493AF
+                    {0x80,0x3A,0xCC,0x75,0x0A},  // sub_545CAB
+                    {0x80,0x38,0xCC,0x75,0x0F},  // sub_8D43XX
+                    {0x80,0x38,0xCC,0x75,0x0A},  // sub_989182
+                    {0x80,0x3A,0xCC,0x75,0x07},  // sub_988E34
+                    {0x80,0x3E,0xCC,0x75,0x0A},  // sub_989E34
                 };
-                static const uint8_t jmp = 0xEB;
-                for (const auto& entry : cc_checks)
+                for (const auto& pat : cc_primary)
                 {
-                    uint8_t* p = scan(base, sz, entry.pat, 5);
-                    while (p)
-                    {
-                        mem_write(p + 3, &jmp, 1);  // 75 -> EB
-                        p = scan(p + 1, sz - (p - base) - 1, entry.pat, 5);
-                    }
+                    uint8_t* p = scan(base, sz, pat, 5);
+                    while (p) { mem_write(p + 3, &jmp_eb, 1); p = scan(p + 1, sz - (p - base) - 1, pat, 5); }
                 }
-            }
 
-            // Fix 2B (continued): secondary 0xCC checks that corrupt values rather than
-            // taking an error path. These check decoded stack buffers or other locals.
-            // Same fix: JNZ -> JMP to always skip the corrupting branch.
-            static const struct { uint8_t pat[19]; size_t len; } cc_corrupt[] = {
-                // 0x53d493 sub_53D016:  xor [var_44], 0DBh — corrupts return value -> crash at XOR'd addr
-                {{0x80,0x7D,0xC7,0xCC, 0x75,0x07, 0x81,0x75,0xBC,0xDB,0x00,0x00,0x00}, 13},
-                // 0x5495cc sub_5493AF:  sar [var_44], 1Ah — right-shifts return value to near-zero
-                {{0x80,0x7D,0xC3,0xCC, 0x75,0x04, 0xC1,0x7D,0xBC,0x1A}, 10},
-                // 0x988297 sub_987D5C:  and [var_144], 81h — masks detection state flags
-                {{0x80,0xBD,0xC3,0xFE,0xFF,0xFF,0xCC, 0x75,0x0A, 0x81,0xA5,0xBC,0xFE,0xFF,0xFF,0x81,0x00,0x00,0x00}, 19},
-                // 0x988d9a sub_988B71:  add [ebx+4], 0C3h — writes RET opcode into live code
-                {{0x80,0x7D,0xAB,0xCC, 0x75,0x07, 0x81,0x43,0x04,0xC3,0x00,0x00,0x00}, 13},
-                // 0x989161 sub_988E34:  add [Src], 110h — corrupts a string pointer
-                {{0x80,0x7D,0xAB,0xCC, 0x75,0x10, 0x81,0x45,0xA0,0x10,0x01,0x00,0x00}, 13},
-            };
-            for (const auto& e : cc_corrupt)
-            {
-                uint8_t* p = scan(base, sz, e.pat, e.len);
-                while (p)
+                // Secondary checks — compare decoded stack buffer against 0xCC.
+                // These corrupt return values, write RET into live code, or shift values.
+                struct { const uint8_t* pat; size_t len; size_t jnz_off; } cc_secondary[] = {
+                    // sub_53D016: xor [var_44], 0DBh — corrupts return value, crashes at XOR'd addr
+                    {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4},
+                    // sub_5493AF: sar [var_44], 1Ah — right-shifts return value to near-zero
+                    {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A", 10, 4},
+                    // sub_987D5C: and [var_144], 81h — masks detection state flags
+                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7},
+                    // sub_988B71: add [ebx+4], 0C3h — writes RET opcode into live code
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4},
+                    // sub_988E34: add [Src], 110h — corrupts a string pointer
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4},
+                };
+                for (const auto& e : cc_secondary)
                 {
-                    mem_write(p + 4, &jmp, 1);  // 75 -> EB, offset byte stays
-                    p = scan(p + 1, sz - (p - base) - 1, e.pat, e.len);
+                    uint8_t* p = scan(base, sz, e.pat, e.len);
+                    while (p) { mem_write(p + e.jnz_off, &jmp_eb, 1); p = scan(p + 1, sz - (p - base) - 1, e.pat, e.len); }
                 }
             }
 
             // Fix 3A: NOP int 1 SEH traps (sub_53D016 + sub_987D5C)
-            //   and [TryLevel], 0 / int 1 — NOP just the CD 01
             {
                 static const uint8_t pat[] = { 0x83,0x65,0xFC,0x00, 0xCD,0x01 };
                 patch_all(pat, sizeof(pat), 4, nop2, 2);
             }
 
             // Fix 3B: NOP int 3 SEH trap — magic SI/DI sentinel (sub_9883C3)
-            //   mov si, 4647h / mov di, 4A4Dh / int 3 — NOP just the CC
             {
-                static const uint8_t pat[] = {
-                    0x66,0xBE,0x47,0x46,
-                    0x66,0xBF,0x4D,0x4A,
-                    0xCC
-                };
+                static const uint8_t pat[] = { 0x66,0xBE,0x47,0x46, 0x66,0xBF,0x4D,0x4A, 0xCC };
                 patch_all(pat, sizeof(pat), 8, &nop1, 1);
             }
 
             // Fix 3C: NOP ud2 SEH trap (sub_53D016)
-            //   mov [TryLevel], 2 / ud2 — NOP just the 0F 0B
             {
-                static const uint8_t pat[] = {
-                    0xC7,0x45,0xFC,0x02,0x00,0x00,0x00,
-                    0x0F,0x0B
-                };
+                static const uint8_t pat[] = { 0xC7,0x45,0xFC,0x02,0x00,0x00,0x00, 0x0F,0x0B };
                 patch_all(pat, sizeof(pat), 7, nop2, 2);
             }
 
             // Fix 4: NOP int 41h SEH traps (5 occurrences)
-            //   mov ax, 4Fh / int 41h — NOP just the CD 41
-            //   AX stays 0x4F, falls through to "mov [var], ax" (clean state)
+            //   mov ax, 4Fh / int 41h — AX stays 0x4F, falls through clean
             {
                 static const uint8_t pat[] = { 0x66,0xB8,0x4F,0x00, 0xCD,0x41 };
                 patch_all(pat, sizeof(pat), 4, nop2, 2);
             }
 
             // Fix 5: NOP divide-by-zero SEH traps (4 occurrences)
-            //   xor eax, eax / div eax — NOP just the F7 F0
-            //   EAX stays 0, falls through to success path
+            //   xor eax, eax / div eax — EAX stays 0, falls through clean
             {
                 static const uint8_t pat[] = { 0x33,0xC0, 0xF7,0xF0 };
                 patch_all(pat, sizeof(pat), 2, nop2, 2);
             }
 
             // Fix 6: NOP POPFW trap-flag traps (4 occurrences)
-            //   push word [ebp+var] / popfw — sets TF causing single-step exception
-            //   Match first 3 bytes (66 FF 75), verify 66 9D at +4, NOP it
+            //   push word [ebp+var] / popfw — NOP the 66 9D
             {
                 static const uint8_t pat[] = { 0x66,0xFF,0x75 };
                 uint8_t* p = scan(base, sz, pat, sizeof(pat));
                 while (p)
                 {
-                    if (p[4] == 0x66 && p[5] == 0x9D)
-                        mem_write(p + 4, nop2, 2);
+                    if (p[4] == 0x66 && p[5] == 0x9D) mem_write(p + 4, nop2, 2);
                     p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
                 }
             }
 
             // Fix 7: JB -> JMP in sub_53D016 thread exit-code mask check
-            //   xlive creates threads via handle-value fn ptrs (dynamically mapped stubs).
-            //   Exit codes carry detection results, masked and compared to a threshold.
-            //   JB = "clean" path -> returns 0 (correct not-detected state).
-            //   Fall-through = "detected" -> invokes sub_4D436C with corrupted state -> AV.
-            //   Change JB (0F 82) to JMP (E9) so it always takes the clean early-exit path.
+            //   Forces always-clean early exit, bypasses sub_4D436C with bad state.
             {
                 static const uint8_t pat[] = {
-                    0x25,0x9C,0x25,0xBB,0xD9,       // and eax, 0D9BB259Ch
-                    0x3D,0xB2,0x53,0xC1,0x00,       // cmp eax, 0C153B2h
-                    0x0F,0x82,0xD6,0xFE,0xFF,0xFF   // jb loc_53D05B
+                    0x25,0x9C,0x25,0xBB,0xD9,
+                    0x3D,0xB2,0x53,0xC1,0x00,
+                    0x0F,0x82,0xD6,0xFE,0xFF,0xFF
                 };
                 static const uint8_t jmp6[6] = { 0xE9,0xD6,0xFE,0xFF,0xFF, 0x90 };
                 patch_all(pat, sizeof(pat), 10, jmp6, 6);
             }
 
             // Fix 8: JNB -> JMP in sub_4FF9D4 thread exit-code check
-            //   Same thread detection mechanism, different branch direction.
-            //   JNB jumps to success path — with debugger it's not taken.
-            //   Change JNB (73) to JMP (EB), same offset byte, to always succeed.
             {
                 static const uint8_t pat[] = {
-                    0x25,0x9C,0x25,0xBB,0xD9,   // and eax, 0D9BB259Ch
-                    0x3D,0xB2,0x53,0xC1,0x00,   // cmp eax, 0C153B2h
-                    0x73,0x26                    // jnb +26h
+                    0x25,0x9C,0x25,0xBB,0xD9,
+                    0x3D,0xB2,0x53,0xC1,0x00,
+                    0x73,0x26
                 };
-                static const uint8_t jmp = 0xEB;
-                patch_all(pat, sizeof(pat), 10, &jmp, 1);
+                patch_all(pat, sizeof(pat), 10, &jmp_eb, 1);
             }
 
-            // Fix 9: NOP state XOR in XLiveInitialize path (sub_500A56)
-            //   Reads PEB.BeingDebugged into a struct, then XORs xlive's state var
-            //   with 0x2B7 if nonzero — corrupting init state -> XNetStartup fails.
-            //   NOP the XOR (10 bytes at pattern end). Safe without debugger since
-            //   the preceding JZ already skips it when BeingDebugged==0.
+            // Fix 9: NOP state XOR in XLiveInitialize (sub_500A56)
+            //   Prevents BeingDebugged flag from corrupting xlive's init state variable.
             {
                 static const uint8_t pat[] = {
-                    0x64,0xA1,0x18,0x00,0x00,0x00,  // mov eax, fs:[18h]
-                    0x8B,0x40,0x30,                  // mov eax, [eax+30h]
-                    0x0F,0xB6,0x40,0x02,             // movzx eax, [eax+2]
-                    0x8B,0x4D,0xD4,                  // mov ecx, [hModule]
-                    0x89,0x01,                        // mov [ecx], eax
-                    0x39,0x55,0xD8,                  // cmp [var_28], edx
-                    0x74,0x0A                         // jz +A
+                    0x64,0xA1,0x18,0x00,0x00,0x00,
+                    0x8B,0x40,0x30,
+                    0x0F,0xB6,0x40,0x02,
+                    0x8B,0x4D,0xD4,
+                    0x89,0x01,
+                    0x39,0x55,0xD8,
+                    0x74,0x0A
                 };
                 patch_all(pat, sizeof(pat), sizeof(pat), nop10, 10);
             }
