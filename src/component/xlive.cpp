@@ -142,43 +142,34 @@ namespace xlive
                 patch_all(pat, sizeof(pat), 0, nop12, 12);
             }
 
-            // Fix 2B: bypass INT3 breakpoint scan on sub_62D7A0 in sub_53D016
-            //   At startup, sub_53D016 checks if the first byte of sub_62D7A0 is 0xCC.
-            //   VS patches that byte with INT3 during thread creation/stepping, so this
-            //   check fires -> sub_53D016 returns 0 early -> sub_4D436C never maps
-            //   low-memory detection stubs -> threads execute at unmapped addresses -> AV.
-            //   Fix: change JNZ (75 1D) to JMP (EB 1D) — always skip the error path.
+            // Fix 2B: bypass all INT3 breakpoint scans on sub_62D7A0
+            //   xlive scans sub_62D7A0[0] for 0xCC (INT3) at 10 locations. VS patches that
+            //   byte during thread creation/stepping, causing each check to fire and either
+            //   corrupt function pointers, counters, or handles — eventually crashing.
+            //   Fix: change every JNZ (75 xx) after the check to JMP (EB xx) so the
+            //   "0xCC detected" branch is never taken. All patterns are unique in xlive.
             {
-                static const uint8_t pat[] = {
-                    0x80,0x39,0xCC,  // cmp byte ptr [ecx], 0CCh
-                    0x75,0x1D        // jnz +1Dh  <- change 75 to EB
+                static const struct { uint8_t pat[5]; } cc_checks[] = {
+                    {{0x80,0x39,0xCC,0x75,0x1D}},  // sub_53D016:  jnz +1Dh
+                    {{0x80,0x39,0xCC,0x75,0x05}},  // sub_53A1DB:  jnz +5  (sub eax,221h)
+                    {{0x80,0x3A,0xCC,0x75,0x08}},  // sub_53A1DB:  jnz +8  (add eax,2BBh)
+                    {{0x80,0x38,0xCC,0x75,0x10}},  // sub_540EXX:  jnz +10h
+                    {{0x80,0x38,0xCC,0x75,0x04}},  // sub_5493AF:  jnz +4
+                    {{0x80,0x3A,0xCC,0x75,0x0A}},  // sub_545CAB:  jnz +Ah
+                    {{0x80,0x38,0xCC,0x75,0x0F}},  // sub_8D43XX:  jnz +Fh
+                    {{0x80,0x38,0xCC,0x75,0x0A}},  // sub_989182:  jnz +Ah
+                    {{0x80,0x3A,0xCC,0x75,0x07}},  // sub_988E34:  jnz +7
+                    {{0x80,0x3E,0xCC,0x75,0x0A}},  // sub_989E34:  jnz +Ah
                 };
                 static const uint8_t jmp = 0xEB;
-                uint8_t* p = scan(base, sz, pat, sizeof(pat));
-                while (p)
+                for (const auto& entry : cc_checks)
                 {
-                    mem_write(p + 3, &jmp, 1);
-                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
-                }
-            }
-
-            // Fix 2C: bypass INT3 breakpoint check in sub_53A1DB
-            //   Same pattern as Fix 2B but different function. sub_53831D returns a function
-            //   pointer; if sub_62D7A0[0] == 0xCC, the pointer is corrupted by -0x221.
-            //   sub_53972C then calls through it -> crash at a garbage address (0xCCD5 etc).
-            //   Fix: change JNZ (75 05) to JMP (EB 05) — always skip the subtraction.
-            {
-                static const uint8_t pat[] = {
-                    0x80,0x39,0xCC,              // cmp byte ptr [ecx], 0CCh
-                    0x75,0x05,                   // jnz +5  <- change 75 to EB
-                    0x2D,0x21,0x02,0x00,0x00    // sub eax, 221h
-                };
-                static const uint8_t jmp = 0xEB;
-                uint8_t* p = scan(base, sz, pat, sizeof(pat));
-                while (p)
-                {
-                    mem_write(p + 3, &jmp, 1);
-                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
+                    uint8_t* p = scan(base, sz, entry.pat, 5);
+                    while (p)
+                    {
+                        mem_write(p + 3, &jmp, 1);  // 75 -> EB
+                        p = scan(p + 1, sz - (p - base) - 1, entry.pat, 5);
+                    }
                 }
             }
 
