@@ -502,7 +502,14 @@ namespace console
 			// setup external console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);
 
-			std::string title = std::string("Project: Consolation [") + GIT_DESCRIBE + "] - Console";
+			std::string title = std::string("Project: Consolation [")
+				+ GIT_DESCRIBE
+				+ " | "
+				+ __DATE__
+				+ " "
+				+ __TIME__
+				+ "] - Console";
+
 			SetConsoleTitleA(title.c_str());
 
 			con.kill_event = CreateEvent(NULL, TRUE, FALSE, NULL);
