@@ -158,6 +158,7 @@ namespace xlive
 
             static const uint8_t NOP1 = 0x90;
             static const uint8_t NOP2[2] = { 0x90, 0x90 };
+            static const uint8_t NOP6[6] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
             static const uint8_t NOP10[10] = { 0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90 };
             static const uint8_t NOP12[12] = { 0x90,0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90,0x90 };
             static const uint8_t JMP_SHORT = 0xEB;
@@ -194,15 +195,15 @@ namespace xlive
             // (an INT3 that VS injects when setting a thread-entry breakpoint)
             // at 14 different call sites. Detection either:
             //   (a) corrupts a function pointer by XOR/SAR/SUB then calls it
-            //       → crash at the mangled address
+            //       -> crash at the mangled address
             //   (b) causes the detection setup function to return early, leaving
-            //       the low-memory thread stub region unmapped → crash on execute
+            //       the low-memory thread stub region unmapped -> crash on execute
             //
             // Fix: change every JNZ following the 0xCC comparison to JMP so the
             // "detected" branch is never taken regardless of VS breakpoints.
             {
-                // Primary checks — 5-byte form: cmp [reg], 0CCh / jnz +xx
-                // JNZ is always at byte offset 3; patch only that byte (75→EB).
+                // Primary checks -- 5-byte form: cmp [reg], 0CCh / jnz +xx
+                // JNZ is always at byte offset 3; patch only that byte (75->EB).
                 static const uint8_t cc_primary[][5] = {
                     {0x80,0x39,0xCC,0x75,0x1D},  // AntiDbg_CheckThreadExitCode: early exit
                     {0x80,0x39,0xCC,0x75,0x05},  // AntiDbg_CheckBreakpointAndInit: sub eax,221h
@@ -225,22 +226,22 @@ namespace xlive
                     }
                 }
 
-                // Variable-length checks — JNZ offset and pattern length differ.
+                // Variable-length checks -- JNZ offset and pattern length differ.
                 struct CcPatch { const uint8_t* pat; size_t len; size_t jnz_off; };
                 static const CcPatch cc_var[] = {
-                    // Value-corrupting: crash at XOR'd/shifted address
+                    // Value-corrupting: crash at XOR'd/shifted/subtracted address
                     {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4},
-                    // AntiDbg_CheckThreadExitCode: xor [var_44], 0DBh → crash at XOR'd addr
+                    // AntiDbg_CheckThreadExitCode: xor [var_44], 0DBh -> crash at XOR'd addr
                     {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A",             10, 4},
-                    // AntiDbg_DetectionChainD: sar [var_44], 1Ah → near-zero fn ptr
+                    // AntiDbg_DetectionChainD: sar [var_44], 1Ah -> near-zero fn ptr
                     {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7},
-                    // AntiDbg_DetectionHub: and [var_144], 81h → masks detection flags
+                    // AntiDbg_DetectionHub: and [var_144], 81h -> masks detection flags
                     {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4},
-                    // AntiDbg_Int41Traps: add [ebx+4], 0C3h → writes RET into live code
+                    // AntiDbg_Int41Traps: add [ebx+4], 0C3h -> writes RET into live code
                     {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4},
-                    // AntiDbg_DetectionChainA: add [Src], 110h → corrupts string ptr
+                    // AntiDbg_DetectionChainA: add [Src], 110h -> corrupts string ptr
 
-                    // Early-exit paths: abort detection setup → low-memory stub unmapped
+                    // Early-exit paths: abort detection setup -> low-memory stub unmapped
                     {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x1D",  9, 7},
                     // AntiDbg_DetectionHub: returns early before XCloseHandle stub setup
                     {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1B",              6, 4},
@@ -268,26 +269,26 @@ namespace xlive
             // The SEH handler catches it and sets a "survived" flag.
             // With a debugger attached VS intercepts INT 1 first; the flag is never
             // set, causing downstream detection.
-            // NOP: just the CD 01 — falls through to the "survived" path directly.
+            // NOP: just the CD 01 -- falls through to the "survived" path directly.
             {
                 static const uint8_t pat[] = {
                     0x83,0x65,0xFC,0x00,  // and [TryLevel], 0   (enter SEH try block)
-                    0xCD,0x01             // int 1               ← NOP these 2 bytes
+                    0xCD,0x01             // int 1               <- NOP these 2 bytes
                 };
                 patch_all(pat, sizeof(pat), 4, NOP2, 2);
             }
 
-            // Fix 3B: NOP int 3 SEH trap — magic SI/DI sentinel
+            // Fix 3B: NOP int 3 SEH trap -- magic SI/DI sentinel
             //
             // AntiDbg_IntSentinelTrap loads magic constants (SI=4647h, DI=4A4Dh)
             // then executes INT 3 inside an SEH frame. The handler verifies the
             // sentinel values to confirm it was the expected trap source.
-            // NOP: just the CC byte — SI/DI stay set, execution falls through.
+            // NOP: just the CC byte -- SI/DI stay set, execution falls through.
             {
                 static const uint8_t pat[] = {
                     0x66,0xBE,0x47,0x46,  // mov si, 4647h
                     0x66,0xBF,0x4D,0x4A,  // mov di, 4A4Dh
-                    0xCC                  // int 3  ← NOP this 1 byte
+                    0xCC                  // int 3  <- NOP this 1 byte
                 };
                 patch_all(pat, sizeof(pat), 8, &NOP1, 1);
             }
@@ -297,11 +298,11 @@ namespace xlive
             // Sets TryLevel=2 then executes UD2 (undefined instruction) inside an
             // SEH frame. Handler catches EXCEPTION_ILLEGAL_INSTRUCTION and sets
             // a "survived" flag; the state variable [ebx+4] carries the result.
-            // NOP: just the 0F 0B — EBX state falls through unchanged.
+            // NOP: just the 0F 0B -- EBX state falls through unchanged.
             {
                 static const uint8_t pat[] = {
                     0xC7,0x45,0xFC,0x02,0x00,0x00,0x00,  // mov [TryLevel], 2
-                    0x0F,0x0B                              // ud2  ← NOP these 2 bytes
+                    0x0F,0x0B                              // ud2  <- NOP these 2 bytes
                 };
                 patch_all(pat, sizeof(pat), 7, NOP2, 2);
             }
@@ -311,12 +312,12 @@ namespace xlive
             //
             // Loads AX=4Fh then executes INT 41h (invalid interrupt vector on x86).
             // The SEH handler stores AX as the "detection passed" result value.
-            // NOP: just the CD 41 — AX stays 0x4F, falls through to
+            // NOP: just the CD 41 -- AX stays 0x4F, falls through to
             // "mov [var], ax" which is the identical post-handler write.
             {
                 static const uint8_t pat[] = {
                     0x66,0xB8,0x4F,0x00,  // mov ax, 4Fh
-                    0xCD,0x41             // int 41h  ← NOP these 2 bytes
+                    0xCD,0x41             // int 41h  <- NOP these 2 bytes
                 };
                 patch_all(pat, sizeof(pat), 4, NOP2, 2);
             }
@@ -324,14 +325,14 @@ namespace xlive
             // -------------------------------------------------------------------
             // Fix 5: NOP divide-by-zero SEH traps (4 occurrences)
             //
-            // Executes "xor eax, eax / div eax" — deliberate #DE fault inside
+            // Executes "xor eax, eax / div eax" -- deliberate #DE fault inside
             // an SEH frame. The handler inspects the EXCEPTION_RECORD to verify
             // the expected exception code.
-            // NOP: just the F7 F0 — EAX stays 0, falls through to success path.
+            // NOP: just the F7 F0 -- EAX stays 0, falls through to success path.
             {
                 static const uint8_t pat[] = {
                     0x33,0xC0,  // xor eax, eax
-                    0xF7,0xF0   // div eax  ← NOP these 2 bytes
+                    0xF7,0xF0   // div eax  <- NOP these 2 bytes
                 };
                 patch_all(pat, sizeof(pat), 2, NOP2, 2);
             }
@@ -343,7 +344,7 @@ namespace xlive
             // then executes POPFW to load it into EFLAGS. The CPU immediately raises
             // a single-step exception (#DB) on the next instruction; the SEH handler
             // catches it and records the result.
-            // NOP: just the 66 9D (16-bit POPFW) — FLAGS unchanged, no #DB raised.
+            // NOP: just the 66 9D (16-bit POPFW) -- FLAGS unchanged, no #DB raised.
             {
                 static const uint8_t pat[] = { 0x66,0xFF,0x75 };  // push word [ebp+var]
                 uint8_t* p = scan(base, sz, pat, sizeof(pat));
@@ -364,9 +365,9 @@ namespace xlive
             // runs it through:
             //   and eax, 0D9BB259Ch
             //   cmp eax, 0C153B2h
-            //   jb  loc_53D05B        ← "clean" path → returns 0
-            //   ; fall-through:  "detected" → invokes AntiDbg_MapLowMemoryStub
-            //                    with stale state → crash in obfuscated dispatch
+            //   jb  loc_53D05B        <- "clean" path -> returns 0
+            //   ; fall-through:  "detected" -> invokes AntiDbg_MapLowMemoryStub
+            //                    with stale state -> crash in obfuscated dispatch
             //
             // With a debugger the thread exit code exceeds the threshold so the
             // JB is never taken. Changing JB (0F 82) to JMP (E9) forces the clean
@@ -386,9 +387,9 @@ namespace xlive
             //
             // Same thread-detection mechanism as Fix 7 but in a separate function
             // (AntiDbg_ThreadExitMaskCheck). This one branches with JNB (jump if
-            // result >= threshold → success). With a debugger the threshold
-            // comparison fails so JNB is not taken → falls to error return.
-            // Change JNB (73) to JMP (EB) — always takes the success path.
+            // result >= threshold -> success). With a debugger the threshold
+            // comparison fails so JNB is not taken -> falls to error return.
+            // Change JNB (73) to JMP (EB) -- always takes the success path.
             {
                 static const uint8_t pat[] = {
                     0x25,0x9C,0x25,0xBB,0xD9,   // and eax, 0D9BB259Ch
@@ -405,15 +406,15 @@ namespace xlive
             // stores it in an internal struct field, then XORs xlive's central
             // state variable with 0x2B7 if the field is nonzero. This corrupts
             // the state machine that drives _XNetStartup (xlive_51) and all
-            // subsequent networking calls → XNetStartup returns error.
+            // subsequent networking calls -> XNetStartup returns error.
             //
             // The 10 bytes that follow the pattern perform the XOR; NOP them.
             // When BeingDebugged == 0 (no debugger) the preceding JZ already
             // skips them, so this patch has zero effect on undebugged runs.
             {
                 static const uint8_t pat[] = {
-                    0x64,0xA1,0x18,0x00,0x00,0x00,  // mov eax, fs:[18h]  (→ TEB)
-                    0x8B,0x40,0x30,                  // mov eax, [eax+30h] (→ PEB)
+                    0x64,0xA1,0x18,0x00,0x00,0x00,  // mov eax, fs:[18h]  (-> TEB)
+                    0x8B,0x40,0x30,                  // mov eax, [eax+30h] (-> PEB)
                     0x0F,0xB6,0x40,0x02,             // movzx eax, [eax+2] (BeingDebugged)
                     0x8B,0x4D,0xD4,                  // mov ecx, [ebp+hModule]
                     0x89,0x01,                        // mov [ecx], eax     (store flag)
@@ -421,6 +422,49 @@ namespace xlive
                     0x74,0x0A                         // jz +Ah             (skip XOR)
                 };
                 patch_all(pat, sizeof(pat), sizeof(pat), NOP10, 10);
+            }
+
+            // -------------------------------------------------------------------
+            // Fix 10: patch secondary thread exit-code checks (mask 0xE5937CB2)
+            //
+            // Three additional detection points use a different mask/threshold pair
+            // (0xE5937CB2 / 0x4C9FA) for the same thread-context inspection result.
+            // These are distinct from Fix 7/8 which use mask 0xD9BB259C.
+            // Each has a different branch direction and consequence:
+            {
+                // (a) JNB +21h: JNB taken = clean path, fall-through calls
+                //     AntiDbg_ReportDetection. Change JNB (73) -> JMP (EB).
+                {
+                    static const uint8_t pat[] = {
+                        0x25,0xB2,0x7C,0x93,0xE5,   // and eax, 0E5937CB2h
+                        0x3D,0xFA,0xC9,0x04,0x00,   // cmp eax, 4C9FAh
+                        0x73,0x21                    // jnb +21h
+                    };
+                    patch_all(pat, sizeof(pat), 10, &JMP_SHORT, 1);
+                }
+
+                // (b) JB (long): JB taken = early exit/error, fall-through = success.
+                //     NOP the 6-byte JB so execution always falls through to success.
+                {
+                    static const uint8_t pat[] = {
+                        0x25,0xB2,0x7C,0x93,0xE5,       // and eax, 0E5937CB2h
+                        0x3D,0xFA,0xC9,0x04,0x00,       // cmp eax, 4C9FAh
+                        0x0F,0x82,0xE6,0x07,0x00,0x00   // jb def_511801  <- NOP 6 bytes
+                    };
+                    patch_all(pat, sizeof(pat), 10, NOP6, 6);
+                }
+
+                // (c) JNB +5h: JNB taken = detected path (decrements counter and
+                //     calls sub_5060B2), fall-through = returns 1 (clean).
+                //     NOP the 2-byte JNB so execution always falls through.
+                {
+                    static const uint8_t pat[] = {
+                        0x25,0xB2,0x7C,0x93,0xE5,   // and eax, 0E5937CB2h
+                        0x3D,0xFA,0xC9,0x04,0x00,   // cmp eax, 4C9FAh
+                        0x73,0x05                    // jnb +5h  <- NOP these 2 bytes
+                    };
+                    patch_all(pat, sizeof(pat), 10, NOP2, 2);
+                }
             }
         }
 
@@ -431,7 +475,7 @@ namespace xlive
         {
             // Clear only PEB.BeingDebugged (byte at PEB+2).
             // Single-byte writes are atomic on x86 so this is safe from any thread.
-            // We deliberately do NOT touch NtGlobalFlag or the heap debug flags —
+            // We deliberately do NOT touch NtGlobalFlag or the heap debug flags --
             // those fields are read concurrently by HeapAlloc/HeapFree and writing
             // them from a separate thread causes heap corruption.
             const DWORD teb = __readfsdword(0x18);
@@ -459,12 +503,12 @@ namespace xlive
 
     void apply_early()
     {
-        // Called before the first game MessageBox — xlive.dll is already loaded
+        // Called before the first game MessageBox -- xlive.dll is already loaded
         // but XLiveInitialize has not been called yet, so all patches land before
         // any protection check executes.
         if (!GetModuleHandleA("xlive.dll"))
         {
-            MessageBoxA(nullptr, "xlive.dll not loaded — patches skipped", "xlive", MB_OK);
+            MessageBoxA(nullptr, "xlive.dll not loaded -- patches skipped", "xlive", MB_OK);
             return;
         }
         patch_xlive();
