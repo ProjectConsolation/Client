@@ -124,7 +124,7 @@ namespace xlive
             static const uint8_t nop2[2] = { 0x90, 0x90 };
             static const uint8_t nop10[10] = { 0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90 };
             static const uint8_t nop12[12] = { 0x90,0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90,0x90 };
-            static const uint8_t jmp_eb = 0xEB;  // shared short-JMP byte for all CC-check patches
+            static const uint8_t jmp_eb = 0xEB;
 
             // Fix 1: redirect xlive's IsDebuggerPresent IAT entry to always return FALSE
             patch_isdebugger(base, sz);
@@ -140,13 +140,12 @@ namespace xlive
             }
 
             // Fix 2B: bypass all INT3 breakpoint scans on sub_62D7A0
-//   VS patches sub_62D7A0[0] = 0xCC during thread creation. xlive checks this
-//   byte at multiple locations, corrupting pointers or aborting detection setup.
-//   Fix: JNZ -> JMP at each check so the harmful branch is never taken.
+            //   VS patches sub_62D7A0[0] = 0xCC on every thread creation. xlive checks
+            //   that byte across multiple functions, either corrupting pointers/values
+            //   or aborting detection-setup early (preventing the low-memory stub mapping).
+            //   Fix: JNZ -> JMP at every check so the harmful branch is never taken.
             {
-                static const uint8_t jmp_eb = 0xEB;
-
-                // Primary checks: cmp [reg], 0CCh / jnz +xx (all 5 bytes, jnz at offset 3)
+                // 5-byte checks: cmp [reg], 0CCh / jnz +xx — jnz always at offset 3
                 static const uint8_t cc_primary[][5] = {
                     {0x80,0x39,0xCC,0x75,0x1D},  // sub_53D016
                     {0x80,0x39,0xCC,0x75,0x05},  // sub_53A1DB: sub eax, 221h
@@ -165,45 +164,22 @@ namespace xlive
                     while (p) { mem_write(p + 3, &jmp_eb, 1); p = scan(p + 1, sz - (p - base) - 1, pat, 5); }
                 }
 
-                // Secondary checks: longer patterns with varying jnz offset.
-                // Covers both value-corrupting branches and early-exit paths that
-                // abort detection setup (preventing low-memory stub mapping).
+                // Variable-length checks: jnz offset differs, need explicit field
                 struct CcPatch { const uint8_t* pat; size_t len; size_t jnz_off; };
-                static const CcPatch cc_secondary[] = {
-                    // Value-corrupting — crash at XOR'd/shifted address
-                    {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4},  // sub_53D016: xor [var_44], 0DBh
-                    {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A",             10, 4},  // sub_5493AF: sar [var_44], 1Ah
-                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7},  // sub_987D5C: and [var_144], 81h
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4},  // sub_988B71: add [ebx+4], 0C3h (writes RET)
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4},  // sub_988E34: add [Src], 110h
+                static const CcPatch cc_var[] = {
+                    // Value-corrupting — produce crashes at XOR'd/shifted addresses
+                    {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4},  // sub_53D016:  xor [var_44], 0DBh
+                    {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A",             10, 4},  // sub_5493AF:  sar [var_44], 1Ah
+                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7},  // sub_987D5C:  and [var_144], 81h
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4},  // sub_988B71:  add [ebx+4], 0C3h (writes RET into live code)
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4},  // sub_988E34:  add [Src], 110h
                     // Early-exit paths — abort detection setup, preventing low-memory mapping
-                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x1D",  9, 7},  // sub_987D5C: returns early
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1B",              6, 4},  // sub_988B71: returns early
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1C",              6, 4},  // sub_988E34: returns early
+                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x1D",  9, 7},  // sub_987D5C: early return
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1B",              6, 4},  // sub_988B71: early return
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1C",              6, 4},  // sub_988E34: early return
                     {(const uint8_t*)"\x80\xBD\xDB\xFE\xFF\xFF\xCC\x75\x18",  9, 7},  // sub_8D44XX: calls sub_90BB64
                 };
-                for (const auto& e : cc_secondary)
-                {
-                    uint8_t* p = scan(base, sz, e.pat, e.len);
-                    while (p) { mem_write(p + e.jnz_off, &jmp_eb, 1); p = scan(p + 1, sz - (p - base) - 1, e.pat, e.len); }
-                }
-            
-
-                // Secondary checks — compare decoded stack buffer against 0xCC.
-                // These corrupt return values, write RET into live code, or shift values.
-                struct { const uint8_t* pat; size_t len; size_t jnz_off; } cc_secondary[] = {
-                    // sub_53D016: xor [var_44], 0DBh — corrupts return value, crashes at XOR'd addr
-                    {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4},
-                    // sub_5493AF: sar [var_44], 1Ah — right-shifts return value to near-zero
-                    {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A", 10, 4},
-                    // sub_987D5C: and [var_144], 81h — masks detection state flags
-                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7},
-                    // sub_988B71: add [ebx+4], 0C3h — writes RET opcode into live code
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4},
-                    // sub_988E34: add [Src], 110h — corrupts a string pointer
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4},
-                };
-                for (const auto& e : cc_secondary)
+                for (const auto& e : cc_var)
                 {
                     uint8_t* p = scan(base, sz, e.pat, e.len);
                     while (p) { mem_write(p + e.jnz_off, &jmp_eb, 1); p = scan(p + 1, sz - (p - base) - 1, e.pat, e.len); }
@@ -294,9 +270,6 @@ namespace xlive
 
         void clear_being_debugged()
         {
-            // Only clear PEB.BeingDebugged (byte at PEB+2). Single-byte write is
-            // atomic on x86 and safe from any thread. Do NOT touch NtGlobalFlag or
-            // heap flags — those race with HeapAlloc/HeapFree and corrupt the heap.
             const DWORD teb = __readfsdword(0x18);
             auto* peb = *reinterpret_cast<BYTE**>(teb + 0x30);
             peb[2] = 0;
