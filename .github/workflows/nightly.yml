@@ -28,15 +28,15 @@ jobs:
         run: msbuild Client.sln /p:Configuration=Release /p:OutDir=bin\Release\
 
       - name: Create/Update Nightly Release with commit hash
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: nightly
-          name: Nightly Build
-          body: Nightly build from commit ${{ github.sha::7 }}
-          draft: false
-          prerelease: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  uses: softprops/action-gh-release@v2
+  with:
+    tag_name: nightly
+    name: Nightly Build
+    body: Nightly build from commit ${{ github.sha.substring(0, 7) }}
+    draft: false
+    prerelease: true
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload d3d9.dll to nightly release (replace if exists)
         uses: softprops/action-gh-release@v2
