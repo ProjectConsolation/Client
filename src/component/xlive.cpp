@@ -162,6 +162,26 @@ namespace xlive
                 }
             }
 
+            // Fix 2C: bypass INT3 breakpoint check in sub_53A1DB
+            //   Same pattern as Fix 2B but different function. sub_53831D returns a function
+            //   pointer; if sub_62D7A0[0] == 0xCC, the pointer is corrupted by -0x221.
+            //   sub_53972C then calls through it -> crash at a garbage address (0xCCD5 etc).
+            //   Fix: change JNZ (75 05) to JMP (EB 05) — always skip the subtraction.
+            {
+                static const uint8_t pat[] = {
+                    0x80,0x39,0xCC,              // cmp byte ptr [ecx], 0CCh
+                    0x75,0x05,                   // jnz +5  <- change 75 to EB
+                    0x2D,0x21,0x02,0x00,0x00    // sub eax, 221h
+                };
+                static const uint8_t jmp = 0xEB;
+                uint8_t* p = scan(base, sz, pat, sizeof(pat));
+                while (p)
+                {
+                    mem_write(p + 3, &jmp, 1);
+                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
+                }
+            }
+
             // Fix 3A: NOP int 1 SEH traps (sub_53D016 + sub_987D5C)
             //   and [TryLevel], 0 / int 1 — NOP just the CD 01
             {
