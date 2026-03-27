@@ -466,6 +466,18 @@ namespace xlive
                     patch_all(pat, sizeof(pat), 10, NOP2, 2);
                 }
             }
+            // Fix 11: NOP JNB +7h in sub_94F8A8 (third D9BB259C mask check)
+            //   Same thread exit-code mechanism as Fix 7/8. JNB taken = clean path,
+            //   fall-through corrupts [ebx+4] with AND 101h -> downstream state damage.
+            //   NOP the 2-byte JNB so execution always falls through to clean path.
+            {
+                static const uint8_t pat[] = {
+                    0x25,0x9C,0x25,0xBB,0xD9,   // and eax, 0D9BB259Ch
+                    0x3D,0xB2,0x53,0xC1,0x00,   // cmp eax, 0C153B2h
+                    0x73,0x07                    // jnb +7h  <- NOP these 2 bytes
+                };
+                patch_all(pat, sizeof(pat), 10, NOP2, 2);
+            }
         }
 
         // ---------------------------------------------------------------------------
