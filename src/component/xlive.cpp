@@ -163,6 +163,27 @@ namespace xlive
                 patch_all(pat, sizeof(pat), 4, nop2, 2);
             }
 
+            // Fix 3A-extra: preserve function pointer after int 1 NOP in sub_53D016.
+            //   The int 1 SEH handler sets var_39=1 if caught (signals "clean/caught").
+            //   A JNZ uses var_39 to decide whether to clear var_4C (the function pointer).
+            //   Since we NOP'd the int 1, var_39 is never set -> JNZ not taken -> var_4C cleared
+            //   -> sub_4D436C called with null ptr -> low-memory thread fn not mapped -> AV at 0x8918.
+            //   Fix: change JNZ (75 04) to JMP (EB 04) so var_4C is always preserved.
+            {
+                static const uint8_t pat[] = {
+                    0x80,0x7D,0xC7,0x00,  // cmp [ebp+var_39], 0
+                    0x75,0x04,            // jnz +4  <- change 75 to EB
+                    0x83,0x65,0xB4,0x00   // and [ebp+var_4C], 0
+                };
+                static const uint8_t jmp = 0xEB;
+                uint8_t* p = scan(base, sz, pat, sizeof(pat));
+                while (p)
+                {
+                    mem_write(p + 4, &jmp, 1);  // 75 -> EB
+                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
+                }
+            }
+
             // Fix 3B: NOP int 3 SEH trap with magic SI/DI sentinel (sub_9883C3)
             //   mov si, 4647h / mov di, 4A4Dh / int 3
             //   NOP: just the CC
