@@ -22,28 +22,35 @@ jobs:
       - name: Clean old d3d9.dll
         run: |
           echo "Removing old d3d9.dll if it exists..."
-          del /Q "bin\Release\d3d9.dll" || echo "No old DLL found."
+          del /Q "build\bin\Release\d3d9.dll" || echo "No old DLL found."
 
       - name: Build solution (override output)
-        run: msbuild Client.sln /p:Configuration=Release /p:OutDir=bin\Release\
+        run: msbuild build\Client.sln /p:Configuration=Release /p:OutDir=build\bin\Release\
 
-      - name: Create/Update Nightly Release with commit hash
-  uses: softprops/action-gh-release@v2
-  with:
-    tag_name: nightly
-    name: Nightly Build
-    body: Nightly build from commit ${{ github.sha.substring(0, 7) }}
-    draft: false
-    prerelease: true
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Get short commit hash
+        id: shortsha
+        run: |
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Create/Update Nightly Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          body: Nightly build from commit ${{ steps.shortsha.outputs.short_sha }}
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload d3d9.dll to nightly release (replace if exists)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
           name: d3d9.dll
-          files: "bin\Release\d3d9.dll"
+          files: "build\bin\Release\d3d9.dll"
           replace: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
