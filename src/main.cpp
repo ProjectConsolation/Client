@@ -75,49 +75,25 @@ namespace
 
 	void main()
 	{
-		/*
-		// unprotect our entire pe image
-		HMODULE module;
-		if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCSTR>(main), &module))
-		{
-			unprotect_module(module);
-		}
-		*/
-
-		ShowWindow(GetConsoleWindow(), SW_HIDE);
 		enable_dpi_awareness();
-
 		srand(uint32_t(time(nullptr)));
 
+		try
 		{
-			try
-			{
-				/*
-				const auto version_check = utils::hook::get<DWORD>(0x59B69C);
-				if (version_check != 0x6C6C6143)
-				{
-					throw "invalid game files";
-					return;
-				}
-				*/
-				//utils::hook::set(0x5931B8, exit_hook); // ExitProcess import, might not be good to hook this but iat isn't working
+			xlive::apply_early(); // attemp at patching xlive FIRST, before a debugger can attach
 
-				MessageBoxA(NULL, "CONNECT DEBUGGER", "DEBUG", MB_DEFBUTTON1);
-				// NO apply_early() needed or useful here - xlive already loaded
+			MessageBoxA(NULL, "ATTACH DEBUGGER NOW", "DEBUG", MB_DEFBUTTON1);
+			// attach here - patches already in place, xlive already patched
 
-				if (!component_loader::post_start()) throw "post start failed";
-				if (!component_loader::post_load()) throw "post load failed";
+			if (!component_loader::post_start()) throw "post start failed";
+			if (!component_loader::post_load()) throw "post load failed";
 
-				// xlive has now fully initialized successfully
-				MessageBoxA(NULL, "XLIVE DONE - ATTACH FOR GAME CODE", "DEBUG", MB_DEFBUTTON1);
-				// Attach VS here for debugging game/component code
-			}
-			catch (std::string& error)
-			{
-				component_loader::pre_destroy();
-				MessageBoxA(nullptr, error.data(), "ERROR", MB_ICONERROR);
-				return;
-			}
+			MessageBoxA(NULL, "GAME LOADED", "DEBUG", MB_DEFBUTTON1);
+		}
+		catch (std::string& error)
+		{
+			component_loader::pre_destroy();
+			MessageBoxA(nullptr, error.data(), "ERROR", MB_ICONERROR);
 		}
 	}
 }
