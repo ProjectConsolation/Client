@@ -22,15 +22,15 @@ jobs:
       - name: Clean old d3d9.dll
         run: |
           Write-Host "Removing old d3d9.dll if it exists..."
-          if (Test-Path "build\bin\Release\d3d9.dll") {
-            Remove-Item "build\bin\Release\d3d9.dll" -Force
+          if (Test-Path "build/bin/Release/d3d9.dll") {
+            Remove-Item "build/bin/Release/d3d9.dll" -Force
           } else {
             Write-Host "No old DLL found."
           }
         shell: pwsh
 
       - name: Build solution (override output)
-        run: msbuild build\Client.sln /p:Configuration=Release /p:OutDir=build\bin\Release\
+        run: msbuild build/Client.sln /p:Configuration=Release /p:OutDir=build/bin/Release/
         shell: pwsh
 
       - name: Get short commit hash
@@ -58,5 +58,5 @@ jobs:
         with:
           tag_name: nightly
           name: d3d9.dll
-          files: "build\bin\Release\d3d9.dll"
+          files: "build/bin/Release/d3d9.dll"
           replace: true
