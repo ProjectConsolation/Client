@@ -50,6 +50,19 @@ jobs:
           Copy-Item $source -Destination $dest -Recurse -Force
         shell: pwsh
 
+      - name: Package release zip
+        run: |
+          $releaseDir = "${{ github.workspace }}\build\bin\Release"
+          $zipPath = "${{ github.workspace }}\consolation-nightly.zip"
+
+          # grab only the files we actually want to ship
+          $files = Get-ChildItem -Path $releaseDir -File |
+            Where-Object { $_.Extension -notin @('.lib', '.pdb', '.exp') }
+
+          Compress-Archive -Path $files.FullName -DestinationPath $zipPath -Force
+          Write-Host "Created $zipPath with $($files.Count) files"
+        shell: pwsh
+
       - name: Get short commit hash
         id: shortsha
         run: |
@@ -57,7 +70,7 @@ jobs:
           Write-Output "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
-      - name: Create/Update Nightly Release and upload files
+      - name: Create/Update Nightly Release and upload zip
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -68,4 +81,4 @@ jobs:
           draft: false
           prerelease: true
           overwrite_files: true
-          files: build/bin/Release/*
+          files: consolation-nightly.zip
