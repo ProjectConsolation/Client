@@ -19,6 +19,12 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Download premake5
+        run: |
+          Invoke-WebRequest -Uri https://github.com/premake/premake-core/releases/download/v5.0.0-alpha17/premake-5.0.0-alpha17-windows.zip -OutFile premake.zip
+          Expand-Archive premake.zip -DestinationPath tools
+        shell: pwsh
+
       - name: Run generate.bat to create solution
         run: |
           echo "Running generate.bat to produce Client.sln..."
