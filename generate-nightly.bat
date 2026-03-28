@@ -22,4 +22,4 @@ if not exist "build" (
     mkdir build
 )
 
-echo Client.sln should now be in build\
+echo consolation-client.sln should now be in build\
