@@ -1,16 +1,13 @@
 name: Nightly (Experimental) Build
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 on:
   schedule:
     - cron: "0 3 * * *"  # 03:00 UTC daily
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,27 +17,30 @@ jobs:
 
       - name: Run generate-nightly.bat to create solution
         run: |
-          echo "Running generate-nightly.bat to produce Client.sln..."
+          echo "Running generate-nightly.bat to produce consolation-client.sln..."
           call generate-nightly.bat
         shell: cmd
         working-directory: ${{ github.workspace }}
 
-      - name: Verify Client.sln exists
+      - name: Verify consolation-client.sln exists
         run: dir build
         shell: pwsh
 
-      - name: Clean old release files
+      - name: Clean old d3d9.dll
         run: |
-          $releaseDir = "build/bin/Release"
-          if (Test-Path "$releaseDir\d3d9.dll") {
+          $dllPath = "build/bin/Release/d3d9.dll"
+          if (Test-Path $dllPath) {
             Write-Host "Removing old d3d9.dll..."
-            Remove-Item "$releaseDir\d3d9.dll" -Force
-          }
-          if (Test-Path "$releaseDir\*") {
-            Write-Host "Removing old required files..."
-            Remove-Item "$releaseDir\*" -Exclude ".gitkeep" -Force -Recurse
+            Remove-Item $dllPath -Force
+          } else {
+            Write-Host "No old DLL found, skipping."
           }
         shell: pwsh
+
+      - name: Build solution
+        run: msbuild build\consolation-client.sln /p:Configuration=Release /p:OutDir=bin/Release/
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
 
       - name: Copy required files to release folder
         run: |
@@ -50,11 +50,6 @@ jobs:
           Copy-Item $source -Destination $dest -Recurse -Force
         shell: pwsh
 
-      - name: Build solution
-        run: msbuild build\Client.sln /p:Configuration=Release /p:OutDir=build/bin/Release/
-        shell: pwsh
-        working-directory: ${{ github.workspace }}
-
       - name: Get short commit hash
         id: shortsha
         run: |
@@ -62,7 +57,7 @@ jobs:
           Write-Output "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
-      - name: Create/Update Nightly Release
+      - name: Create/Update Nightly Release and upload files
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -72,18 +67,5 @@ jobs:
           body: Nightly build from commit ${{ steps.shortsha.outputs.short_sha }}
           draft: false
           prerelease: true
-          overwrite: true
+          overwrite_files: true
           files: build/bin/Release/*
-
-      - name: Cleanup old nightly releases (keep last 5)
-        run: |
-          $releases = gh release list --limit 100 | Where-Object { ($_ -split '\s+')[0] -eq 'nightly' }
-          $count = $releases.Count
-          if ($count -gt 5) {
-            $toDelete = $releases | Select-Object -Skip 5
-            foreach ($r in $toDelete) {
-              $tag = ($r -split '\s+')[0]
-              gh release delete $tag -y
-            }
-          }
-        shell: pwsh
