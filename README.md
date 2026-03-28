@@ -34,7 +34,7 @@ Currently this has only been tested and confirmed to work on the English 1.1 ver
 - Allow aiming to interrupt sprinting without letting go of any keys. (in other words, make it 1:1 to IW3)
 - Patch overhead font for readability.
 - Patch BG_GetPlayerMaxHealth to read DVAR & fix bot movement (Refer to other COD clients of the era)
-- Custom Zones via [qos-xport](https://github.com/mjkzy/qos-xport/) & port Xbox/PS3/Wii maps & weapons that QOS PC didn't get.
+- Custom Zones via [qos-xport]([https://github.com/ujicos/qos-xport]) & port Xbox/PS3/Wii maps & weapons that QOS PC didn't get.
 - Replace scaleform in favor of .menu files for easy cross compatibility with COD assets
 - Patch mouse input to get real raw mouse input
 - Steam proxy, so it would show you're playing ``Project: Consolation`` on your friend's Steam friendslist.
