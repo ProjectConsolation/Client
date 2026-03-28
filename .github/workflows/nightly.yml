@@ -19,6 +19,12 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Run generate.bat to create solution
+        run: |
+          echo "Running generate.bat to produce Client.sln..."
+          call generate.bat
+        shell: cmd
+
       - name: Clean old d3d9.dll
         run: |
           Write-Host "Removing old d3d9.dll if it exists..."
