@@ -5,7 +5,7 @@ env:
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "0 3 * * *"  # 03:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -21,18 +21,24 @@ jobs:
 
       - name: Clean old d3d9.dll
         run: |
-          echo "Removing old d3d9.dll if it exists..."
-          del /Q "build\\bin\\Release\\d3d9.dll" || echo "No old DLL found."
+          Write-Host "Removing old d3d9.dll if it exists..."
+          if (Test-Path "build\bin\Release\d3d9.dll") {
+            Remove-Item "build\bin\Release\d3d9.dll" -Force
+          } else {
+            Write-Host "No old DLL found."
+          }
+        shell: pwsh
 
       - name: Build solution (override output)
-        run: msbuild build\\Client.sln /p:Configuration=Release /p:OutDir=build\\bin\\Release\\
+        run: msbuild build\Client.sln /p:Configuration=Release /p:OutDir=build\bin\Release\
+        shell: pwsh
 
       - name: Get short commit hash
         id: shortsha
         run: |
-          SHORT_SHA=${GITHUB_SHA:0:7}
-          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
-        shell: bash
+          $short = $env:GITHUB_SHA.Substring(0,7)
+          Write-Output "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+        shell: pwsh
 
       - name: Create/Update Nightly Release
         uses: softprops/action-gh-release@v2
@@ -52,5 +58,5 @@ jobs:
         with:
           tag_name: nightly
           name: d3d9.dll
-          files: "build\\bin\\Release\\d3d9.dll"
+          files: "build\bin\Release\d3d9.dll"
           replace: true
