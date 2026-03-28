@@ -26,6 +26,10 @@ jobs:
         shell: cmd
         working-directory: ${{ github.workspace }}
 
+      - name: Verify Client.sln exists
+        run: dir build
+        shell: pwsh
+
       - name: Clean old d3d9.dll
         run: |
           Write-Host "Removing old d3d9.dll if it exists..."
@@ -59,7 +63,7 @@ jobs:
           body: Nightly build from commit ${{ steps.shortsha.outputs.short_sha }}
           draft: false
           prerelease: true
-          overwrite: true   # automatically replaces the nightly release
+          overwrite: true   # automatically replaces nightly
 
       - name: Upload d3d9.dll to nightly release (replace if exists)
         uses: softprops/action-gh-release@v2
@@ -71,10 +75,15 @@ jobs:
           files: "build/bin/Release/d3d9.dll"
           replace: true
 
-      - name: Cleanup old artifacts (keep last 5)
+      - name: Cleanup old nightly releases (keep last 5)
         run: |
-          gh release list --limit 100 | Select-Object -Skip 5 | ForEach-Object {
-            $tag = ($_ -split '\s+')[0]
-            if ($tag -ne "nightly") { gh release delete $tag -y }
+          $releases = gh release list --limit 100 | Where-Object { ($_ -split '\s+')[0] -eq 'nightly' }
+          $count = $releases.Count
+          if ($count -gt 5) {
+            $toDelete = $releases | Select-Object -Skip 5
+            foreach ($r in $toDelete) {
+              $tag = ($r -split '\s+')[0]
+              gh release delete $tag -y
+            }
           }
         shell: pwsh
