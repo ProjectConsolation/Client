@@ -1,13 +1,16 @@
 name: Nightly (Experimental) Build
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   schedule:
     - cron: "0 3 * * *"  # 03:00 UTC daily
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,19 +29,29 @@ jobs:
         run: dir build
         shell: pwsh
 
-      - name: Clean old d3d9.dll
+      - name: Clean old release files
         run: |
-          $dllPath = "build/bin/Release/d3d9.dll"
-          if (Test-Path $dllPath) {
+          $releaseDir = "build/bin/Release"
+          if (Test-Path "$releaseDir\d3d9.dll") {
             Write-Host "Removing old d3d9.dll..."
-            Remove-Item $dllPath -Force
-          } else {
-            Write-Host "No old DLL found, skipping."
+            Remove-Item "$releaseDir\d3d9.dll" -Force
+          }
+          if (Test-Path "$releaseDir\*") {
+            Write-Host "Removing old required files..."
+            Remove-Item "$releaseDir\*" -Exclude ".gitkeep" -Force -Recurse
           }
         shell: pwsh
 
+      - name: Copy required files to release folder
+        run: |
+          $source = "${{ github.workspace }}\required_files\*"
+          $dest = "${{ github.workspace }}\build\bin\Release\"
+          Write-Host "Copying required files from $source to $dest"
+          Copy-Item $source -Destination $dest -Recurse -Force
+        shell: pwsh
+
       - name: Build solution
-        run: msbuild build\consolation-client.sln /p:Configuration=Release /p:OutDir=bin/Release/
+        run: msbuild build\Client.sln /p:Configuration=Release /p:OutDir=build/bin/Release/
         shell: pwsh
         working-directory: ${{ github.workspace }}
 
@@ -49,7 +62,7 @@ jobs:
           Write-Output "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
-      - name: Create/Update Nightly Release and upload d3d9.dll
+      - name: Create/Update Nightly Release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -60,4 +73,17 @@ jobs:
           draft: false
           prerelease: true
           overwrite: true
-          files: build/bin/Release/d3d9.dll
+          files: build/bin/Release/*
+
+      - name: Cleanup old nightly releases (keep last 5)
+        run: |
+          $releases = gh release list --limit 100 | Where-Object { ($_ -split '\s+')[0] -eq 'nightly' }
+          $count = $releases.Count
+          if ($count -gt 5) {
+            $toDelete = $releases | Select-Object -Skip 5
+            foreach ($r in $toDelete) {
+              $tag = ($r -split '\s+')[0]
+              gh release delete $tag -y
+            }
+          }
+        shell: pwsh
