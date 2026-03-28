@@ -50,6 +50,11 @@ FARPROC sdllp::get_export(const char* function, const char* library)
 }
 
 #define LIBRARY "d3d9.dll"
+
+// C4740: inline asm in naked functions suppresses global optimization — expected behavior here
+#pragma warning(push)
+#pragma warning(disable: 4740)
 EXPORT(D3DPERF_BeginEvent)
 EXPORT(D3DPERF_EndEvent)
 EXPORT(Direct3DCreate9)
+#pragma warning(pop)
