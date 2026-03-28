@@ -80,15 +80,19 @@ namespace
 
 		try
 		{
+#ifdef DEBUG
 			xlive::apply_early(); // attemp at patching xlive FIRST, before a debugger can attach
-
 			MessageBoxA(NULL, "ATTACH DEBUGGER NOW", "DEBUG", MB_DEFBUTTON1);
+#endif
+
+			
 			// attach here - patches already in place, xlive already patched
 
 			if (!component_loader::post_start()) throw "post start failed";
 			if (!component_loader::post_load()) throw "post load failed";
-
+#ifdef DEBUG
 			MessageBoxA(NULL, "GAME LOADED", "DEBUG", MB_DEFBUTTON1);
+#endif
 		}
 		catch (std::string& error)
 		{

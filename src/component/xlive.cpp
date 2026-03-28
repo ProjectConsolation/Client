@@ -554,5 +554,6 @@ namespace xlive
         }
     };
 }
-
-REGISTER_COMPONENT(xlive::component)
+#ifdef DEBUG
+    REGISTER_COMPONENT(xlive::component) //only register in debug
+#endif
