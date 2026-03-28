@@ -9,7 +9,7 @@
  *
  * xlive (2009) uses two independent detection mechanisms:
  *
- *   Mechanism A — hardware breakpoint detction (sub_4F8A59):
+ *   Mechanism A — hardware breakpoint detection (sub_4F8A59):
  *     DuplicateHandle(current_thread) -> TargetHandle
  *     CreateThread(lpStart=sub_5F75F8, lpParam=TargetHandle)
  *     sub_5F75F8: SuspendThread(param) -> GetThreadContext -> checks Dr7
@@ -27,8 +27,8 @@
  *
  * ── Why naive byte patches don't fix it ──────────────────────────────────────
  *
- * The "detcted" fall-through path in sub_5072BB leads to sub_8DC4BC which
- * performs the actual low-mmeory setup. Patching the branch that skips to the
+ * The "detected" fall-through path in sub_5072BB leads to sub_8DC4BC which
+ * performs the actual low-memory setup. Patching the branch that skips to the
  * early return (which we previously called Fix 7/8/11) also skips sub_8DC4BC,
  * leaving the thread stub unmapped — same crash, different address each run.
  *
@@ -62,6 +62,24 @@ namespace xlive
     namespace
     {
         utils::hook::detour ntqip_hook;
+
+#ifdef DEBUG
+        // Writes a formatted string to the VS Output window (Debug > Output).
+        static void dbg(const char* fmt, ...)
+        {
+            char buf[256];
+            va_list args;
+            va_start(args, fmt);
+            vsnprintf(buf, sizeof(buf), fmt, args);
+            va_end(args);
+            OutputDebugStringA("[xlive] ");
+            OutputDebugStringA(buf);
+            OutputDebugStringA("\n");
+        }
+#else
+        // In release builds the call disappears entirely — zero overhead.
+        static inline void dbg(const char*, ...) {}
+#endif
 
         // Replaces xlive's IAT slot for IsDebuggerPresent — always returns FALSE.
         static BOOL WINAPI IsDebuggerPresent_stub() { return FALSE; }
@@ -115,13 +133,13 @@ namespace xlive
         static constexpr size_t FAKE_POOL_SIZE = 32;
         struct FakeThread
         {
-            HANDLE event = nullptr; // manual-reset event, pre-signalled
+            HANDLE event = nullptr;  // manual-reset event, pre-signalled
             DWORD  exit_code = CLEAN_EXIT_CODE;
             bool   active = false;
         };
-        static FakeThread fake_pool[FAKE_POOL_SIZE];
+        static FakeThread       fake_pool[FAKE_POOL_SIZE];
         static CRITICAL_SECTION fake_pool_cs;
-        static bool fake_pool_init = false;
+        static bool             fake_pool_init = false;
 
         static void ensure_fake_pool()
         {
@@ -136,15 +154,13 @@ namespace xlive
         // them except through our hooked GetExitCodeThread/WaitForSingleObject.
         static HANDLE encode_fake(FakeThread* ft)
         {
-            return reinterpret_cast<HANDLE>(
-                reinterpret_cast<uintptr_t>(ft) | 1u);
+            return reinterpret_cast<HANDLE>(reinterpret_cast<uintptr_t>(ft) | 1u);
         }
         static FakeThread* decode_fake(HANDLE h)
         {
             const auto v = reinterpret_cast<uintptr_t>(h);
             if ((v & 1u) == 0) return nullptr;
             auto* ft = reinterpret_cast<FakeThread*>(v & ~uintptr_t(1));
-            // Bounds-check against pool
             if (ft < fake_pool || ft >= fake_pool + FAKE_POOL_SIZE) return nullptr;
             return ft->active ? ft : nullptr;
         }
@@ -155,19 +171,19 @@ namespace xlive
             EnterCriticalSection(&fake_pool_cs);
             FakeThread* ft = nullptr;
             for (auto& slot : fake_pool)
-            {
                 if (!slot.active) { ft = &slot; break; }
-            }
+
             if (!ft)
             {
                 LeaveCriticalSection(&fake_pool_cs);
+                dbg("alloc_fake_thread: pool exhausted!");
                 return nullptr;
             }
             if (!ft->event)
                 ft->event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
             ft->exit_code = CLEAN_EXIT_CODE;
             ft->active = true;
-            SetEvent(ft->event); // pre-signalled so WaitForSingleObject returns immediately
+            SetEvent(ft->event);
             LeaveCriticalSection(&fake_pool_cs);
             return encode_fake(ft);
         }
@@ -188,11 +204,11 @@ namespace xlive
         {
             if (reinterpret_cast<uintptr_t>(start) < 0x10000u)
             {
-                // Low-memory stub thread — cannot execute on Win10/11.
-                // Return a fake signalled handle; callers see immediate completion
-                // with the clean exit code.
+                dbg("CreateThread intercept: low-addr start=%p param=%p -> fake handle",
+                    reinterpret_cast<void*>(start), param);
                 if (tid) *tid = 0;
                 HANDLE h = alloc_fake_thread();
+                dbg("CreateThread intercept: returned fake handle=%p", h);
                 return h ? h : INVALID_HANDLE_VALUE;
             }
             return CreateThread(sec, stack, start, param, flags, tid);
@@ -202,7 +218,10 @@ namespace xlive
         static DWORD WINAPI WaitForSingleObject_hook(HANDLE h, DWORD timeout)
         {
             if (FakeThread* ft = decode_fake(h))
+            {
+                dbg("WaitForSingleObject: fake handle=%p -> WAIT_OBJECT_0", h);
                 return WAIT_OBJECT_0;
+            }
             return WaitForSingleObject(h, timeout);
         }
 
@@ -212,6 +231,7 @@ namespace xlive
             if (FakeThread* ft = decode_fake(h))
             {
                 if (exit_code) *exit_code = ft->exit_code;
+                dbg("GetExitCodeThread: fake handle=%p -> exit_code=0x%08X", h, ft->exit_code);
                 return TRUE;
             }
             return GetExitCodeThread(h, exit_code);
@@ -222,6 +242,7 @@ namespace xlive
         {
             if (FakeThread* ft = decode_fake(h))
             {
+                dbg("CloseHandle: recycling fake handle=%p", h);
                 free_fake_thread(ft);
                 return TRUE;
             }
@@ -301,7 +322,10 @@ namespace xlive
                         else if (strcmp(fn_name, "CloseHandle") == 0) stub = reinterpret_cast<void*>(&CloseHandle_hook);
 
                         if (stub)
+                        {
+                            dbg("IAT patch: xlive.%s -> hook", fn_name);
                             mem_write(&ft->u1.Function, &stub, sizeof(stub));
+                        }
                     }
                 }
             }
@@ -319,13 +343,17 @@ namespace xlive
             const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
             const size_t sz = nt->OptionalHeader.SizeOfImage;
 
+            int patch_count = 0;
             const auto patch_all = [&](const uint8_t* pat, size_t pat_len,
-                size_t off, const uint8_t* data, size_t data_len)
+                size_t off, const uint8_t* data, size_t data_len,
+                const char* tag)
                 {
                     uint8_t* p = scan(base, sz, pat, pat_len);
                     while (p)
                     {
                         mem_write(p + off, data, data_len);
+                        dbg("patch_all [%s]: hit at +0x%X", tag, static_cast<unsigned>(p - base));
+                        ++patch_count;
                         p = scan(p + 1, sz - (p - base) - 1, pat, pat_len);
                     }
                 };
@@ -336,41 +364,22 @@ namespace xlive
             static const uint8_t NOP12[12] = { 0x90,0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90,0x90 };
             static const uint8_t JMP_SHORT = 0xEB;
 
-            // -------------------------------------------------------------------
-            // Fix 1: IAT hooks — IsDebuggerPresent + CreateThread intercept
-            //
-            // Redirects xlive's own IAT slots. CreateThread_hook intercepts the
-            // low-memory thread creation (Mechanism B) that crashes on Win10/11.
-            // WaitForSingleObject/GetExitCodeThread/CloseHandle hooks complete
-            // the illusion so xlive's state machine sees a "clean" thread result.
+            // Fix 1: IsDebuggerPresent IAT redirect + CreateThread/Wait/Exit/Close hooks
             patch_isdebugger(base, sz);
 
             // -------------------------------------------------------------------
             // Fix 2: NOP PEB.BeingDebugged pointer corruption
-            //
-            // When PEB.BeingDebugged == 1, xlive corrupts two pointer registers
-            // used for subsequent function dispatch:
-            //   sub edi, 135h    ; corrupts dispatch table offset
-            //   sub esi, 1F620h  ; corrupts module base pointer
-            // Both are NOPed so dispatch works normally with a debugger attached.
             {
                 static const uint8_t pat[] = {
-                    0x81,0xEF,0x35,0x01,0x00,0x00,   // sub edi, 135h
-                    0x81,0xEE,0x20,0xF6,0x01,0x00     // sub esi, 1F620h
+                    0x81,0xEF,0x35,0x01,0x00,0x00,
+                    0x81,0xEE,0x20,0xF6,0x01,0x00
                 };
-                patch_all(pat, sizeof(pat), 0, NOP12, 12);
+                patch_all(pat, sizeof(pat), 0, NOP12, 12, "F2 PEB ptr corrupt");
             }
 
             // -------------------------------------------------------------------
-            // Fix 2B: bypass INT3 breakpoint scans (Mechanism A — 0xCC checks)
-            //
-            // xlive checks whether the first byte of the thread-inspect function
-            // (sub_5F75F8) is 0xCC (an INT3 that VS injects on thread creation)
-            // at 14+ call sites. Detection either corrupts a function pointer
-            // (crash at mangled address) or causes early exit (stub unmapped).
-            // Fix: change every JNZ following the 0xCC comparison to JMP.
+            // Fix 2B: bypass INT3 breakpoint scans on sub_5F75F8
             {
-                // Primary checks — 5-byte form: cmp [reg], 0CCh / jnz +xx
                 static const uint8_t cc_primary[][5] = {
                     {0x80,0x39,0xCC,0x75,0x1D},
                     {0x80,0x39,0xCC,0x75,0x05},
@@ -389,22 +398,23 @@ namespace xlive
                     while (p)
                     {
                         mem_write(p + 3, &JMP_SHORT, 1);
+                        dbg("patch [F2B cc_primary]: hit at +0x%X", static_cast<unsigned>(p - base));
+                        ++patch_count;
                         p = scan(p + 1, sz - (p - base) - 1, pat, 5);
                     }
                 }
 
-                // Variable-length checks — JNZ offset and pattern length differ.
-                struct CcPatch { const uint8_t* pat; size_t len; size_t jnz_off; };
+                struct CcPatch { const uint8_t* pat; size_t len; size_t jnz_off; const char* tag; };
                 static const CcPatch cc_var[] = {
-                    {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4},
-                    {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A",             10, 4},
-                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7},
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4},
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4},
-                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x1D",  9, 7},
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1B",              6, 4},
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1C",              6, 4},
-                    {(const uint8_t*)"\x80\xBD\xDB\xFE\xFF\xFF\xCC\x75\x18",  9, 7},
+                    {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4, "xor DBh"},
+                    {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A",             10, 4, "sar 1Ah"},
+                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7, "and 81h"},
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4, "add C3h"},
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4, "add 110h"},
+                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x1D",  9, 7, "early exit A"},
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1B",              6, 4, "early exit B"},
+                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1C",              6, 4, "early exit C"},
+                    {(const uint8_t*)"\x80\xBD\xDB\xFE\xFF\xFF\xCC\x75\x18",  9, 7, "report detect"},
                 };
                 for (const auto& e : cc_var)
                 {
@@ -412,101 +422,80 @@ namespace xlive
                     while (p)
                     {
                         mem_write(p + e.jnz_off, &JMP_SHORT, 1);
+                        dbg("patch [F2B cc_var %s]: hit at +0x%X", e.tag, static_cast<unsigned>(p - base));
+                        ++patch_count;
                         p = scan(p + 1, sz - (p - base) - 1, e.pat, e.len);
                     }
                 }
             }
 
-            // -------------------------------------------------------------------
             // Fix 3A: NOP int 1 SEH traps
             {
-                static const uint8_t pat[] = {
-                    0x83,0x65,0xFC,0x00,  // and [TryLevel], 0
-                    0xCD,0x01             // int 1  <- NOP
-                };
-                patch_all(pat, sizeof(pat), 4, NOP2, 2);
+                static const uint8_t pat[] = { 0x83,0x65,0xFC,0x00, 0xCD,0x01 };
+                patch_all(pat, sizeof(pat), 4, NOP2, 2, "F3A int1");
             }
 
             // Fix 3B: NOP int 3 SEH trap — magic SI/DI sentinel
             {
-                static const uint8_t pat[] = {
-                    0x66,0xBE,0x47,0x46,  // mov si, 4647h
-                    0x66,0xBF,0x4D,0x4A,  // mov di, 4A4Dh
-                    0xCC                  // int 3  <- NOP
-                };
-                patch_all(pat, sizeof(pat), 8, &NOP1, 1);
+                static const uint8_t pat[] = { 0x66,0xBE,0x47,0x46, 0x66,0xBF,0x4D,0x4A, 0xCC };
+                patch_all(pat, sizeof(pat), 8, &NOP1, 1, "F3B int3");
             }
 
             // Fix 3C: NOP ud2 SEH trap
             {
-                static const uint8_t pat[] = {
-                    0xC7,0x45,0xFC,0x02,0x00,0x00,0x00,  // mov [TryLevel], 2
-                    0x0F,0x0B                              // ud2  <- NOP
-                };
-                patch_all(pat, sizeof(pat), 7, NOP2, 2);
+                static const uint8_t pat[] = { 0xC7,0x45,0xFC,0x02,0x00,0x00,0x00, 0x0F,0x0B };
+                patch_all(pat, sizeof(pat), 7, NOP2, 2, "F3C ud2");
             }
 
-            // -------------------------------------------------------------------
-            // Fix 4: NOP int 41h SEH traps (5 occurrences)
+            // Fix 4: NOP int 41h SEH traps
             {
-                static const uint8_t pat[] = {
-                    0x66,0xB8,0x4F,0x00,  // mov ax, 4Fh
-                    0xCD,0x41             // int 41h  <- NOP
-                };
-                patch_all(pat, sizeof(pat), 4, NOP2, 2);
+                static const uint8_t pat[] = { 0x66,0xB8,0x4F,0x00, 0xCD,0x41 };
+                patch_all(pat, sizeof(pat), 4, NOP2, 2, "F4 int41h");
             }
 
-            // -------------------------------------------------------------------
-            // Fix 5: NOP divide-by-zero SEH traps (4 occurrences)
+            // Fix 5: NOP divide-by-zero SEH traps
             {
-                static const uint8_t pat[] = {
-                    0x33,0xC0,  // xor eax, eax
-                    0xF7,0xF0   // div eax  <- NOP
-                };
-                patch_all(pat, sizeof(pat), 2, NOP2, 2);
+                static const uint8_t pat[] = { 0x33,0xC0, 0xF7,0xF0 };
+                patch_all(pat, sizeof(pat), 2, NOP2, 2, "F5 divzero");
             }
 
-            // -------------------------------------------------------------------
-            // Fix 6: NOP POPFW trap-flag traps (4 occurrences)
+            // Fix 6: NOP POPFW trap-flag traps
             {
-                static const uint8_t pat[] = { 0x66,0xFF,0x75 };  // push word [ebp+var]
+                static const uint8_t pat[] = { 0x66,0xFF,0x75 };
                 uint8_t* p = scan(base, sz, pat, sizeof(pat));
                 while (p)
                 {
                     if (p[4] == 0x66 && p[5] == 0x9D)
+                    {
                         mem_write(p + 4, NOP2, 2);
+                        dbg("patch [F6 popfw]: hit at +0x%X", static_cast<unsigned>(p - base));
+                        ++patch_count;
+                    }
                     p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
                 }
             }
 
-            // -------------------------------------------------------------------
             // Fix 7: NOP PEB.BeingDebugged XOR in XLiveInitialize (xlive_5000)
-            //
-            // During XLiveInitialize, xlive reads PEB.BeingDebugged and XORs
-            // xlive's central state variable with 0x2B7 if set, corrupting the
-            // state machine that drives _XNetStartup and all networking calls.
             {
                 static const uint8_t pat[] = {
-                    0x64,0xA1,0x18,0x00,0x00,0x00,  // mov eax, fs:[18h]
-                    0x8B,0x40,0x30,                  // mov eax, [eax+30h]
-                    0x0F,0xB6,0x40,0x02,             // movzx eax, [eax+2]
-                    0x8B,0x4D,0xD4,                  // mov ecx, [ebp+hModule]
-                    0x89,0x01,                        // mov [ecx], eax
-                    0x39,0x55,0xD8,                  // cmp [ebp+var_28], edx
-                    0x74,0x0A                         // jz +Ah
+                    0x64,0xA1,0x18,0x00,0x00,0x00,
+                    0x8B,0x40,0x30,
+                    0x0F,0xB6,0x40,0x02,
+                    0x8B,0x4D,0xD4,
+                    0x89,0x01,
+                    0x39,0x55,0xD8,
+                    0x74,0x0A
                 };
-                patch_all(pat, sizeof(pat), sizeof(pat), NOP10, 10);
+                patch_all(pat, sizeof(pat), sizeof(pat), NOP10, 10, "F7 init XOR");
             }
+
+            dbg("patch_xlive: applied %d patches total", patch_count);
         }
 
         // -------------------------------------------------------------------------
-        // PEB.BeingDebugged cleaner
 
         void clear_being_debugged()
         {
-            // Clear only PEB.BeingDebugged (byte at PEB+2). Single-byte writes are
-            // atomic on x86. Do NOT touch NtGlobalFlag or heap flags — those are
-            // accessed concurrently by HeapAlloc/HeapFree and would cause corruption.
             const DWORD teb = __readfsdword(0x18);
             reinterpret_cast<BYTE*>(*reinterpret_cast<ULONG_PTR*>(teb + 0x30))[2] = 0;
         }
@@ -518,6 +507,7 @@ namespace xlive
             const auto fn = GetProcAddress(ntdll, "NtQueryInformationProcess");
             if (!fn) return;
             ntqip_hook.create(fn, NtQueryInformationProcess_hook);
+            dbg("hook_ntqip: NtQueryInformationProcess hooked");
         }
 
         DWORD WINAPI cleaner_thread(LPVOID)
@@ -537,11 +527,13 @@ namespace xlive
             MessageBoxA(nullptr, "xlive.dll not loaded — patches skipped", "xlive", MB_OK);
             return;
         }
+        dbg("apply_early: begin");
         ensure_fake_pool();
         patch_xlive();
         clear_being_debugged();
         hook_ntqip();
         CloseHandle(CreateThread(nullptr, 0, cleaner_thread, nullptr, 0, nullptr));
+        dbg("apply_early: done");
     }
 
     class component final : public component_interface
@@ -549,11 +541,13 @@ namespace xlive
     public:
         void post_load() override
         {
+            dbg("post_load: re-applying patches");
             patch_xlive();
             clear_being_debugged();
         }
     };
 }
+
 #ifdef DEBUG
-    REGISTER_COMPONENT(xlive::component) //only register in debug
+REGISTER_COMPONENT(xlive::component)
 #endif
