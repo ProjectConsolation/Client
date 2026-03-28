@@ -1,17 +1,13 @@
 name: Nightly (Experimental) Build
-
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 on:
   schedule:
     - cron: "0 3 * * *"  # 03:00 UTC daily
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,28 +28,28 @@ jobs:
 
       - name: Clean old d3d9.dll
         run: |
-          Write-Host "Removing old d3d9.dll if it exists..."
           $dllPath = "build/bin/Release/d3d9.dll"
           if (Test-Path $dllPath) {
+            Write-Host "Removing old d3d9.dll..."
             Remove-Item $dllPath -Force
           } else {
-            Write-Host "No old DLL found."
+            Write-Host "No old DLL found, skipping."
           }
         shell: pwsh
 
       - name: Build solution
-        run: msbuild Client.sln /p:Configuration=Release /p:OutDir=bin/Release/
+        run: msbuild build\Client.sln /p:Configuration=Release /p:OutDir=bin/Release/
         shell: pwsh
-        working-directory: build
+        working-directory: ${{ github.workspace }}
 
       - name: Get short commit hash
         id: shortsha
         run: |
-          $short = $env:GITHUB_SHA.Substring(0,7)
+          $short = $env:GITHUB_SHA.Substring(0, 7)
           Write-Output "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
-      - name: Create/Update Nightly Release
+      - name: Create/Update Nightly Release and upload d3d9.dll
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -63,27 +59,5 @@ jobs:
           body: Nightly build from commit ${{ steps.shortsha.outputs.short_sha }}
           draft: false
           prerelease: true
-          overwrite: true   # replaces previous nightly release automatically
-
-      - name: Upload d3d9.dll to nightly release (replace if exists)
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: nightly
-          name: d3d9.dll
-          files: "build/bin/Release/d3d9.dll"
-          replace: true
-
-      - name: Cleanup old nightly releases (keep last 5)
-        run: |
-          $releases = gh release list --limit 100 | Where-Object { ($_ -split '\s+')[0] -eq 'nightly' }
-          $count = $releases.Count
-          if ($count -gt 5) {
-            $toDelete = $releases | Select-Object -Skip 5
-            foreach ($r in $toDelete) {
-              $tag = ($r -split '\s+')[0]
-              gh release delete $tag -y
-            }
-          }
-        shell: pwsh
+          overwrite: true
+          files: build/bin/Release/d3d9.dll
