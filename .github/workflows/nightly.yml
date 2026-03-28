@@ -19,12 +19,11 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Run generate.bat to create solution
+      - name: Run nightly solution generator
         run: |
-          echo "Running generate.bat to produce Client.sln..."
-          call generate.bat
+          echo "Running generate-nightly.bat to produce Client.sln..."
+          call generate-nightly.bat
         shell: cmd
-        working-directory: ${{ github.workspace }}
 
       - name: Verify Client.sln exists
         run: dir build
@@ -32,20 +31,18 @@ jobs:
 
       - name: Clean old d3d9.dll
         run: |
-          Write-Host "Removing old d3d9.dll if it exists..."
-          $dllPath = "bin/Release/d3d9.dll"
+          $dllPath = "build/bin/Release/d3d9.dll"
           if (Test-Path $dllPath) {
+            Write-Host "Removing old d3d9.dll..."
             Remove-Item $dllPath -Force
           } else {
             Write-Host "No old DLL found."
           }
         shell: pwsh
-        working-directory: build
 
-      - name: Build solution (override output)
-        run: msbuild Client.sln /p:Configuration=Release /p:OutDir=bin/Release/
+      - name: Build solution
+        run: msbuild build/Client.sln /p:Configuration=Release /p:OutDir=build/bin/Release/
         shell: pwsh
-        working-directory: build
 
       - name: Get short commit hash
         id: shortsha
@@ -57,8 +54,9 @@ jobs:
       - name: Set nightly tag
         id: nightly_tag
         run: |
-          $date = Get-Date -Format "yyyyMMdd"
-          $tag = "nightly-$date"
+          $date = Get-Date -Format "yyyy-MM-dd"
+          $short = "${{ steps.shortsha.outputs.short_sha }}"
+          $tag = "nightly-$date-$short"
           Write-Output "tag_name=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
@@ -73,22 +71,22 @@ jobs:
           draft: false
           prerelease: true
 
-      - name: Upload d3d9.dll
+      - name: Upload d3d9.dll to nightly release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.nightly_tag.outputs.tag_name }}
           name: d3d9.dll
-          files: "bin/Release/d3d9.dll"
+          files: "build/bin/Release/d3d9.dll"
           replace: true
 
       - name: Cleanup old nightly releases (keep last 5)
         run: |
-          $releases = gh release list --limit 100 | Where-Object { ($_ -split '\s+')[0] -like 'nightly-*' } | Sort-Object
+          $releases = gh release list --limit 100 | Where-Object { ($_ -split '\s+')[0] -like 'nightly-*' }
           $count = $releases.Count
           if ($count -gt 5) {
-            $toDelete = $releases | Select-Object -First ($count - 5)
+            $toDelete = $releases | Select-Object -Skip 5
             foreach ($r in $toDelete) {
               $tag = ($r -split '\s+')[0]
               gh release delete $tag -y
