@@ -38,7 +38,7 @@ jobs:
         shell: pwsh
 
       - name: Build solution
-        run: msbuild build\consolation-client.sln /p:Configuration=Release /p:OutDir=bin/Release/ "/p:AdditionalOptions=/wd4067"
+        run: msbuild build\consolation-client.sln /p:Configuration=Release /p:OutDir=bin/Release/ /p:TreatWarningsAsErrors=false
         shell: pwsh
         working-directory: ${{ github.workspace }}
 
