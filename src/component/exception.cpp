@@ -36,7 +36,7 @@ namespace exception
 
             utils::thread::suspend_other_threads();
             show_mouse_cursor();
-            MessageBoxA(nullptr, error_str.data(), "t3-mod ERROR", MB_ICONERROR);
+            MessageBoxA(nullptr, error_str.data(), "Project: Consolation ERROR", MB_ICONERROR);
             TerminateProcess(GetCurrentProcess(), exception_data.code);
         }
 
@@ -66,7 +66,7 @@ namespace exception
                 info.append("\r\n");
             };
 
-            line("t3-mod Crash Dump");
+            line("Project: Consolation Crash Dump");
             line("");
             line("Timestamp: "s + utils::string::get_timestamp());
             line(utils::string::va("Exception: 0x%08X", exceptioninfo->ExceptionRecord->ExceptionCode));
@@ -87,7 +87,7 @@ namespace exception
 
         void write_minidump(const LPEXCEPTION_POINTERS exceptioninfo)
         {
-            const std::string crash_name = utils::string::va("minidumps/t3-mod-crash-%s.dmp",
+            const std::string crash_name = utils::string::va("minidumps/consolation-crash-%s.dmp",
                                                              utils::string::get_timestamp().data());
             create_minidump(exceptioninfo);
             utils::io::write_file(crash_name, create_minidump(exceptioninfo), false);
@@ -133,4 +133,4 @@ namespace exception
     };
 }
 
-//REGISTER_COMPONENT(exception::component)
+REGISTER_COMPONENT(exception::component) //re-enabled cus why not, hope i wont get fucked

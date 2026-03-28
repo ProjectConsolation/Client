@@ -1,17 +1,12 @@
 #include <std_include.hpp>
-
 #include "loader/component_loader.hpp"
 #include "game/game.hpp"
-
 #include <utils/string.hpp>
 #include <utils/flags.hpp>
 #include <utils/io.hpp>
 #include <utils/hook.hpp>
-
 #include <ShellScalingApi.h>
-
-#include "component/xlive.hpp"         // ADD - just this one include
-
+#include "component/xlive.hpp"
 
 namespace
 {
@@ -39,7 +34,6 @@ namespace
 				return;
 			}
 		}
-
 		{
 			const utils::nt::library shcore{"shcore.dll"};
 			const auto set_dpi = shcore
