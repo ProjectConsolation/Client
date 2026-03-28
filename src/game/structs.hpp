@@ -281,6 +281,8 @@ namespace game
 	}; static_assert(sizeof(Material) == 104);
 
 #pragma pack(push, 2)
+#pragma warning(push)
+#pragma warning(disable: 4121)
 	struct Glyph
 	{
 		unsigned __int16 letter;
@@ -294,6 +296,7 @@ namespace game
 		float s1;
 		float t1;
 	};
+#pragma warning(pop)
 #pragma pack(pop)
 
 

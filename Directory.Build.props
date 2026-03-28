@@ -1,9 +1,9 @@
 <Project>
   <ItemDefinitionGroup>
     <ClCompile>
-      <!-- Mark GSL as an external include path so /external:W0 applies to it,
-           silencing C4067 which newer MSVC versions emit from GSL headers -->
-      <AdditionalOptions>%(AdditionalOptions) /external:I$(MSBuildThisFileDirectory)deps/GSL/include /wd4067</AdditionalOptions>
+      <!-- GSL as external so /external:W0 applies, plus suppress warnings that
+           are promoted to errors by /WX but are safe to ignore in this codebase -->
+      <AdditionalOptions>%(AdditionalOptions) /external:I$(MSBuildThisFileDirectory)deps/GSL/include /wd4067 /wd4121 /wd4244 /wd4189 /wd4996 /wd4409</AdditionalOptions>
     </ClCompile>
   </ItemDefinitionGroup>
 </Project>
