@@ -567,12 +567,21 @@ namespace console
 
 		void pre_destroy() override
 		{
+			printf_hook.clear();
+			com_printf_hook.clear();
+
 			con.kill = true;
 			SetEvent(con.kill_event);
 
 			if (con.thread.joinable())
 			{
 				con.thread.join();
+			}
+
+			if (con.kill_event)
+			{
+				CloseHandle(con.kill_event);
+				con.kill_event = nullptr;
 			}
 		}
 	};

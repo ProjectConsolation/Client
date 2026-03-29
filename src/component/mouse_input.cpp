@@ -220,6 +220,12 @@ namespace mouse_input
 					in_mouse_move_hook.clear();
 				});
 		}
+
+		void pre_destroy() override
+		{
+			uninstall_wnd_proc();
+			in_mouse_move_hook.clear();
+		}
 	};
 }
 
