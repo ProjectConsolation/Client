@@ -75,7 +75,7 @@ namespace
 		try
 		{
 #ifdef DEBUG
-			xlive::apply_early(); // attemp at patching xlive FIRST, before a debugger can attach
+			//xlive::apply_early(); // attemp at patching xlive FIRST, before a debugger can attach
 			MessageBoxA(NULL, "ATTACH DEBUGGER NOW", "DEBUG", MB_DEFBUTTON1);
 #endif
 

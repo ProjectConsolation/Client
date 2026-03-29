@@ -549,5 +549,5 @@ namespace xlive
 }
 
 #ifdef DEBUG
-REGISTER_COMPONENT(xlive::component)
+//REGISTER_COMPONENT(xlive::component)
 #endif
