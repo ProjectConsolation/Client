@@ -14,7 +14,6 @@ namespace game_console
 	{
 		utils::hook::detour cl_key_event_hook;
 		utils::hook::detour cl_console_print_hook;
-		utils::hook::detour con_draw_solid_console_hook;
 
 		float overlay_back_color[4] = { 0.08f, 0.09f, 0.10f, 0.88f };
 		float overlay_border_color[4] = { 0.18f, 0.55f, 0.35f, 1.0f };
@@ -32,6 +31,7 @@ namespace game_console
 		bool overlay_active = false;
 		bool process_shutting_down = false;
 		bool render_debug_pending = false;
+		bool render_debug_logged = false;
 		bool was_f1_down = false;
 		bool was_oem5_down = false;
 		bool was_oem102_down = false;
@@ -47,6 +47,24 @@ namespace game_console
 		};
 
 		console_state* con = nullptr;
+		HWND last_render_hwnd = nullptr;
+		int last_render_width = 0;
+		int last_render_height = 0;
+		game::Font_s* last_render_font = nullptr;
+		game::Material* last_render_material = nullptr;
+		std::size_t last_render_lines = 0;
+		float last_scr_scale_virtual_to_real[2] = {};
+		float last_scr_scale_virtual_to_full[2] = {};
+		float last_scr_scale_real_to_virtual[2] = {};
+		float last_scr_virtual_viewable_min[2] = {};
+		float last_scr_virtual_viewable_max[2] = {};
+		float last_scr_real_viewport_size[2] = {};
+		float last_scr_real_viewable_min[2] = {};
+		float last_scr_real_viewable_max[2] = {};
+		float last_scr_sub_screen[2] = {};
+		float last_overlay_view[4] = {};
+
+		void draw_console_overlay();
 
 		game::Font_s* get_console_font()
 		{
@@ -218,6 +236,7 @@ namespace game_console
 			{
 				con->history_index = -1;
 				render_debug_pending = true;
+				render_debug_logged = false;
 			}
 		}
 
@@ -240,40 +259,126 @@ namespace game_console
 			float height;
 		};
 
+		float scrplace_apply_x(const game::ScreenPlacement& scr_place, const float x, const int horz_align)
+		{
+			switch (horz_align)
+			{
+			case 1:
+				return (x * scr_place.scaleVirtualToReal[0]) + scr_place.realViewableMin[0];
+			case 2:
+				return (x * scr_place.scaleVirtualToReal[0]) + (0.5f * scr_place.realViewportSize[0]);
+			case 3:
+				return (x * scr_place.scaleVirtualToReal[0]) + scr_place.realViewableMax[0];
+			case 4:
+				return x * scr_place.scaleVirtualToFull[0];
+			case 5:
+				return x;
+			case 6:
+				return x * scr_place.scaleRealToVirtual[0];
+			case 7:
+				return (x * scr_place.scaleVirtualToReal[0]) + ((scr_place.realViewableMin[0] + scr_place.realViewableMax[0]) * 0.5f);
+			default:
+				return (x * scr_place.scaleVirtualToReal[0]) + scr_place.subScreen[0];
+			}
+		}
+
+		float scrplace_apply_y(const game::ScreenPlacement& scr_place, const float y, const int vert_align)
+		{
+			switch (vert_align)
+			{
+			case 1:
+				return (y * scr_place.scaleVirtualToReal[1]) + scr_place.realViewableMin[1];
+			case 2:
+				return (y * scr_place.scaleVirtualToReal[1]) + (0.5f * scr_place.realViewportSize[1]);
+			case 3:
+				return (y * scr_place.scaleVirtualToReal[1]) + scr_place.realViewableMax[1];
+			case 4:
+				return y * scr_place.scaleVirtualToFull[1];
+			case 5:
+				return y;
+			case 6:
+				return y * scr_place.scaleRealToVirtual[1];
+			case 7:
+				return (y * scr_place.scaleVirtualToReal[1]) + ((scr_place.realViewableMin[1] + scr_place.realViewableMax[1]) * 0.5f);
+			default:
+				return y * scr_place.scaleVirtualToReal[1];
+			}
+		}
+
+		void scrplace_apply_rect(const game::ScreenPlacement& scr_place, float& x, float& y, float& width, float& height, const int horz_align, const int vert_align)
+		{
+			switch (horz_align)
+			{
+			case 1:
+				x = (x * scr_place.scaleVirtualToReal[0]) + scr_place.realViewableMin[0];
+				width *= scr_place.scaleVirtualToReal[0];
+				break;
+			case 2:
+				x = (x * scr_place.scaleVirtualToReal[0]) + (0.5f * scr_place.realViewportSize[0]);
+				width *= scr_place.scaleVirtualToReal[0];
+				break;
+			case 3:
+				x = (x * scr_place.scaleVirtualToReal[0]) + scr_place.realViewableMax[0];
+				width *= scr_place.scaleVirtualToReal[0];
+				break;
+			case 4:
+				x *= scr_place.scaleVirtualToFull[0];
+				width *= scr_place.scaleVirtualToFull[0];
+				break;
+			case 5:
+				break;
+			case 6:
+				x *= scr_place.scaleRealToVirtual[0];
+				width *= scr_place.scaleRealToVirtual[0];
+				break;
+			case 7:
+				x = (x * scr_place.scaleVirtualToReal[0]) + ((scr_place.realViewableMin[0] + scr_place.realViewableMax[0]) * 0.5f);
+				width *= scr_place.scaleVirtualToReal[0];
+				break;
+			default:
+				x = (x * scr_place.scaleVirtualToReal[0]) + scr_place.subScreen[0];
+				width *= scr_place.scaleVirtualToReal[0];
+				break;
+			}
+
+			switch (vert_align)
+			{
+			case 1:
+				y = (y * scr_place.scaleVirtualToReal[1]) + scr_place.realViewableMin[1];
+				height *= scr_place.scaleVirtualToReal[1];
+				break;
+			case 2:
+				y = (y * scr_place.scaleVirtualToReal[1]) + (0.5f * scr_place.realViewportSize[1]);
+				height *= scr_place.scaleVirtualToReal[1];
+				break;
+			case 3:
+				y = (y * scr_place.scaleVirtualToReal[1]) + scr_place.realViewableMax[1];
+				height *= scr_place.scaleVirtualToReal[1];
+				break;
+			case 4:
+				y *= scr_place.scaleVirtualToFull[1];
+				height *= scr_place.scaleVirtualToFull[1];
+				break;
+			case 5:
+				break;
+			case 6:
+				y *= scr_place.scaleRealToVirtual[1];
+				height *= scr_place.scaleRealToVirtual[1];
+				break;
+			case 7:
+				y = (y * scr_place.scaleVirtualToReal[1]) + ((scr_place.realViewableMin[1] + scr_place.realViewableMax[1]) * 0.5f);
+				height *= scr_place.scaleVirtualToReal[1];
+				break;
+			default:
+				y *= scr_place.scaleVirtualToReal[1];
+				height *= scr_place.scaleVirtualToReal[1];
+				break;
+			}
+		}
+
 		overlay_view get_overlay_view()
 		{
-			overlay_view view{ 0.0f, 0.0f, 640.0f, 480.0f };
-			const auto scr_place = game::ScrPlace_GetViewPlacement();
-
-			view.left = scr_place.realViewableMin[0];
-			view.top = scr_place.realViewableMin[1];
-			view.width = scr_place.realViewableMax[0] - scr_place.realViewableMin[0];
-			view.height = scr_place.realViewableMax[1] - scr_place.realViewableMin[1];
-
-			if (view.width <= 0.0f)
-			{
-				view.width = scr_place.realViewportSize[0];
-			}
-
-			if (view.height <= 0.0f)
-			{
-				view.height = scr_place.realViewportSize[1];
-			}
-
-			if (view.width <= 0.0f || view.height <= 0.0f)
-			{
-				const auto hwnd = get_window();
-				RECT client_rect{};
-				if (hwnd && GetClientRect(hwnd, &client_rect))
-				{
-					view.left = 0.0f;
-					view.top = 0.0f;
-					view.width = static_cast<float>(client_rect.right - client_rect.left);
-					view.height = static_cast<float>(client_rect.bottom - client_rect.top);
-				}
-			}
-
-			return view;
+			return { 6.0f, 6.0f, 628.0f, 276.0f };
 		}
 
 		void draw_box(float x, float y, float width, float height, float* fill_color, float* border_color)
@@ -355,13 +460,6 @@ namespace game_console
 				return;
 			}
 
-			const auto view = get_overlay_view();
-			if (view.width <= 0.0f || view.height <= 0.0f)
-			{
-				return;
-			}
-
-#ifdef DEBUG
 			if (render_debug_pending)
 			{
 				const auto hwnd = get_window();
@@ -370,19 +468,44 @@ namespace game_console
 				{
 					GetClientRect(hwnd, &client_rect);
 				}
-				auto* const font = get_console_font();
-				auto* const material = get_white_material();
-				game::Com_Printf(0,
-					"^1debug:^3 game_console.cpp: render active hwnd=%p size=%dx%d font=%p material=%p lines=%zu\n",
-					hwnd,
-					client_rect.right - client_rect.left,
-					client_rect.bottom - client_rect.top,
-					font,
-					material,
-					con->lines.size());
+
+				last_render_hwnd = hwnd;
+				last_render_width = client_rect.right - client_rect.left;
+				last_render_height = client_rect.bottom - client_rect.top;
+				last_render_font = get_console_font();
+				last_render_material = get_white_material();
+				last_render_lines = con->lines.size();
+				const auto scr_place = game::ScrPlace_GetViewPlacement();
+				last_scr_scale_virtual_to_real[0] = scr_place.scaleVirtualToReal[0];
+				last_scr_scale_virtual_to_real[1] = scr_place.scaleVirtualToReal[1];
+				last_scr_scale_virtual_to_full[0] = scr_place.scaleVirtualToFull[0];
+				last_scr_scale_virtual_to_full[1] = scr_place.scaleVirtualToFull[1];
+				last_scr_scale_real_to_virtual[0] = scr_place.scaleRealToVirtual[0];
+				last_scr_scale_real_to_virtual[1] = scr_place.scaleRealToVirtual[1];
+				last_scr_virtual_viewable_min[0] = scr_place.virtualViewableMin[0];
+				last_scr_virtual_viewable_min[1] = scr_place.virtualViewableMin[1];
+				last_scr_virtual_viewable_max[0] = scr_place.virtualViewableMax[0];
+				last_scr_virtual_viewable_max[1] = scr_place.virtualViewableMax[1];
+				last_scr_real_viewport_size[0] = scr_place.realViewportSize[0];
+				last_scr_real_viewport_size[1] = scr_place.realViewportSize[1];
+				last_scr_real_viewable_min[0] = scr_place.realViewableMin[0];
+				last_scr_real_viewable_min[1] = scr_place.realViewableMin[1];
+				last_scr_real_viewable_max[0] = scr_place.realViewableMax[0];
+				last_scr_real_viewable_max[1] = scr_place.realViewableMax[1];
+				last_scr_sub_screen[0] = scr_place.subScreen[0];
+				last_scr_sub_screen[1] = scr_place.subScreen[1];
 				render_debug_pending = false;
 			}
-#endif
+
+			const auto view = get_overlay_view();
+			if (view.width <= 0.0f || view.height <= 0.0f)
+			{
+				return;
+			}
+			last_overlay_view[0] = view.left;
+			last_overlay_view[1] = view.top;
+			last_overlay_view[2] = view.width;
+			last_overlay_view[3] = view.height;
 
 			const float x = view.left + 8.0f;
 			const float y = view.top + 8.0f;
@@ -479,12 +602,6 @@ namespace game_console
 				pop esi;
 				ret;
 			}
-		}
-
-		void con_draw_solid_console_stub()
-		{
-			draw_console_overlay();
-			con_draw_solid_console_hook.invoke<void>();
 		}
 
 		void execute_input()
@@ -699,7 +816,6 @@ namespace game_console
 
 			cl_key_event_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_KeyEvent.get()), cl_key_event_stub);
 			cl_console_print_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_ConsolePrint.get()), cl_console_print_stub);
-			con_draw_solid_console_hook.create(reinterpret_cast<std::uintptr_t>(game::Con_DrawSolidConsole.get()), con_draw_solid_console_stub);
 
 			scheduler::on_shutdown([]
 				{
@@ -716,6 +832,44 @@ namespace game_console
 						was_oem102_down = false;
 						key_was_down.fill(false);
 						return;
+					}
+
+					if (overlay_active && !render_debug_pending && !render_debug_logged && last_render_hwnd)
+					{
+#ifdef DEBUG
+						game::Com_Printf(0,
+							"^1debug:^3 game_console.cpp: render active hwnd=%p size=%dx%d font=%p material=%p lines=%zu overlay=(%.1f,%.1f %.1fx%.1f) "
+							"scr_v2r=(%.3f,%.3f) scr_v2f=(%.3f,%.3f) scr_r2v=(%.3f,%.3f) "
+							"vmin=(%.1f,%.1f) vmax=(%.1f,%.1f) rvp=(%.1f,%.1f) rmin=(%.1f,%.1f) rmax=(%.1f,%.1f) sub=%.1f\n",
+							last_render_hwnd,
+							last_render_width,
+							last_render_height,
+							last_render_font,
+							last_render_material,
+							last_render_lines,
+							last_overlay_view[0],
+							last_overlay_view[1],
+							last_overlay_view[2],
+							last_overlay_view[3],
+							last_scr_scale_virtual_to_real[0],
+							last_scr_scale_virtual_to_real[1],
+							last_scr_scale_virtual_to_full[0],
+							last_scr_scale_virtual_to_full[1],
+							last_scr_scale_real_to_virtual[0],
+							last_scr_scale_real_to_virtual[1],
+							last_scr_virtual_viewable_min[0],
+							last_scr_virtual_viewable_min[1],
+							last_scr_virtual_viewable_max[0],
+							last_scr_virtual_viewable_max[1],
+							last_scr_real_viewport_size[0],
+							last_scr_real_viewport_size[1],
+							last_scr_real_viewable_min[0],
+							last_scr_real_viewable_min[1],
+							last_scr_real_viewable_max[0],
+							last_scr_real_viewable_max[1],
+							last_scr_sub_screen[0]);
+#endif
+						render_debug_logged = true;
 					}
 
 					const auto f1_down = is_key_down(VK_F1);
@@ -743,6 +897,7 @@ namespace game_console
 				}, scheduler::main, 50ms);
 
 			scheduler::loop(process_console_input, scheduler::main, 16ms);
+			scheduler::loop(draw_console_overlay, scheduler::renderer, 0ms);
 		}
 
 		void pre_destroy() override
@@ -751,7 +906,7 @@ namespace game_console
 			set_overlay_active(false);
 			cl_key_event_hook.clear();
 			cl_console_print_hook.clear();
-			con_draw_solid_console_hook.clear();
+			last_render_hwnd = nullptr;
 			con = nullptr;
 		}
 	};

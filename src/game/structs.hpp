@@ -684,13 +684,12 @@ namespace game
 		float scaleVirtualToReal[2];
 		float scaleVirtualToFull[2];
 		float scaleRealToVirtual[2];
-		float virtualScreenOffsetX;
 		float virtualViewableMin[2];
 		float virtualViewableMax[2];
 		float realViewportSize[2];
 		float realViewableMin[2];
 		float realViewableMax[2];
-		float subScreenLeft;
+		float subScreen[2];
 	};
 
 	enum DvarType : uint8_t
