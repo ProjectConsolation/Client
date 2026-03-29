@@ -14,6 +14,7 @@ namespace game_console
 	{
 		utils::hook::detour cl_key_event_hook;
 		utils::hook::detour cl_console_print_hook;
+		utils::hook::detour con_set_console_rect_hook;
 
 		float overlay_back_color[4] = { 0.08f, 0.09f, 0.10f, 0.88f };
 		float overlay_border_color[4] = { 0.18f, 0.55f, 0.35f, 1.0f };
@@ -23,11 +24,6 @@ namespace game_console
 		constexpr auto max_console_lines = 128u;
 		constexpr auto max_history_entries = 32u;
 		constexpr auto max_input_chars = 240u;
-		constexpr auto restrict_console_dvar_ptr = 0x112666BC;
-		constexpr auto devgui_dvar_ptr = 0x10711ABC;
-		constexpr auto splitscreen_dvar_ptr = 0x1130BF48;
-		constexpr auto console_local_ready = 0x11263D9C;
-
 		bool overlay_active = false;
 		bool process_shutting_down = false;
 		bool render_debug_pending = false;
@@ -192,36 +188,24 @@ namespace game_console
 			cl_console_print_hook.invoke<void>(local_client_num, channel, txt, duration, pixel_width, flags);
 		}
 
-		bool dvar_enabled(const std::uintptr_t ptr_address)
+		void con_set_console_rect_stub()
 		{
-			const auto dvar = *reinterpret_cast<std::uintptr_t*>(game::game_offset(ptr_address));
-			return dvar && *reinterpret_cast<unsigned char*>(dvar + 16) != 0;
-		}
+			con_set_console_rect_hook.invoke<void>();
 
-		bool can_toggle_console()
-		{
-			const auto local_ready = *reinterpret_cast<int*>(game::game_offset(console_local_ready)) != 0;
-			const auto console_unrestricted = !dvar_enabled(restrict_console_dvar_ptr);
-			const auto devgui_enabled = dvar_enabled(devgui_dvar_ptr);
-			const auto splitscreen_disabled = !dvar_enabled(splitscreen_dvar_ptr);
+			if (overlay_active)
+			{
+				render_debug_pending = true;
+			}
 
-			return local_ready
-				&& ((*game::keyCatchers & 1) != 0 || devgui_enabled || splitscreen_disabled)
-				&& (console_unrestricted || (*game::keyCatchers & 1) != 0);
+			draw_console_overlay();
 		}
 
 		void debug_log_toggle(const char* key_name)
 		{
 #ifdef DEBUG
-			const auto local_ready = *reinterpret_cast<int*>(game::game_offset(console_local_ready)) != 0;
-			const auto console_unrestricted = !dvar_enabled(restrict_console_dvar_ptr);
-			const auto devgui_enabled = dvar_enabled(devgui_dvar_ptr);
-			const auto splitscreen_disabled = !dvar_enabled(splitscreen_dvar_ptr);
-
 			game::Com_Printf(0,
-				"^1debug:^3 game_console.cpp: key=%s pressed, state=%s, visible=%d, can_toggle=%d, local_ready=%d, unrestricted=%d, devgui=%d, splitscreen_disabled=%d\n",
-				key_name, is_active() ? "open" : "closed", is_active() ? 1 : 0, can_toggle_console() ? 1 : 0,
-				local_ready ? 1 : 0, console_unrestricted ? 1 : 0, devgui_enabled ? 1 : 0, splitscreen_disabled ? 1 : 0);
+				"^1debug:^3 game_console.cpp: key=%s pressed, state=%s, visible=%d\n",
+				key_name, is_active() ? "open" : "closed", is_active() ? 1 : 0);
 #else
 			(void)key_name;
 #endif
@@ -816,6 +800,7 @@ namespace game_console
 
 			cl_key_event_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_KeyEvent.get()), cl_key_event_stub);
 			cl_console_print_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_ConsolePrint.get()), cl_console_print_stub);
+			con_set_console_rect_hook.create(reinterpret_cast<std::uintptr_t>(game::Con_SetConsoleRect.get()), con_set_console_rect_stub);
 
 			scheduler::on_shutdown([]
 				{
@@ -895,9 +880,7 @@ namespace game_console
 					was_oem5_down = oem5_down;
 					was_oem102_down = oem102_down;
 				}, scheduler::main, 50ms);
-
 			scheduler::loop(process_console_input, scheduler::main, 16ms);
-			scheduler::loop(draw_console_overlay, scheduler::renderer, 0ms);
 		}
 
 		void pre_destroy() override
@@ -906,6 +889,7 @@ namespace game_console
 			set_overlay_active(false);
 			cl_key_event_hook.clear();
 			cl_console_print_hook.clear();
+			con_set_console_rect_hook.clear();
 			last_render_hwnd = nullptr;
 			con = nullptr;
 		}
