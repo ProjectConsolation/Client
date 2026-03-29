@@ -31,6 +31,7 @@ namespace game
 	WEAK symbol<void()> SV_BotFrame{ game_offset(0x102FA870) };
 	WEAK symbol<void()> SV_BotThink{ game_offset(0x102FA590) };
 	WEAK symbol<void* (int client_ptr, int* userinfo)> SV_ClientEnterWorld{ game_offset(0x102EF480) };
+	WEAK symbol<void(int clientNum)> SV_ClientUserinfoChanged{ game_offset(0x104149C0) };
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
 
 	WEAK symbol<char* (char* result, int a2)> Scr_FormatCodePos{ game_offset(0x1022D690) };

@@ -16,8 +16,228 @@ namespace command
 	namespace
 	{
 		static utils::memory::allocator cmd_allocator;
+		constexpr int CLIENT_STRIDE = 688916;
+		constexpr int CLIENT_REAL_PLAYER_OFFSET = 0x20;
+		constexpr int CLIENT_USERINFO_OFFSET = 1604;
+		constexpr int CLIENT_USERINFO_SIZE = 1024;
+		constexpr auto BOT_NAMES_FILE = "consolation/bots.txt";
 
 		std::unordered_map<std::string, std::function<void(params&)>> handlers;
+		int next_bot_number = 1;
+		std::vector<std::string> bot_names;
+
+		std::uintptr_t get_clients_base()
+		{
+			return *reinterpret_cast<std::uintptr_t*>(game::game_offset(0x11CA5D8C));
+		}
+
+		int get_max_clients()
+		{
+			if (const auto* dvar = game::Dvar_FindVar("sv_maxclients"); dvar)
+			{
+				return std::max(dvar->current.integer, 1);
+			}
+
+			return 18;
+		}
+
+		std::uintptr_t get_client(int index)
+		{
+			return get_clients_base() + static_cast<std::uintptr_t>(index) * CLIENT_STRIDE;
+		}
+
+		bool is_bot_client(int index)
+		{
+			const auto client = get_client(index);
+			return *reinterpret_cast<int*>(client) >= game::CS_CONNECTED
+				&& *reinterpret_cast<int*>(client + CLIENT_REAL_PLAYER_OFFSET) == 0;
+		}
+
+		std::string get_info_value(const std::string& info, const std::string& key)
+		{
+			size_t pos = 0;
+			while (pos < info.size())
+			{
+				if (info[pos] == '\\')
+				{
+					++pos;
+				}
+
+				const auto key_end = info.find('\\', pos);
+				if (key_end == std::string::npos)
+				{
+					break;
+				}
+
+				const auto value_end = info.find('\\', key_end + 1);
+				const auto current_key = info.substr(pos, key_end - pos);
+				const auto current_value = info.substr(
+					key_end + 1,
+					(value_end == std::string::npos ? info.size() : value_end) - (key_end + 1)
+				);
+
+				if (current_key == key)
+				{
+					return current_value;
+				}
+
+				if (value_end == std::string::npos)
+				{
+					break;
+				}
+
+				pos = value_end;
+			}
+
+			return {};
+		}
+
+		void set_info_value(std::string& info, const std::string& key, const std::string& value)
+		{
+			std::vector<std::pair<std::string, std::string>> pairs;
+			bool replaced = false;
+			size_t pos = 0;
+
+			while (pos < info.size())
+			{
+				if (info[pos] == '\\')
+				{
+					++pos;
+				}
+
+				const auto key_end = info.find('\\', pos);
+				if (key_end == std::string::npos)
+				{
+					break;
+				}
+
+				const auto value_end = info.find('\\', key_end + 1);
+				auto current_key = info.substr(pos, key_end - pos);
+				auto current_value = info.substr(
+					key_end + 1,
+					(value_end == std::string::npos ? info.size() : value_end) - (key_end + 1)
+				);
+
+				if (current_key == key)
+				{
+					current_value = value;
+					replaced = true;
+				}
+
+				pairs.emplace_back(std::move(current_key), std::move(current_value));
+
+				if (value_end == std::string::npos)
+				{
+					break;
+				}
+
+				pos = value_end;
+			}
+
+			if (!replaced)
+			{
+				pairs.emplace_back(key, value);
+			}
+
+			std::string rebuilt;
+			for (const auto& [current_key, current_value] : pairs)
+			{
+				rebuilt.push_back('\\');
+				rebuilt.append(current_key);
+				rebuilt.push_back('\\');
+				rebuilt.append(current_value);
+			}
+
+			info = std::move(rebuilt);
+		}
+
+		std::string trim_bot_name(std::string name)
+		{
+			while (!name.empty() && (name.back() == '\r' || name.back() == '\n' || name.back() == ' ' || name.back() == '\t'))
+			{
+				name.pop_back();
+			}
+
+			size_t start = 0;
+			while (start < name.size() && (name[start] == ' ' || name[start] == '\t'))
+			{
+				++start;
+			}
+
+			return name.substr(start);
+		}
+
+		void load_bot_names()
+		{
+			bot_names.clear();
+
+			std::string data;
+			if (!utils::io::read_file(BOT_NAMES_FILE, &data))
+			{
+				return;
+			}
+
+			size_t start = 0;
+			while (start <= data.size())
+			{
+				const auto end = data.find('\n', start);
+				auto line = data.substr(start, end == std::string::npos ? data.size() - start : end - start);
+				line = trim_bot_name(std::move(line));
+
+				if (!line.empty())
+				{
+					bot_names.emplace_back(std::move(line));
+				}
+
+				if (end == std::string::npos)
+				{
+					break;
+				}
+
+				start = end + 1;
+			}
+		}
+
+		std::string get_next_bot_name()
+		{
+			if (!bot_names.empty())
+			{
+				const auto index = static_cast<size_t>((next_bot_number - 1) % bot_names.size());
+				++next_bot_number;
+				return bot_names[index];
+			}
+
+			return std::format("consolation_bot{}", next_bot_number++ - 1);
+		}
+
+		int rename_new_bot_client()
+		{
+			for (int i = 0; i < get_max_clients(); ++i)
+			{
+				if (!is_bot_client(i))
+				{
+					continue;
+				}
+
+				auto* const userinfo = reinterpret_cast<char*>(get_client(i) + CLIENT_USERINFO_OFFSET);
+				const std::string info = userinfo;
+				if (get_info_value(info, "name").rfind("bot", 0) != 0)
+				{
+					continue;
+				}
+
+				auto updated = info;
+				set_info_value(updated, "name", get_next_bot_name());
+				set_info_value(updated, "clanAbbrev", "CSL");
+
+				std::memset(userinfo, 0, CLIENT_USERINFO_SIZE);
+				std::memcpy(userinfo, updated.data(), std::min(updated.size(), static_cast<size_t>(CLIENT_USERINFO_SIZE - 1)));
+				game::SV_ClientUserinfoChanged(i);
+				return i;
+			}
+
+			return -1;
+		}
 
 		void main_handler()
 		{
@@ -29,14 +249,6 @@ namespace command
 				handlers[command](params);
 			}
 		}
-
-		// SV_AddTestClient (0x102F09A0): no args, generates a botN connect string
-		// internally and fires the full connect path. Returns the new client slot
-		// pointer or null if sv_maxclients is full.
-		// "addtestclient" is only in the GSC Scr command table, not the Cmd_ table,
-		// which is why it shows as unknown from the console. We call the engine
-		// function directly instead.
-		void* (*sv_add_test_client)() = nullptr;
 	}
 
 	params::params()
@@ -115,10 +327,10 @@ namespace command
 	public:
 		void post_load() override
 		{
-			sv_add_test_client = reinterpret_cast<void* (*)()>(game::game_offset(0x102F09A0));
-
 			scheduler::once([&]()
 				{
+					load_bot_names();
+
 					add("marco", []()
 						{
 							printf("polo\n");
@@ -142,11 +354,13 @@ namespace command
 
 					add("addbot", [](const params& args)
 						{
-							if (!sv_add_test_client)
+							if (!game::SV_AddTestClient)
 							{
 								console::error("addbot: server not initialised\n");
 								return;
 							}
+
+							load_bot_names();
 
 							const int count = (args.size() >= 2) ? std::atoi(args[1]) : 1;
 							if (count <= 0)
@@ -158,11 +372,18 @@ namespace command
 							int spawned = 0;
 							for (int i = 0; i < count; ++i)
 							{
-								if (!sv_add_test_client())
+								if (!game::SV_AddTestClient())
 								{
 									console::warn("addbot: server full after %i bot(s)\n", spawned);
 									break;
 								}
+
+								const auto renamed_slot = rename_new_bot_client();
+								if (renamed_slot < 0)
+								{
+									console::warn("addbot: spawned bot but failed to update its userinfo\n");
+								}
+
 								++spawned;
 							}
 

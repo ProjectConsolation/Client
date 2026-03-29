@@ -1112,6 +1112,15 @@ namespace game
 		CS_ACTIVE = 4, // fully in game, receiving snapshots
 	};
 
+	enum class bot_team : std::uint8_t
+	{
+		unknown,
+		free,
+		axis,
+		allies,
+		spectator,
+	};
+
 	// ── playerState_t (partial) ───────────────────────────────────────────────
 	// Size is at least 0x34B4 bytes (~13.5 KB). Only confirmed/observed fields
 	// are declared. Unknown gaps are represented as byte arrays.

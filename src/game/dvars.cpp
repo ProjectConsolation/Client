@@ -26,6 +26,7 @@ namespace dvars
 	game::dvar_s* g_debugVelocity = nullptr;
 	game::dvar_s* g_debugLocalization = nullptr;
 	game::dvar_s* r_borderless = nullptr;
+	game::dvar_s* bot_maxHealth = nullptr;
 
 	// TODO: remake: cg_drawVersion, cg_overheadNamesFont
 
@@ -252,7 +253,13 @@ namespace dvars
 					dvars::Dvar_RegisterBool("r_borderless", 0, "Do not use a border in windowed mode", game::dvar_flags::none);
 					dvars::Dvar_RegisterBool("g_debugVelocity", 0, "[DEBUG] Print velocity information to console", game::dvar_flags::none);
 					dvars::Dvar_RegisterBool("g_debugLocalization", 0, "[DEBUG] Print information to console about unlocalized strings", game::dvar_flags::none);
+					bot_maxHealth = dvars::Dvar_RegisterInt("bot_maxHealth", "Maximum health for bots on spawn", 100, 1, 1000, game::dvar_flags::saved);
 				}, scheduler::main);
+
+			scheduler::on_shutdown([]
+				{
+					bot_maxHealth = nullptr;
+				});
 		}
 	};
 }
