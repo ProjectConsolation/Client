@@ -29,7 +29,8 @@ namespace game
 	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
 	WEAK symbol<void* ()> SV_AddTestClient{ game_offset(0x102F09A0) };
 	WEAK symbol<void()> SV_BotFrame{ game_offset(0x102FA870) };
-	WEAK symbol<void()> SV_BotThink{ game_offset(0x102FA590) };
+	WEAK symbol<void()> SV_BotUserMove{ game_offset(0x102FA590) };
+	WEAK symbol<void()> SV_ClientThink{ game_offset(0x102F0BD0) };
 	WEAK symbol<void* (int client_ptr, int* userinfo)> SV_ClientEnterWorld{ game_offset(0x102EF480) };
 	WEAK symbol<void(int clientNum)> SV_ClientUserinfoChanged{ game_offset(0x104149C0) };
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
@@ -42,6 +43,10 @@ namespace game
 
 
 	WEAK symbol<void()> GScr_AddTestClient{ game_offset(0x101A87C0) };
+	WEAK symbol<void()> Scr_SightTracePassed{ game_offset(0x1019A260) };
+	WEAK symbol<void()> Scr_BulletTracePassed{ game_offset(0x1019A350) };
+	WEAK symbol<void()> ClientScr_SetNormalHealth{ game_offset(0x1019C2F0) };
+	WEAK symbol<void()> ClientScr_GetNormalHealth{ game_offset(0x1019C400) };
 
 
 	WEAK symbol<DWORD> command_id{ game_offset(0x10752C70) };
