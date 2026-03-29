@@ -1061,4 +1061,122 @@ namespace game
 		int fixedSize;
 		char buffer[256];
 	};
+
+	// ── Buttons bitmask for usercmd_t::buttons ────────────────────────────────
+	enum usercmd_buttons : int
+	{
+		BUTTON_ATTACK = 0x1,
+		BUTTON_SPRINT = 0x2,
+		BUTTON_MELEE_BREATH = 0x4,
+		BUTTON_USE = 0x8,
+		BUTTON_RELOAD = 0x20,
+		BUTTON_PRONE = 0x80,
+		BUTTON_CROUCH = 0x100,
+		BUTTON_ADS = 0x200,  // aim down sights
+		BUTTON_HOLDBREATH = 0x800,
+	};
+
+	// ── usercmd_t ─────────────────────────────────────────────────────────────
+	// 44 bytes. Built per-frame in SV_BotThink (0x102FA590) and SV_ClientThink,
+	// stored at client_t+0x20E9C, applied by SV_ClientThinkReal (0x102F0BD0).
+	//
+	// IW angle units: signed int where 0x8000 (32768) = 360 degrees.
+	// Conversion:  units = radians * (32768.f / M_PI)  =  radians * 10430.378f
+
+	struct usercmd_t // sizeof = 0x2C
+	{
+		int             serverTime;    // +0x00 [CONFIRMED] timestamp in ms
+		usercmd_buttons buttons;       // +0x04 [CONFIRMED] action bitmask
+		std::uint16_t   weapon;        // +0x08 [CONFIRMED] current weapon index
+		std::uint8_t    offhandIndex;  // +0x0A [INFERRED]
+		std::uint8_t    flags;         // +0x0B [INFERRED]
+		int             unk_0C;        // +0x0C [OBSERVED]
+		int             angles[3];     // +0x10 [CONFIRMED] PITCH, YAW, ROLL in IW units
+		std::int8_t     forwardmove;   // +0x1C [CONFIRMED] -127=full back, 127=full forward
+		std::uint8_t    unk_1D;        // +0x1D
+		std::int8_t     rightmove;     // +0x1E [CONFIRMED] -127=full left, 127=full right
+		std::uint8_t    upmove;        // +0x1F [INFERRED]
+		int             unk_20[3];     // +0x20 [UNOBSERVED]
+	};
+	static_assert(sizeof(usercmd_t) == 0x2C, "usercmd_t size mismatch");
+
+	// ── clientState_t ─────────────────────────────────────────────────────────
+	// Stored in client_t::state. Transitions logged in SV_ClientEnterWorld.
+
+	enum clientState_t : int
+	{
+		CS_FREE = 0, // slot unused
+		CS_ZOMBIE = 1, // recently disconnected, brief hold before CS_FREE
+		CS_CONNECTED = 2, // connected, not yet loading
+		CS_CLIENTLOADING = 3, // downloading / loading map
+		CS_ACTIVE = 4, // fully in game, receiving snapshots
+	};
+
+	// ── playerState_t (partial) ───────────────────────────────────────────────
+	// Size is at least 0x34B4 bytes (~13.5 KB). Only confirmed/observed fields
+	// are declared. Unknown gaps are represented as byte arrays.
+	// The struct is pointed to by entity_t::ps (entity+0x184).
+
+	struct playerState_t
+	{
+		int             commandTime;        // +0x0000 [CONFIRMED] last processed usercmd serverTime
+		int             pm_type;            // +0x0004 [CONFIRMED] movement type
+		int             bobCycle;           // +0x0008 [INFERRED]
+		int             pm_flags;           // +0x000C [CONFIRMED] bit 0x4000 = jumped, bit 0x800 = prone
+		int             pm_time;            // +0x0010 [INFERRED]
+		std::uint8_t    _pad_0014[0x0C];
+		float           origin[3];          // +0x0020 [CONFIRMED] world position
+		std::uint8_t    _pad_002C[0x30];
+		int             gravity;            // +0x005C [CONFIRMED] used in jump velocity calc
+		//  (Jump_Start: calculatedGravity = gravity * jumpHeight * 2)
+		std::uint8_t    _pad_0060[0x60];
+		int             groundEntityNum;    // +0x00C0 [OBSERVED] 1023=ENTITYNUM_NONE (in air)
+		std::uint8_t    _pad_00C4[0xE8];
+		int             health;             // +0x01CC [CONFIRMED] current health, mirrors entity_t::health
+		std::uint8_t    _pad_01D0[0x304C]; // large gap to the maxHealth region
+		int             maxHealth;          // +0x32C4 [CONFIRMED] maximum health cap
+		std::uint8_t    _pad_32C8[0x7C];
+		int             viewHeightTarget;   // +0x3344 [OBSERVED] related to stance transitions
+		std::uint8_t    _pad_3348[0x6C];
+		// viewangles save/restore block (used in ClientThink_real):
+		float           viewangles[3];      // +0x33B4 [OBSERVED] current view angles (partial)
+		std::uint8_t    _pad_33C0[0x84];
+		int             serverTime_copy;    // +0x33AC [OBSERVED] copy of sv.time on ClientEnterWorld
+		// ... struct continues but remaining fields not yet reversed
+	};
+
+	// ── entity_t ──────────────────────────────────────────────────────────────
+	// stride = 0x290 (656 bytes). Static array at g_entities (game_offset 0x11961F80).
+	// Client entities occupy indices 0..(sv_maxclients-1).
+
+	struct entity_t // sizeof = 0x290
+	{
+		std::uint8_t    _pad_0000[0x184];  // entityState_t and other fields (not yet reversed)
+		playerState_t* ps;                // +0x184 [CONFIRMED] pointer to this entity's playerState
+		std::uint8_t    _pad_0188[0x44];
+		int             health;            // +0x1CC [CONFIRMED] current health (also mirrored in ps)
+		std::uint8_t    _pad_01D0[0xC0];   // padding to stride
+	};
+	static_assert(sizeof(entity_t) == 0x290, "entity_t size mismatch");
+
+	// ── client_t (partial) ────────────────────────────────────────────────────
+	// stride = 688916 (0xA8314) bytes — nearly all unreversed network/snapshot data.
+	// The runtime base pointer is stored at dword_11CA5D8C (set by SV_Init).
+	// Access: base_ptr + clientIdx * 688916.
+	//
+	// Deep confirmed offsets (accessed as byte offsets in code, not struct members
+	// because the gaps are enormous and not yet reversed):
+	//   +0x20E9C  last_usercmd  (usercmd_t, 44 bytes) stored by SV_ClientThinkReal
+	//   +0x2128C  entity_ptr    (entity_t*) set by SV_ClientEnterWorld, null until then
+	//   +0x213A4  last_svtime   (int)       copy of sv.time on ClientEnterWorld
+
+	struct client_t
+	{
+		clientState_t   state;              // +0x00000 [CONFIRMED]
+		std::uint8_t    _pad_0004[0x1C];
+		int             isRealPlayer;       // +0x00020 [CONFIRMED] 0=bot, non-zero=real player
+		//  SV_BotFrame skips bot think when this is non-zero
+// The remaining ~688 KB is network buffers, snapshot data, and other fields.
+// Use game_offset byte arithmetic to access the deep fields above.
+	};
 }

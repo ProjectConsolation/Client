@@ -29,6 +29,14 @@ namespace command
 				handlers[command](params);
 			}
 		}
+
+		// SV_AddTestClient (0x102F09A0): no args, generates a botN connect string
+		// internally and fires the full connect path. Returns the new client slot
+		// pointer or null if sv_maxclients is full.
+		// "addtestclient" is only in the GSC Scr command table, not the Cmd_ table,
+		// which is why it shows as unknown from the console. We call the engine
+		// function directly instead.
+		void* (*sv_add_test_client)() = nullptr;
 	}
 
 	params::params()
@@ -91,9 +99,9 @@ namespace command
 	void add(const char* name, const std::function<void()>& callback)
 	{
 		add(name, [callback](const params&)
-		{
-			callback();
-		});
+			{
+				callback();
+			});
 	}
 
 	void execute(std::string command)
@@ -107,6 +115,8 @@ namespace command
 	public:
 		void post_load() override
 		{
+			sv_add_test_client = reinterpret_cast<void* (*)()>(game::game_offset(0x102F09A0));
+
 			scheduler::once([&]()
 				{
 					add("marco", []()
@@ -129,6 +139,36 @@ namespace command
 
 							game::SV_GameSendServerCommand(i, "r " + reason + "");
 						});*/
+
+					add("addbot", [](const params& args)
+						{
+							if (!sv_add_test_client)
+							{
+								console::error("addbot: server not initialised\n");
+								return;
+							}
+
+							const int count = (args.size() >= 2) ? std::atoi(args[1]) : 1;
+							if (count <= 0)
+							{
+								console::info("usage: addbot [count]\n");
+								return;
+							}
+
+							int spawned = 0;
+							for (int i = 0; i < count; ++i)
+							{
+								if (!sv_add_test_client())
+								{
+									console::warn("addbot: server full after %i bot(s)\n", spawned);
+									break;
+								}
+								++spawned;
+							}
+
+							if (spawned > 0)
+								console::info("addbot: spawned %i bot(s)\n", spawned);
+						});
 
 					add("dvarDump", [](const params& argument)
 						{
@@ -211,6 +251,7 @@ namespace command
 							console::info("\n%i commands\n", i);
 							console::info("================================ END COMMAND DUMP =================================\n");
 						});
+
 					add("listassetpool", [](const params& params)
 						{
 							if (params.size() < 2)

@@ -18,7 +18,7 @@ namespace game
 	//IW3SP-MOD
 	typedef const char* (*DB_XAssetGetNameHandler_t)(game::XAssetHeader* asset);
 	extern DB_XAssetGetNameHandler_t* DB_XAssetGetNameHandler;
-	//
+
 
 	WEAK symbol<void(float x, float y, float width, float height, float s0, float t0, float s1, float t1,
 		float* color, Material* material, int unknown)> R_AddCmdDrawStretchPic{ game_offset(0x103C0820) };
@@ -27,12 +27,21 @@ namespace game
 	WEAK symbol<int(const char* text, int maxChars, Font_s* font)> R_TextWidth{ game_offset(0x1037CFA0) };
 
 	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
+	WEAK symbol<void* ()> SV_AddTestClient{ game_offset(0x102F09A0) };
+	WEAK symbol<void()> SV_BotFrame{ game_offset(0x102FA870) };
+	WEAK symbol<void()> SV_BotThink{ game_offset(0x102FA590) };
+	WEAK symbol<void* (int client_ptr, int* userinfo)> SV_ClientEnterWorld{ game_offset(0x102EF480) };
 	WEAK symbol<void()> Sys_ShowConsole{ game_offset(0x102C4230) };
 
 	WEAK symbol<char* (char* result, int a2)> Scr_FormatCodePos{ game_offset(0x1022D690) };
 
 	WEAK symbol<void()> Con_CancelAutoComplete{ game_offset(0x10312B20) };
 	WEAK symbol<void(int localClientNum, int channel, const char* txt, int duration, int pixelWidth, int flags)> CL_ConsolePrint{ game_offset(0x10315D20) };
+
+
+
+	WEAK symbol<void()> GScr_AddTestClient{ game_offset(0x101A87C0) };
+
 
 	WEAK symbol<DWORD> command_id{ game_offset(0x10752C70) };
 	WEAK symbol<DWORD> cmd_argc{ game_offset(0x10752CB4) };
