@@ -7,6 +7,7 @@ namespace game
 	WEAK symbol<void(int channel, const char* fmt, ...)> Com_Printf{ game_offset(0x103F6400) };
 	WEAK symbol<void(int a1, int a2, int a3, char* Format, ...)> Com_Error{ game_offset(0x103F77B0) };
 	WEAK symbol<void(int channel, const char* fmt)> Conbuf_AppendText{ game_offset(0x102C3CE0) };
+	WEAK symbol<void(int key, int down, unsigned int time)> CL_KeyEvent{ game_offset(0x1031A680) };
 	WEAK symbol<void()> Con_DrawConsole{ game_offset(0x10311F70) };
 
 	WEAK symbol<void(XAssetType type, void(*)(XAssetHeader, void*), const void* userdata, bool overrides)> DB_EnumXAssets_FastFile{ game_offset(0x103DFCA0) };
