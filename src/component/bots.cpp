@@ -21,8 +21,14 @@ namespace bots
 		constexpr int CLIENT_USERINFO_OFF = 1604;
 		constexpr int SNAPINFO_STRIDE = 13504;
 		constexpr int SNAPINFO_DEAD_OFF = 0x3228;
+		constexpr int CONTENTS_SOLID_SHOT = 41969713;
+		constexpr int ENTITYNUM_NONE = 1023;
 		constexpr float IW_RAD_TO_ANGLE = 10430.378f;
 		constexpr int MAX_CLIENTS = 18;
+		constexpr int TARGET_MEMORY_MS = 2500;
+		constexpr int AIM_SETTLE_THRESHOLD = 1400;
+		constexpr float BOT_EYE_HEIGHT = 56.0f;
+		constexpr float TARGET_EYE_HEIGHT = 48.0f;
 		constexpr float MELEE_RANGE = 96.0f;
 		constexpr float CROUCH_RANGE = 384.0f;
 		constexpr float SPRINT_RANGE = 700.0f;
@@ -237,6 +243,85 @@ namespace bots
 
 		static void* s_client_think_real_addr = nullptr;
 		static bool s_attack_phase[MAX_CLIENTS] = {};
+		static int s_tracked_target[MAX_CLIENTS] = {};
+		static int s_last_visible_time[MAX_CLIENTS] = {};
+		static float s_last_seen_origin[MAX_CLIENTS][3] = {};
+		static int s_last_cmd_yaw[MAX_CLIENTS] = {};
+		static int s_last_cmd_pitch[MAX_CLIENTS] = {};
+		static int s_last_applied_bot_max_health = 0;
+
+		int bot_state_index(int client_idx)
+		{
+			return (client_idx >= 0 && client_idx < MAX_CLIENTS) ? client_idx : -1;
+		}
+
+		int normalize_angle_units(int angle)
+		{
+			while (angle > 32768)
+			{
+				angle -= 65536;
+			}
+
+			while (angle < -32768)
+			{
+				angle += 65536;
+			}
+
+			return angle;
+		}
+
+		void clear_bot_target_state(int client_idx)
+		{
+			const int idx = bot_state_index(client_idx);
+			if (idx < 0)
+			{
+				return;
+			}
+
+			s_attack_phase[idx] = false;
+			s_tracked_target[idx] = -1;
+			s_last_visible_time[idx] = 0;
+			s_last_seen_origin[idx][0] = 0.0f;
+			s_last_seen_origin[idx][1] = 0.0f;
+			s_last_seen_origin[idx][2] = 0.0f;
+		}
+
+		void get_eye_position(const game::playerState_t* ps, float eye_height, float* out)
+		{
+			out[0] = ps_origin(ps, 0);
+			out[1] = ps_origin(ps, 1);
+			out[2] = ps_origin(ps, 2) + eye_height;
+		}
+
+		bool trace_passed(const float* start, const float* end, int pass_entity_num)
+		{
+			const int func_loc = game::game_offset(0x101AA870);
+			const int pass_entity_num_2 = ENTITYNUM_NONE;
+			const int content_mask = CONTENTS_SOLID_SHOT;
+			int result = 0;
+
+			__asm
+			{
+				push content_mask
+				push pass_entity_num_2
+				push pass_entity_num
+				mov esi, end
+				mov edi, start
+				call func_loc
+				add esp, 0xC
+				mov result, eax
+			}
+
+			return result != 0;
+		}
+
+		float distance_squared_3d(const float* a, const float* b)
+		{
+			const float dx = b[0] - a[0];
+			const float dy = b[1] - a[1];
+			const float dz = b[2] - a[2];
+			return dx * dx + dy * dy + dz * dz;
+		}
 
 		void call_sv_client_think_real(std::uintptr_t client, game::usercmd_t* cmd)
 		{
@@ -314,6 +399,30 @@ namespace bots
 			}
 		}
 
+		void sync_bot_health_from_dvar()
+		{
+			const int maxhp = get_bot_max_health();
+			if (maxhp == s_last_applied_bot_max_health)
+			{
+				return;
+			}
+
+			const auto* const maxcl_dvar = sv_maxclients_dvar();
+			const int maxcl = maxcl_dvar ? maxcl_dvar->current.integer : MAX_CLIENTS;
+
+			for (int i = 0; i < maxcl; ++i)
+			{
+				if (client_state(i) < game::CS_CONNECTED || client_is_real_player(i))
+				{
+					continue;
+				}
+
+				sanitize_bot_health(i, true);
+			}
+
+			s_last_applied_bot_max_health = maxhp;
+		}
+
 		void __cdecl client_enter_world_hook()
 		{
 			const int func_loc = game::game_offset(0x101AA270);
@@ -323,6 +432,7 @@ namespace bots
 			int client_idx = 0;
 			__asm { mov client_idx, esi }
 
+			s_last_applied_bot_max_health = get_bot_max_health();
 			sanitize_bot_health(client_idx, true);
 		}
 
@@ -349,6 +459,8 @@ namespace bots
 				return;
 			}
 
+			sync_bot_health_from_dvar();
+
 			const int bot_idx = static_cast<int>((client - clients_base) / CLIENT_STRIDE);
 			sanitize_bot_health(bot_idx, false);
 
@@ -367,18 +479,20 @@ namespace bots
 			{
 				const auto* const maxcl_dvar = sv_maxclients_dvar();
 				const int maxcl = maxcl_dvar ? maxcl_dvar->current.integer : 12;
+				const int state_idx = bot_state_index(bot_idx);
 
 				auto* const bot_ent = entity_at(bot_idx);
 				auto* const bot_ps = bot_ent ? entity_ps(bot_ent) : nullptr;
+				float bot_eye[3] = {};
 
-				int best_idx = -1;
-				float best_dist2 = FLT_MAX;
+				int best_visible_idx = -1;
+				float best_visible_dist2 = FLT_MAX;
+				int best_hidden_idx = -1;
+				float best_hidden_dist2 = FLT_MAX;
 
 				if (bot_ps)
 				{
-					const float bx = ps_origin(bot_ps, 0);
-					const float by = ps_origin(bot_ps, 1);
-					const float bz = ps_origin(bot_ps, 2);
+					get_eye_position(bot_ps, BOT_EYE_HEIGHT, bot_eye);
 
 					for (int i = 0; i < maxcl; ++i)
 					{
@@ -394,74 +508,171 @@ namespace bots
 							continue;
 						}
 
-						const float dx = ps_origin(tgt_ps, 0) - bx;
-						const float dy = ps_origin(tgt_ps, 1) - by;
-						const float dz = ps_origin(tgt_ps, 2) - bz;
-						const float d2 = dx * dx + dy * dy + dz * dz;
+						float target_eye[3] = {};
+						get_eye_position(tgt_ps, TARGET_EYE_HEIGHT, target_eye);
 
-						if (d2 < best_dist2)
+						const float d2 = distance_squared_3d(bot_eye, target_eye);
+						const bool visible = trace_passed(bot_eye, target_eye, bot_idx);
+
+						if (visible)
 						{
-							best_dist2 = d2;
-							best_idx = i;
+							float score = d2;
+							if (state_idx >= 0 && s_tracked_target[state_idx] == i)
+							{
+								score *= 0.75f;
+							}
+
+							if (score < best_visible_dist2)
+							{
+								best_visible_dist2 = score;
+								best_visible_idx = i;
+							}
+						}
+						else
+						{
+							float score = d2;
+							if (state_idx >= 0 && s_tracked_target[state_idx] == i)
+							{
+								score *= 0.85f;
+							}
+
+							if (score < best_hidden_dist2)
+							{
+								best_hidden_dist2 = score;
+								best_hidden_idx = i;
+							}
 						}
 					}
 				}
 
-				if (best_idx >= 0 && bot_ps)
+				int target_idx = best_visible_idx;
+				bool target_visible = best_visible_idx >= 0;
+				float goal[3] = {};
+
+				if (bot_ps && state_idx >= 0)
 				{
-					auto* const tgt_ps = entity_ps(entity_at(best_idx));
-					const float dx = ps_origin(tgt_ps, 0) - ps_origin(bot_ps, 0);
-					const float dy = ps_origin(tgt_ps, 1) - ps_origin(bot_ps, 1);
-					const float dz = ps_origin(tgt_ps, 2) - ps_origin(bot_ps, 2);
+					if (target_visible)
+					{
+						s_tracked_target[state_idx] = target_idx;
+						s_last_visible_time[state_idx] = bot_ps->commandTime;
+
+						auto* const visible_ps = entity_ps(entity_at(target_idx));
+						get_eye_position(visible_ps, TARGET_EYE_HEIGHT, s_last_seen_origin[state_idx]);
+					}
+					else if (s_tracked_target[state_idx] >= 0
+						&& should_target_client(bot_idx, s_tracked_target[state_idx])
+						&& (bot_ps->commandTime - s_last_visible_time[state_idx]) <= TARGET_MEMORY_MS)
+					{
+						target_idx = s_tracked_target[state_idx];
+					}
+					else if (best_hidden_idx >= 0)
+					{
+						target_idx = best_hidden_idx;
+						s_tracked_target[state_idx] = target_idx;
+					}
+					else
+					{
+						clear_bot_target_state(bot_idx);
+					}
+				}
+
+				if (target_idx >= 0 && bot_ps)
+				{
+					auto* const tgt_ps = entity_ps(entity_at(target_idx));
+					if (!tgt_ps)
+					{
+						clear_bot_target_state(bot_idx);
+						*reinterpret_cast<int*>(client + 0x08) = *reinterpret_cast<int*>(client + 0x10) - 1;
+						call_sv_client_think_real(client, &cmd);
+						return;
+					}
+
+					if (target_visible)
+					{
+						get_eye_position(tgt_ps, TARGET_EYE_HEIGHT, goal);
+					}
+					else if (state_idx >= 0 && s_last_visible_time[state_idx] > 0
+						&& (bot_ps->commandTime - s_last_visible_time[state_idx]) <= TARGET_MEMORY_MS)
+					{
+						goal[0] = s_last_seen_origin[state_idx][0];
+						goal[1] = s_last_seen_origin[state_idx][1];
+						goal[2] = s_last_seen_origin[state_idx][2];
+					}
+					else
+					{
+						get_eye_position(tgt_ps, TARGET_EYE_HEIGHT, goal);
+					}
+
+					const float dx = goal[0] - bot_eye[0];
+					const float dy = goal[1] - bot_eye[1];
+					const float dz = goal[2] - bot_eye[2];
 					const float hdist = std::sqrtf(dx * dx + dy * dy);
 					const float dist = std::sqrtf(dx * dx + dy * dy + dz * dz);
 					const int behavior_tick = bot_ps->commandTime / 250;
+					const int desired_yaw = static_cast<int>(std::atan2f(dy, dx) * IW_RAD_TO_ANGLE);
+					const int desired_pitch = static_cast<int>(std::atan2f(-dz, hdist) * IW_RAD_TO_ANGLE);
+					const int yaw_delta = state_idx >= 0 ? std::abs(normalize_angle_units(desired_yaw - s_last_cmd_yaw[state_idx])) : 0;
+					const int pitch_delta = state_idx >= 0 ? std::abs(normalize_angle_units(desired_pitch - s_last_cmd_pitch[state_idx])) : 0;
+					const bool aim_settled = yaw_delta <= AIM_SETTLE_THRESHOLD && pitch_delta <= AIM_SETTLE_THRESHOLD;
 
-					cmd.angles[1] = static_cast<int>(std::atan2f(dy, dx) * IW_RAD_TO_ANGLE);
-					cmd.angles[0] = static_cast<int>(std::atan2f(-dz, hdist) * IW_RAD_TO_ANGLE);
+					cmd.angles[1] = desired_yaw;
+					cmd.angles[0] = desired_pitch;
 					cmd.angles[2] = 0;
 
-					cmd.forwardmove = 127;
-					cmd.rightmove = (behavior_tick + bot_idx) & 1 ? 48 : -48;
+					if (state_idx >= 0)
+					{
+						s_last_cmd_yaw[state_idx] = desired_yaw;
+						s_last_cmd_pitch[state_idx] = desired_pitch;
+					}
+
+					cmd.forwardmove = target_visible ? (dist > MELEE_RANGE ? 96 : 127) : 127;
+					cmd.rightmove = target_visible && dist < FIRE_RANGE
+						? ((behavior_tick + bot_idx) & 1 ? 36 : -36)
+						: 0;
 
 					if (dist > SPRINT_RANGE)
 					{
 						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_SPRINT);
 					}
 
-					if (dist < CROUCH_RANGE && ((behavior_tick + bot_idx) % 3 == 0))
+					if (target_visible && dist < CROUCH_RANGE && ((behavior_tick + bot_idx) % 3 == 0))
 					{
 						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_CROUCH);
 					}
 
-					if (dist <= MELEE_RANGE)
+					if (target_visible && dist <= MELEE_RANGE)
 					{
 						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_MELEE_BREATH);
 						cmd.forwardmove = 127;
 					}
 					else
 					{
-						if (dist > 256.0f)
+						if (target_visible && dist > 256.0f)
 						{
 							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ADS);
 						}
 
 						const auto* const atk = sv_bots_press_attack_dvar();
-						if (atk && atk->current.enabled && dist <= FIRE_RANGE)
+						if (atk && atk->current.enabled && target_visible && aim_settled && dist <= FIRE_RANGE)
 						{
-							const int idx = bot_idx < MAX_CLIENTS ? bot_idx : 0;
-							s_attack_phase[idx] = !s_attack_phase[idx];
-							if (s_attack_phase[idx])
+							if (state_idx >= 0)
 							{
-								cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
+								s_attack_phase[state_idx] = !s_attack_phase[state_idx];
+								if (s_attack_phase[state_idx])
+								{
+									cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
+								}
 							}
+						}
+						else if (state_idx >= 0)
+						{
+							s_attack_phase[state_idx] = false;
 						}
 					}
 				}
 				else
 				{
-					const int idx = bot_idx < MAX_CLIENTS ? bot_idx : 0;
-					s_attack_phase[idx] = false;
+					clear_bot_target_state(bot_idx);
 				}
 			}
 
@@ -480,9 +691,17 @@ namespace bots
 			utils::hook::call(game::game_offset(0x10414440), client_enter_world_hook);
 			utils::hook::jump(game::game_offset(0x102FA590), sv_bot_think_hook);
 
+			std::fill_n(s_tracked_target, MAX_CLIENTS, -1);
+
 			scheduler::on_shutdown([]
 				{
 					std::memset(s_attack_phase, 0, sizeof(s_attack_phase));
+					std::fill_n(s_tracked_target, MAX_CLIENTS, -1);
+					std::memset(s_last_visible_time, 0, sizeof(s_last_visible_time));
+					std::memset(s_last_seen_origin, 0, sizeof(s_last_seen_origin));
+					std::memset(s_last_cmd_yaw, 0, sizeof(s_last_cmd_yaw));
+					std::memset(s_last_cmd_pitch, 0, sizeof(s_last_cmd_pitch));
+					s_last_applied_bot_max_health = 0;
 				});
 		}
 
