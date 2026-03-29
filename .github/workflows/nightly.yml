@@ -1,13 +1,16 @@
 name: Nightly (Experimental) Build
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   schedule:
-    - cron: "0 3 * * *"  # 03:00 UTC daily
+    - cron: "0 3 * * *"
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,7 +44,7 @@ jobs:
         run: msbuild build\consolation-client.sln `
             /p:Configuration=Release `
             /p:OutDir=bin/Release/ `
-            /p:DisableSpecificWarnings=4459
+            /p:DisableSpecificWarnings=4459 `
             /p:TreatWarningsAsErrors=false
         shell: pwsh
         working-directory: ${{ github.workspace }}
@@ -59,7 +62,6 @@ jobs:
           $releaseDir = "${{ github.workspace }}\build\bin\Release"
           $zipPath = "${{ github.workspace }}\consolation-nightly.zip"
 
-          # grab only the files we actually want to ship
           $files = Get-ChildItem -Path $releaseDir -File |
             Where-Object { $_.Extension -notin @('.lib', '.pdb', '.exp') }
 
@@ -70,9 +72,47 @@ jobs:
       - name: Get short commit hash
         id: shortsha
         run: |
-          $short = $env:GITHUB_SHA.Substring(0, 7)
-          Write-Output "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+          $short = $env:GITHUB_SHA.Substring(0,7)
+          "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
+
+      - name: Get build timestamp
+        id: timestamp
+        run: |
+          $time = Get-Date -Format "dd MMMM yyyy - HH:mm:ss"
+          "build_time=$time" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+        shell: pwsh
+
+      - name: Cleanup old nightly releases (keep 5)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const nightly = releases.data
+              .filter(r => r.prerelease)
+              .sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+
+            const toDelete = nightly.slice(5);
+
+            for (const rel of toDelete) {
+              console.log(`Deleting old nightly: ${rel.name}`);
+
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: rel.id
+              });
+
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${rel.tag_name}`
+              });
+            }
 
       - name: Create/Update Nightly Release and upload zip
         uses: softprops/action-gh-release@v2
@@ -81,7 +121,11 @@ jobs:
         with:
           tag_name: nightly
           name: Nightly Build
-          body: Nightly build from commit ${{ steps.shortsha.outputs.short_sha }}
+          body: |
+            Nightly build from commit ${{ steps.shortsha.outputs.short_sha }} (${{ steps.timestamp.outputs.build_time }})
+
+            Nightly builds are experimental and unstable. They may crash frequently or fail to run at all.
+            Use at your own risk. No support will be given.
           draft: false
           prerelease: true
           overwrite_files: true
