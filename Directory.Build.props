@@ -3,7 +3,7 @@
     <ClCompile>
       <!-- GSL as external so /external:W0 applies, plus suppress warnings that
            are promoted to errors by /WX but are safe to ignore in this codebase -->
-      <AdditionalOptions>%(AdditionalOptions) /external:I$(MSBuildThisFileDirectory)deps/GSL/include /wd4067 /wd4121 /wd4244 /wd4189 /wd4996 /wd4409</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /external:I$(MSBuildThisFileDirectory)deps/GSL/include /wd4067 /wd4121 /wd4244 /wd4189 /wd4996 /wd4409 /wd4459</AdditionalOptions>
     </ClCompile>
   </ItemDefinitionGroup>
 </Project>
