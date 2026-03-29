@@ -3,6 +3,14 @@
 A work-in-progress project aimed at extending and improving upon the Multiplayer PC port experience of [007: Quantum of Solace](https://en.wikipedia.org/wiki/007:_Quantum_of_Solace), a game that runs on the Call of Duty engine between <i>Call of Duty: 4</i> (IW3) & <i>Call of Duty: World at War. (T4)</i>
 Currently this has only been tested and confirmed to work on the English 1.1 version.
 
+## Nightly Builds
+
+Nightly builds are automatically generated and available in the **Releases** section of this repository.
+
+These builds are **experimental and primarily intended for testing**. They are very likely to be unstable, partially broken, or not working at all. If a nightly build happens to work for you, consider yourself lucky — it may break or become outdated very quickly.
+
+Nightly builds are provided **strictly for testing purposes** and should not be considered stable releases. **No support will be provided for nightly builds.**
+
  ## Current features
  - Fully working External Console
  - Various DVARs have been unlocked & edited from their defaults. (e.g [changes to movement to match IW3 movement closer](https://youtu.be/5LNlgfV1z-k), in-game fonts are HD now, etc)
