@@ -12,6 +12,10 @@
 
 #define OUTPUT_HANDLE GetStdHandle(STD_OUTPUT_HANDLE)
 
+#ifndef VERSION_BUILD
+#define VERSION_BUILD "0"
+#endif
+
 namespace console
 {
 	namespace
@@ -29,16 +33,22 @@ namespace console
 				short_hash.resize(7);
 			}
 
+			std::string version = std::string(VERSION_PRODUCT) + "(" + VERSION_BUILD + ")";
+
 #ifdef DEBUG
-			std::string version = std::string("v") + VERSION_PRODUCT + "-debug-" + short_hash;
+			version += "-dbg-";
+#else
+			version += "-nightly-";
+#endif
+
+			version += short_hash;
+
 			if (GIT_DIRTY)
 			{
 				version += "-dirty";
 			}
+
 			return version;
-#else
-			return GIT_DESCRIBE;
-#endif
 		}
 
 		struct
@@ -71,6 +81,11 @@ namespace console
 		template <typename... Args>
 		int invoke_printf(const char* fmt, Args&&... args)
 		{
+			if (!printf_hook.get_original())
+			{
+				return std::printf(fmt, std::forward<Args>(args)...);
+			}
+
 			return printf_hook.invoke<int>(fmt, std::forward<Args>(args)...);
 		}
 
@@ -149,6 +164,28 @@ namespace console
 
 			update();
 			return res;
+		}
+
+		int dispatch_split_debug_message(const std::string& message)
+		{
+			std::lock_guard _0(print_mutex);
+
+			clear_output();
+			set_cursor_pos(0);
+
+			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_error));
+			const auto prefix_res = invoke_printf("debug:");
+			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_warning));
+			const auto body_res = invoke_printf("%s", message.c_str());
+			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_info));
+
+			if (message.empty() || message.back() != '\n')
+			{
+				invoke_printf("\n");
+			}
+
+			update();
+			return prefix_res + body_res;
 		}
 
 		void clear()
@@ -351,7 +388,16 @@ namespace console
 			const auto result = format(&ap, fmt);
 			va_end(ap);
 
-			com_printf_hook.invoke<void>(channel, "%s", result);
+			if (com_printf_hook.get_original())
+			{
+				com_printf_hook.invoke<void>(channel, "%s", result.c_str());
+			}
+
+			if (result.rfind("^1debug:^3 ", 0) == 0)
+			{
+				dispatch_split_debug_message(result.substr(10));
+				return;
+			}
 
 			int type = con_type_info;
 			std::string_view rv(result);
@@ -364,7 +410,7 @@ namespace console
 				? std::string(rv.substr(2))
 				: std::string(rv);
 
-			// Keyword overrides — error
+			// Keyword overrides ? error
 			static constexpr const char* error_substrings[] = {
 				"Unable to", "Couldn't reset", "nat type is Strict"
 			};
@@ -374,7 +420,7 @@ namespace console
 					type = con_type_error; break;
 				}
 
-			// Keyword overrides — warning
+			// Keyword overrides ? warning
 			static constexpr const char* warning_substrings[] = {
 				"Unable to", "Missing asset", "Couldn't find", "Unknown command",
 				"is read only", "is not a valid value", "is write protected",
@@ -387,7 +433,7 @@ namespace console
 					type = con_type_warning; break;
 				}
 
-			// Keyword overrides — debug
+			// Keyword overrides ? debug
 			static constexpr const char* debug_substrings[] = {
 				"GamerProfile_LogInProfile took", "connection status has changed",
 				"signed in to live", "Reading profile", "Loaded zone",
@@ -400,7 +446,7 @@ namespace console
 					type = con_type_debug; break;
 				}
 
-			// Velocity debug — only dispatch if dvar is enabled
+			// Velocity debug ? only dispatch if dvar is enabled
 			if (utils::string::string_contains(result, "Velocity change:"))
 			{
 				auto g_debugVelocity = game::Dvar_FindVar("g_debugVelocity");
@@ -409,7 +455,7 @@ namespace console
 				return;
 			}
 
-			// XUserReadProfileSettings — suppress repeated spam
+			// XUserReadProfileSettings ? suppress repeated spam
 			if (utils::string::string_contains(result, "XUserReadProfileSettings"))
 			{
 				static bool xsignin = false;

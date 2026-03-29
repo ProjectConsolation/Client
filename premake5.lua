@@ -36,6 +36,37 @@ function vertonumarr(value, vernumber, partscount)
 	return vernum
 end
 
+function getbaseversion(tagName)
+	if tagName == nil or tagName == "" then
+		return "0.0.1"
+	end
+
+	local major, minor, patch = string.match(tagName, "[vV]?(%d+)%.(%d+)%.(%d+)")
+	if major ~= nil and minor ~= nil and patch ~= nil then
+		return major .. "." .. minor .. "." .. patch
+	end
+
+	return "0.0.1"
+end
+
+function readbuildcounter(path)
+	local file = io.open(path, "r")
+	if file == nil then
+		return 0
+	end
+
+	local rawValue = file:read('*a') or ""
+	local cleanedValue = rawValue:gsub("%s+", "")
+	local value = tonumber(cleanedValue)
+	file:close()
+
+	if value == nil then
+		return 0
+	end
+
+	return value
+end
+
 newoption {
 	trigger = "copy-to",
 	description = "Optional, copy the DLL to a custom folder after build, define the path here if wanted.",
@@ -62,6 +93,8 @@ newaction {
 	onWorkspace = function(wks)
 		-- get old version number from version.hpp if any
 		local oldVersion = "(none)"
+		local oldVersionProduct = ""
+		local oldVersionBuild = ""
 		local oldVersionHeader = io.open(wks.location .. "/src/version.h", "r")
 		if oldVersionHeader ~= nil then
 			local oldVersionHeaderContent = assert(oldVersionHeader:read('*l'))
@@ -71,8 +104,20 @@ newaction {
 						oldVersion = m
 				end
 
+				m = string.match(oldVersionHeaderContent, "#define VERSION_PRODUCT \"([^\"]*)\"%s*$")
+				if m ~= nil then
+					oldVersionProduct = m
+				end
+
+				m = string.match(oldVersionHeaderContent, "#define VERSION_BUILD \"([^\"]*)\"%s*$")
+				if m ~= nil then
+					oldVersionBuild = m
+				end
+
 				oldVersionHeaderContent = oldVersionHeader:read('*l')
 			end
+
+			oldVersionHeader:close()
 		end
 
 		-- get current version via git
@@ -82,7 +127,21 @@ newaction {
 
 		-- generate version.hpp with a revision number if not equal
 		gitDescribeOutputQuoted = cstrquote(gitDescribeOutput)
-		if oldVersion ~= gitDescribeOutputQuoted then
+		local proc = assert(io.popen("git describe --tags --abbrev=0"))
+		local tagName = proc:read('*l')
+		proc:close()
+
+		local proc = assert(io.popen("git rev-list --count HEAD", "r"))
+		local revNumber = assert(proc:read('*a')):gsub("%s+", "")
+		proc:close()
+
+		local baseVersion = getbaseversion(tagName)
+
+		local buildCounterPath = wks.location .. "/src/build_counter.txt"
+		local buildCounter = readbuildcounter(buildCounterPath) + 1
+		local buildNumber = tostring(buildCounter)
+
+		if oldVersion ~= gitDescribeOutputQuoted or oldVersionProduct ~= baseVersion or oldVersionBuild ~= buildNumber then
 			-- get current git hash and write to version.txt (used by the preliminary updater)
 			-- TODO - remove once proper updater and release versioning exists
 			local proc = assert(io.popen("git rev-parse HEAD", "r"))
@@ -94,10 +153,6 @@ newaction {
 			local revDirty = (assert(proc:read('*a')) ~= "")
 			if revDirty then revDirty = 1 else revDirty = 0 end
 			proc:close()
-
-			-- get current tag name
-			proc = assert(io.popen("git describe --tags --abbrev=0"))
-			local tagName = proc:read('*l')
 
 			-- get current branch name
 			proc = assert(io.popen("git branch --show-current"))
@@ -119,11 +174,11 @@ newaction {
 
 			print("Detected branch: " .. branchName)
 
-			-- get revision number via git
-			local proc = assert(io.popen("git rev-list --count HEAD", "r"))
-			local revNumber = assert(proc:read('*a')):gsub("%s+", "")
-
 			print ("Update " .. oldVersion .. " -> " .. gitDescribeOutputQuoted)
+
+			local buildCounterFile = assert(io.open(buildCounterPath, "w"))
+			buildCounterFile:write(buildNumber)
+			buildCounterFile:close()
 
 			-- write to version.txt for preliminary updater
 			-- NOTE - remove this once we have a proper updater and proper release versioning
@@ -145,10 +200,11 @@ newaction {
 			versionHeader:write("#define GIT_BRANCH " .. cstrquote(branchName) .. "\n")
 			versionHeader:write("\n")
 			versionHeader:write("// Version transformed for RC files\n")
-			versionHeader:write("#define VERSION_PRODUCT_RC " .. table.concat(vertonumarr(tagName, revNumber, 3), ",") .. "\n")
-			versionHeader:write("#define VERSION_PRODUCT " .. cstrquote(table.concat(vertonumarr(tagName, revNumber, 3), ".")) .. "\n")
-			versionHeader:write("#define VERSION_FILE_RC " .. table.concat(vertonumarr(tagName, revNumber, 4), ",") .. "\n")
-			versionHeader:write("#define VERSION_FILE " .. cstrquote(table.concat(vertonumarr(tagName, revNumber, 4), ".")) .. "\n")
+			versionHeader:write("#define VERSION_PRODUCT_RC " .. table.concat(vertonumarr(baseVersion, revNumber, 3), ",") .. "\n")
+			versionHeader:write("#define VERSION_PRODUCT " .. cstrquote(baseVersion) .. "\n")
+			versionHeader:write("#define VERSION_BUILD " .. cstrquote(buildNumber) .. "\n")
+			versionHeader:write("#define VERSION_FILE_RC " .. table.concat(vertonumarr(baseVersion, buildNumber, 4), ",") .. "\n")
+			versionHeader:write("#define VERSION_FILE " .. cstrquote(table.concat(vertonumarr(baseVersion, buildNumber, 4), ".")) .. "\n")
 			versionHeader:write("\n")
 			versionHeader:write("// Alias definitions\n")
 			versionHeader:write("#define VERSION GIT_DESCRIBE\n")
