@@ -66,4 +66,5 @@ namespace game
 	WEAK symbol<field_t> g_consoleField{ game_offset(0x112633F8) };
 	WEAK symbol<int> g_console_field_width{ game_offset(0x1055C48C) };
 	WEAK symbol<int> con_outputVisible{ game_offset(0x11A76356) };
+	WEAK symbol<HWND> main_window{ game_offset(0x113EFA8C) };
 }

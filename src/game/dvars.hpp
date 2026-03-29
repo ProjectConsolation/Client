@@ -28,6 +28,7 @@ namespace dvars
 	extern game::dvar_s* g_debugLocalization;
 	extern game::dvar_s* r_borderless;
 	extern game::dvar_s* bot_maxHealth;
+	extern game::dvar_s* m_rawInput;
 
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain);
 	std::string dvar_get_domain(const game::dvar_type type, const game::DvarLimits& domain);
