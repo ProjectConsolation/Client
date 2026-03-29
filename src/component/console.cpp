@@ -21,6 +21,26 @@ namespace console
 
 		std::recursive_mutex print_mutex;
 
+		std::string build_display_version()
+		{
+			std::string short_hash = GIT_HASH;
+			if (short_hash.size() > 7)
+			{
+				short_hash.resize(7);
+			}
+
+#ifdef DEBUG
+			std::string version = std::string("v") + VERSION_PRODUCT + "-debug-" + short_hash;
+			if (GIT_DIRTY)
+			{
+				version += "-dirty";
+			}
+			return version;
+#else
+			return GIT_DESCRIBE;
+#endif
+		}
+
 		struct
 		{
 			bool kill;
@@ -503,7 +523,7 @@ namespace console
 			ShowWindow(GetConsoleWindow(), SW_SHOW);
 
 			std::string title = std::string("Project: Consolation [")
-				+ GIT_DESCRIBE
+				+ build_display_version()
 				+ " | "
 				+ __DATE__
 				+ " "

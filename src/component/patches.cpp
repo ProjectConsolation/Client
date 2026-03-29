@@ -33,7 +33,7 @@ namespace patches
 		{
 			if (!strcmp(class_name, "JB_MP"))
 			{
-				window_name = "Project Consolation: Multiplayer";
+				window_name = "Project: Consolation - Multiplayer";
 			}
 			return CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
 		}
