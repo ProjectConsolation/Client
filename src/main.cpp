@@ -8,6 +8,10 @@
 #include <ShellScalingApi.h>
 #include "component/xlive.hpp"
 
+#ifdef DEBUG
+#include <crtdbg.h>
+#endif
+
 namespace
 {
 	static BYTE original_code[5];
@@ -59,6 +63,15 @@ namespace
 		}
 	}
 
+#ifdef DEBUG
+	void configure_debug_crt()
+	{
+		_CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG);
+		_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG);
+		_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG);
+	}
+#endif
+
 	void unprotect_module(HMODULE module)
 	{
 		auto header = reinterpret_cast<PIMAGE_DOS_HEADER>(module);
@@ -75,8 +88,9 @@ namespace
 		try
 		{
 #ifdef DEBUG
+			configure_debug_crt();
 			//xlive::apply_early(); // attemp at patching xlive FIRST, before a debugger can attach
-			MessageBoxA(NULL, "ATTACH DEBUGGER NOW", "DEBUG", MB_DEFBUTTON1);
+			//MessageBoxA(NULL, "ATTACH DEBUGGER NOW", "DEBUG", MB_DEFBUTTON1);
 #endif
 
 			
@@ -85,7 +99,7 @@ namespace
 			if (!component_loader::post_start()) throw "post start failed";
 			if (!component_loader::post_load()) throw "post load failed";
 #ifdef DEBUG
-			MessageBoxA(NULL, "GAME LOADED", "DEBUG", MB_DEFBUTTON1);
+			//MessageBoxA(NULL, "GAME LOADED", "DEBUG", MB_DEFBUTTON1);
 #endif
 		}
 		catch (std::string& error)
