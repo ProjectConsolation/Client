@@ -8,83 +8,45 @@
 
 #include <utils/hook.hpp>
 
-// Patch mouse input to use Windows raw input while preserving the game's
-// existing mouse event flow and recenter behavior.
-
 namespace mouse_input
 {
 	namespace
 	{
-		utils::hook::detour in_mouse_move_hook;
-
 		WNDPROC original_wnd_proc = nullptr;
+		bool callsite_patched = false;
 		bool wnd_proc_hooked = false;
 		bool raw_input_registered = false;
+		int ready_ticks = 0;
 		LONG raw_mouse_x = 0;
 		LONG raw_mouse_y = 0;
+		std::array<std::uint8_t, 5> original_mouse_event_call{};
+
+		struct mouse_event_state
+		{
+			int x = 0;
+			int y = 0;
+			int dx = 0;
+			int dy = 0;
+		};
+
+		mouse_event_state pending_event{};
+		mouse_event_state original_call_state{};
+		int original_call_result = 0;
+		const std::uint32_t original_mouse_event_address = game::game_offset(0x102FD5D0);
+
+		int __cdecl mouse_event_body(int y, int x, int dx, int dy);
+		void mouse_event_callsite_stub();
+		void call_original_mouse_event_stub();
 
 		HWND get_window()
 		{
 			return *game::main_window;
 		}
 
-		int cl_mouse_event(const int x, const int y, const int dx, const int dy)
+		bool is_window_ready()
 		{
-			const auto func = game::game_offset(0x102FD5D0);
-			int result = 0;
-
-			__asm
-			{
-				push dy
-				push dx
-				mov edx, y
-				mov ecx, x
-				call func
-				add esp, 8
-				mov result, eax
-			}
-
-			return result;
-		}
-
-		void recenter_mouse()
-		{
-			utils::hook::invoke<void>(game::game_offset(0x102C35B0));
-		}
-
-		void clamp_mouse_move(POINT& point)
-		{
-			RECT rect{};
-			GetWindowRect(get_window(), &rect);
-
-			bool changed = false;
-
-			if (point.x < rect.left)
-			{
-				point.x = rect.left;
-				changed = true;
-			}
-			else if (point.x >= rect.right)
-			{
-				point.x = rect.right - 1;
-				changed = true;
-			}
-
-			if (point.y < rect.top)
-			{
-				point.y = rect.top;
-				changed = true;
-			}
-			else if (point.y >= rect.bottom)
-			{
-				point.y = rect.bottom - 1;
-				changed = true;
-			}
-
-			if (changed)
-			{
-				SetCursorPos(point.x, point.y);
-			}
+			const auto hwnd = get_window();
+			return hwnd && IsWindow(hwnd) && dvars::m_rawInput != nullptr;
 		}
 
 		void register_raw_input()
@@ -103,27 +65,49 @@ namespace mouse_input
 			if (RegisterRawInputDevices(&device, 1, sizeof(device)))
 			{
 				raw_input_registered = true;
+				raw_mouse_x = 0;
+				raw_mouse_y = 0;
 			}
+		}
+
+		void unregister_raw_input()
+		{
+			if (!raw_input_registered)
+			{
+				return;
+			}
+
+			RAWINPUTDEVICE device{};
+			device.usUsagePage = 0x01;
+			device.usUsage = 0x02;
+			device.dwFlags = RIDEV_REMOVE;
+			device.hwndTarget = nullptr;
+			RegisterRawInputDevices(&device, 1, sizeof(device));
+
+			raw_input_registered = false;
+			raw_mouse_x = 0;
+			raw_mouse_y = 0;
 		}
 
 		LRESULT CALLBACK wnd_proc_stub(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 		{
-			if (msg == WM_INPUT)
+			if (msg == WM_ACTIVATEAPP && wparam == FALSE)
 			{
-				RAWINPUT raw{};
-				UINT size = sizeof(raw);
-				if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) == size
-					&& raw.header.dwType == RIM_TYPEMOUSE)
+				raw_mouse_x = 0;
+				raw_mouse_y = 0;
+			}
+
+			if (msg == WM_INPUT && raw_input_registered)
+			{
+				UINT size = sizeof(RAWINPUT);
+				static BYTE raw_bytes[sizeof(RAWINPUT)]{};
+				if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, raw_bytes, &size, sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1))
 				{
-					if ((raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) != 0)
+					const auto* raw = reinterpret_cast<const RAWINPUT*>(raw_bytes);
+					if (raw->header.dwType == RIM_TYPEMOUSE)
 					{
-						raw_mouse_x = raw.data.mouse.lLastX;
-						raw_mouse_y = raw.data.mouse.lLastY;
-					}
-					else
-					{
-						raw_mouse_x += raw.data.mouse.lLastX;
-						raw_mouse_y += raw.data.mouse.lLastY;
+						raw_mouse_x += raw->data.mouse.lLastX;
+						raw_mouse_y += raw->data.mouse.lLastY;
 					}
 				}
 			}
@@ -131,9 +115,51 @@ namespace mouse_input
 			return CallWindowProcA(original_wnd_proc, hwnd, msg, wparam, lparam);
 		}
 
-		void install_wnd_proc()
+		void install_hooks_if_ready()
 		{
-			if (wnd_proc_hooked || !get_window())
+			if (callsite_patched)
+			{
+				return;
+			}
+
+			if (!is_window_ready())
+			{
+				ready_ticks = 0;
+				return;
+			}
+
+			if (++ready_ticks < 10)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_mouse_event_call.size(); ++i)
+			{
+				original_mouse_event_call[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102C3934 + i));
+			}
+
+			utils::hook::call(game::game_offset(0x102C3934), mouse_event_callsite_stub);
+			callsite_patched = true;
+		}
+
+		void restore_mouse_event_callsite()
+		{
+			if (!callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_mouse_event_call.size(); ++i)
+			{
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102C3934 + static_cast<int>(i)), original_mouse_event_call[i]);
+			}
+
+			callsite_patched = false;
+		}
+
+		void install_wnd_proc_if_ready()
+		{
+			if (wnd_proc_hooked || !callsite_patched || !is_window_ready())
 			{
 				return;
 			}
@@ -145,7 +171,23 @@ namespace mouse_input
 			if (original_wnd_proc)
 			{
 				wnd_proc_hooked = true;
+			}
+		}
+
+		void update_raw_input_state()
+		{
+			if (!wnd_proc_hooked || !dvars::m_rawInput)
+			{
+				return;
+			}
+
+			if (dvars::m_rawInput->current.enabled)
+			{
 				register_raw_input();
+			}
+			else
+			{
+				unregister_raw_input();
 			}
 		}
 
@@ -156,48 +198,105 @@ namespace mouse_input
 				return;
 			}
 
+			unregister_raw_input();
 			SetWindowLongPtrA(get_window(), GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(original_wnd_proc));
 			original_wnd_proc = nullptr;
 			wnd_proc_hooked = false;
-			raw_input_registered = false;
 		}
 
-		void in_mouse_move_stub()
+		int call_original_mouse_event(const mouse_event_state& state)
 		{
-			if (!dvars::m_rawInput || !dvars::m_rawInput->current.enabled || !wnd_proc_hooked)
+			original_call_state = state;
+			call_original_mouse_event_stub();
+			return original_call_result;
+		}
+
+		int __cdecl mouse_event_body(int y, int x, int dx, int dy)
+		{
+			pending_event.x = x;
+			pending_event.y = y;
+			pending_event.dx = dx;
+			pending_event.dy = dy;
+
+			if (!dvars::m_rawInput || !dvars::m_rawInput->current.enabled || !wnd_proc_hooked || !raw_input_registered)
 			{
-				in_mouse_move_hook.invoke<void>();
-				return;
+				return call_original_mouse_event(pending_event);
+			}
+
+			if ((*game::keyCatchers & 0x10) != 0)
+			{
+				return call_original_mouse_event(pending_event);
 			}
 
 			const auto hwnd = get_window();
 			if (!hwnd || GetForegroundWindow() != hwnd)
 			{
-				return;
+				return call_original_mouse_event(pending_event);
 			}
 
 			static LONG old_x = 0;
 			static LONG old_y = 0;
 
-			POINT cursor{};
-			GetCursorPos(&cursor);
-
-			if (const auto* fullscreen = game::Dvar_FindVar("r_fullscreen");
-				fullscreen && fullscreen->current.enabled)
-			{
-				clamp_mouse_move(cursor);
-			}
-
-			const auto dx = raw_mouse_x - old_x;
-			const auto dy = raw_mouse_y - old_y;
+			const auto raw_dx = raw_mouse_x - old_x;
+			const auto raw_dy = raw_mouse_y - old_y;
 			old_x = raw_mouse_x;
 			old_y = raw_mouse_y;
 
-			ScreenToClient(hwnd, &cursor);
-
-			if (cl_mouse_event(cursor.x, cursor.y, dx, dy) != 0 && (dx != 0 || dy != 0))
+			if (raw_dx == 0 && raw_dy == 0)
 			{
-				recenter_mouse();
+				return call_original_mouse_event(pending_event);
+			}
+
+			pending_event.dx = static_cast<int>(raw_dx);
+			pending_event.dy = static_cast<int>(raw_dy);
+			return call_original_mouse_event(pending_event);
+		}
+
+		__declspec(naked) void mouse_event_callsite_stub()
+		{
+			__asm
+			{
+				push esi
+				push edi
+				push ebx
+
+				mov esi, ecx
+				mov edi, edx
+				mov ebx, [esp+10h]
+				mov eax, [esp+14h]
+
+				push eax
+				push ebx
+				push edi
+				push esi
+				call mouse_event_body
+				add esp, 10h
+
+				pop ebx
+				pop edi
+				pop esi
+				ret
+			}
+		}
+
+		__declspec(naked) void call_original_mouse_event_stub()
+		{
+			__asm
+			{
+				push esi
+				mov esi, offset original_call_state
+
+				push [esi + 12]
+				push [esi + 8]
+				mov ecx, [esi + 4]
+				mov edx, [esi + 0]
+				mov eax, original_mouse_event_address
+				call eax
+				add esp, 8
+				mov dword ptr [original_call_result], eax
+
+				pop esi
+				ret
 			}
 		}
 	}
@@ -207,24 +306,26 @@ namespace mouse_input
 	public:
 		void post_load() override
 		{
-			in_mouse_move_hook.create(game::game_offset(0x102C3970), &in_mouse_move_stub);
-
 			scheduler::loop([]
 				{
-					install_wnd_proc();
+					install_hooks_if_ready();
+					install_wnd_proc_if_ready();
+					update_raw_input_state();
 				}, scheduler::main, 100ms);
 
 			scheduler::on_shutdown([]
 				{
 					uninstall_wnd_proc();
-					in_mouse_move_hook.clear();
+
+					restore_mouse_event_callsite();
 				});
 		}
 
 		void pre_destroy() override
 		{
 			uninstall_wnd_proc();
-			in_mouse_move_hook.clear();
+
+			restore_mouse_event_callsite();
 		}
 	};
 }
