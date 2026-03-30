@@ -105,6 +105,30 @@ namespace patches
 			}
 		}
 
+		int dvar_int_value(const char* name, const int fallback = 0)
+		{
+			const auto* const dvar = game::Dvar_FindVar(name);
+			if (!dvar)
+			{
+				return fallback;
+			}
+
+			switch (dvar->type)
+			{
+			case game::dvar_type::boolean:
+				return dvar->current.enabled ? 1 : 0;
+			case game::dvar_type::integer:
+				return dvar->current.integer;
+			case game::dvar_type::value:
+				return static_cast<int>(dvar->current.value);
+			case game::dvar_type::string:
+			case game::dvar_type::enumeration:
+				return dvar->current.string ? std::atoi(dvar->current.string) : fallback;
+			default:
+				return dvar->current.integer;
+			}
+		}
+
 		void make_dvar_saved_and_writable(const char* name)
 		{
 			auto* const dvar = game::Dvar_FindVar(name);
@@ -119,54 +143,17 @@ namespace patches
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
 		}
 
-		void refresh_window_mode_style()
-		{
-			const auto hwnd = *game::main_window;
-			if (!hwnd || !IsWindow(hwnd))
-			{
-				return;
-			}
-
-			if (dvar_enabled("r_fullscreen"))
-			{
-				return;
-			}
-
-			LONG_PTR style = GetWindowLongPtrA(hwnd, GWL_STYLE);
-			LONG_PTR ex_style = GetWindowLongPtrA(hwnd, GWL_EXSTYLE);
-			LONG_PTR desired_style = style;
-			LONG_PTR desired_ex_style = ex_style;
-
-			if (dvar_enabled("r_borderless"))
-			{
-				desired_style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
-				desired_style |= WS_POPUP;
-				desired_ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
-				desired_ex_style |= WS_EX_APPWINDOW;
-			}
-			else
-			{
-				desired_style &= ~WS_POPUP;
-				desired_style |= WS_OVERLAPPED | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
-				desired_ex_style |= WS_EX_APPWINDOW | WS_EX_WINDOWEDGE;
-			}
-
-			if (desired_style == style && desired_ex_style == ex_style)
-			{
-				return;
-			}
-
-			SetWindowLongPtrA(hwnd, GWL_STYLE, desired_style);
-			SetWindowLongPtrA(hwnd, GWL_EXSTYLE, desired_ex_style);
-			SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-				SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-		}
-
 		HWND __stdcall create_window_ex_stub(DWORD ex_style, LPCSTR class_name, LPCSTR window_name, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE inst, LPVOID param)
 		{
 			if (!strcmp(class_name, "JB_MP"))
 			{
 				window_name = "Project: Consolation - Multiplayer";
+
+				if (!dvar_enabled("r_fullscreen"))
+				{
+					x = dvar_int_value("vid_xpos", x);
+					y = dvar_int_value("vid_ypos", y);
+				}
 
 				if (!dvar_enabled("r_fullscreen") && dvar_enabled("r_borderless"))
 				{
@@ -423,7 +410,8 @@ namespace patches
 
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("com_maxfps");
-				refresh_window_mode_style();
+				make_dvar_saved_and_writable("vid_xpos");
+				make_dvar_saved_and_writable("vid_ypos");
 
 				//debug block sv_cheats
 #ifdef DEBUG
@@ -443,7 +431,8 @@ namespace patches
 			{
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("com_maxfps");
-				refresh_window_mode_style();
+				make_dvar_saved_and_writable("vid_xpos");
+				make_dvar_saved_and_writable("vid_ypos");
 			}, scheduler::main, 250ms);
 		}
 	};

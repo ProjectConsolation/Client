@@ -259,10 +259,10 @@ namespace dvars
 		void post_load() override
 		{
 			dvars::overrides::register_bool("monkeytoy", false, game::dvar_flags::none);
+			r_borderless = dvars::Dvar_RegisterBool("r_borderless", 0, "Do not use a border in windowed mode", game::dvar_flags::saved);
 
 			scheduler::once([]
 				{
-				dvars::Dvar_RegisterBool("r_borderless", 0, "Do not use a border in windowed mode", game::dvar_flags::saved);
 					dvars::Dvar_RegisterBool("g_debugVelocity", 0, "[DEBUG] Print velocity information to console", game::dvar_flags::none);
 					dvars::Dvar_RegisterBool("g_debugLocalization", 0, "[DEBUG] Print information to console about unlocalized strings", game::dvar_flags::none);
 					bot_maxHealth = dvars::Dvar_RegisterInt("bot_maxHealth", "Maximum health for bots on spawn", 100, 1, 1000, game::dvar_flags::none);
