@@ -63,8 +63,6 @@ namespace patches
 			return "Project: Consolation "
 				+ build_shortversion_string()
 				+ " build "
-				+ VERSION_BUILD
-				+ " "
 				+ build_build_label()
 				+ " "
 				+ build_timestamp_label()
@@ -291,6 +289,9 @@ namespace patches
 			utils::hook::nop(game::game_offset(0x1000230F), 0x05); // TODO: Dvar toggle? Could be useful info
 			utils::hook::nop(game::game_offset(0x102E1284), 0x05);
 			// nop above call to Com_Printf for "unknown UI script %s in block:\n%s\n"
+
+			// keep the registered version dvar value instead of letting stock init overwrite it
+			utils::hook::nop(game::game_offset(0x103F9E53), 0x05);
 
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
