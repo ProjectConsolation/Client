@@ -58,6 +58,8 @@ namespace game_console
 		{
 			std::string input{};
 			std::size_t cursor = 0;
+			std::size_t selection_start = 0;
+			std::size_t selection_end = 0;
 			int history_index = -1;
 			int scroll_offset = 0;
 			bool output_visible = false;
@@ -858,7 +860,7 @@ namespace game_console
 			else
 			{
 				con->input.clear();
-				con->cursor = 0;
+				set_cursor_position(0);
 				con->history_index = -1;
 				con->scroll_offset = 0;
 				con->output_visible = false;
@@ -887,7 +889,7 @@ namespace game_console
 			}
 
 			con->input.clear();
-			con->cursor = 0;
+			set_cursor_position(0);
 			clear_auto_complete();
 		}
 
@@ -1186,12 +1188,12 @@ namespace game_console
 			const auto first_char = con->input.front();
 			const bool has_prefix = first_char == '\\' || first_char == '/';
 			con->input.clear();
-			con->cursor = 0;
+			set_cursor_position(0);
 
 			if (has_prefix)
 			{
 				con->input.push_back(first_char);
-				++con->cursor;
+				set_cursor_position(1);
 			}
 
 			insert_text(con->auto_complete_choice);
@@ -1290,6 +1292,123 @@ namespace game_console
 			return static_cast<float>(font->pixelHeight) * scale;
 		}
 
+		float get_text_width(std::string_view text)
+		{
+			auto* const font = get_console_font();
+			if (!font || text.empty())
+			{
+				return 0.0f;
+			}
+
+			const std::string owned_text{text};
+			return static_cast<float>(game::R_TextWidth(owned_text.c_str(), 0x7FFFFFFF, font));
+		}
+
+		bool has_input_selection()
+		{
+			return con && con->selection_start != con->selection_end;
+		}
+
+		std::size_t get_selection_begin()
+		{
+			return con ? std::min(con->selection_start, con->selection_end) : 0;
+		}
+
+		std::size_t get_selection_end()
+		{
+			return con ? std::max(con->selection_start, con->selection_end) : 0;
+		}
+
+		void clear_input_selection()
+		{
+			if (!con)
+			{
+				return;
+			}
+
+			con->selection_start = con->cursor;
+			con->selection_end = con->cursor;
+		}
+
+		void set_cursor_position(const std::size_t cursor)
+		{
+			if (!con)
+			{
+				return;
+			}
+
+			con->cursor = std::min(cursor, con->input.size());
+			clear_input_selection();
+		}
+
+		void select_entire_input()
+		{
+			if (!con)
+			{
+				return;
+			}
+
+			con->selection_start = 0;
+			con->selection_end = con->input.size();
+			con->cursor = con->input.size();
+		}
+
+		bool delete_input_selection()
+		{
+			if (!con || !has_input_selection())
+			{
+				return false;
+			}
+
+			const auto selection_begin = get_selection_begin();
+			const auto selection_end = get_selection_end();
+			con->input.erase(selection_begin, selection_end - selection_begin);
+			con->cursor = selection_begin;
+			clear_input_selection();
+			return true;
+		}
+
+		void copy_text_to_clipboard(std::string_view text)
+		{
+			if (!OpenClipboard(nullptr))
+			{
+				return;
+			}
+
+			if (!EmptyClipboard())
+			{
+				CloseClipboard();
+				return;
+			}
+
+			const auto allocation_size = text.size() + 1;
+			auto clipboard_memory = GlobalAlloc(GMEM_MOVEABLE, allocation_size);
+			if (!clipboard_memory)
+			{
+				CloseClipboard();
+				return;
+			}
+
+			auto* const clipboard_buffer = static_cast<char*>(GlobalLock(clipboard_memory));
+			if (!clipboard_buffer)
+			{
+				GlobalFree(clipboard_memory);
+				CloseClipboard();
+				return;
+			}
+
+			memcpy(clipboard_buffer, text.data(), text.size());
+			clipboard_buffer[text.size()] = '\0';
+			GlobalUnlock(clipboard_memory);
+
+			if (!SetClipboardData(CF_TEXT, clipboard_memory))
+			{
+				GlobalFree(clipboard_memory);
+			}
+
+			CloseClipboard();
+		}
+
 		void draw_input_box(const overlay_bounds& bounds, const int lines, float* color)
 		{
 			draw_box(
@@ -1325,18 +1444,30 @@ namespace game_console
 
 			float draw_x = bounds.x;
 			const auto prompt_prefix = build_console_prompt();
-			draw_text(prompt_prefix.c_str(), draw_x, bounds.y + bounds.font_height, color_qos, 1.0f);
+			const auto input_y = bounds.y + bounds.font_height;
+			draw_text(prompt_prefix.c_str(), draw_x, input_y, color_qos, 1.0f);
 			draw_x += static_cast<float>(game::R_TextWidth(prompt_prefix.c_str(), 0x7FFFFFFF, get_console_font())) + 6.0f;
 			const auto hint_x = draw_x;
+			const auto cursor_position = std::min(con->cursor, con->input.size());
 
-			std::string prompt = con->input;
+			if (has_input_selection())
+			{
+				const auto selection_begin = std::min(get_selection_begin(), con->input.size());
+				const auto selection_end = std::min(get_selection_end(), con->input.size());
+				const auto before_selection_width = get_text_width(std::string_view(con->input).substr(0, selection_begin));
+				const auto selection_width = get_text_width(std::string_view(con->input).substr(selection_begin, selection_end - selection_begin));
+				const auto selection_x = draw_x + before_selection_width;
+				draw_box(selection_x - 1.0f, bounds.y - 2.0f, selection_width + 2.0f, bounds.font_height + 6.0f, overlay_selected_color);
+			}
+
+			draw_text(con->input.c_str(), draw_x, input_y, color_white, 1.0f);
+
 			const auto blink_on = ((GetTickCount() / 500u) & 1u) == 0u;
 			if (blink_on)
 			{
-				prompt.insert(std::min(con->cursor, prompt.size()), "|");
+				const auto cursor_x = draw_x + get_text_width(std::string_view(con->input).substr(0, cursor_position));
+				draw_text("|", cursor_x, input_y, color_white, 1.0f);
 			}
-
-			draw_text(prompt.c_str(), draw_x, bounds.y + bounds.font_height, color_white, 1.0f);
 
 			if (con->output_visible)
 			{
@@ -1699,7 +1830,7 @@ namespace game_console
 			game::Cbuf_AddText(0, command.c_str());
 
 			con->input.clear();
-			con->cursor = 0;
+			set_cursor_position(0);
 			con->history_index = -1;
 			con->scroll_offset = 0;
 			clear_auto_complete();
@@ -1722,7 +1853,7 @@ namespace game_console
 			}
 
 			con->input = con->history[static_cast<std::size_t>(con->history_index)];
-			con->cursor = con->input.size();
+			set_cursor_position(con->input.size());
 			refresh_auto_complete();
 		}
 
@@ -1738,24 +1869,31 @@ namespace game_console
 			{
 				con->history_index = -1;
 				con->input.clear();
-				con->cursor = 0;
+				set_cursor_position(0);
 				return;
 			}
 
 			con->input = con->history[static_cast<std::size_t>(con->history_index)];
-			con->cursor = con->input.size();
+			set_cursor_position(con->input.size());
 			refresh_auto_complete();
 		}
 
 		void insert_character(const char ch)
 		{
-			if (!con || con->input.size() >= max_input_chars)
+			if (!con)
+			{
+				return;
+			}
+
+			delete_input_selection();
+			if (con->input.size() >= max_input_chars)
 			{
 				return;
 			}
 
 			con->input.insert(con->input.begin() + static_cast<std::ptrdiff_t>(con->cursor), ch);
 			++con->cursor;
+			clear_input_selection();
 			refresh_auto_complete();
 		}
 
@@ -1776,7 +1914,9 @@ namespace game_console
 				return;
 			}
 
-			const auto remaining = max_input_chars - con->input.size();
+			const auto selection_length = has_input_selection() ? (get_selection_end() - get_selection_begin()) : 0;
+			const auto current_length = con->input.size() - selection_length;
+			const auto remaining = max_input_chars - current_length;
 			if (remaining == 0)
 			{
 				return;
@@ -1787,8 +1927,10 @@ namespace game_console
 				text.resize(remaining);
 			}
 
+			delete_input_selection();
 			con->input.insert(con->cursor, text);
 			con->cursor += text.size();
+			clear_input_selection();
 			refresh_auto_complete();
 		}
 
@@ -1827,6 +1969,23 @@ namespace game_console
 
 			switch (vk)
 			{
+			case 'A':
+				select_entire_input();
+				refresh_auto_complete();
+				return true;
+			case 'C':
+				if (con && !con->input.empty())
+				{
+					if (has_input_selection())
+					{
+						copy_text_to_clipboard(std::string_view(con->input).substr(get_selection_begin(), get_selection_end() - get_selection_begin()));
+					}
+					else
+					{
+						copy_text_to_clipboard(con->input);
+					}
+				}
+				return true;
 			case 'V':
 				paste_from_clipboard();
 				return true;
@@ -1853,7 +2012,11 @@ namespace game_console
 				execute_input();
 				break;
 			case VK_BACK:
-				if (con && is_any_ctrl_down())
+				if (delete_input_selection())
+				{
+					refresh_auto_complete();
+				}
+				else if (con && is_any_ctrl_down())
 				{
 					clear_input_line();
 				}
@@ -1865,7 +2028,11 @@ namespace game_console
 				}
 				break;
 			case VK_DELETE:
-				if (con && con->cursor < con->input.size())
+				if (delete_input_selection())
+				{
+					refresh_auto_complete();
+				}
+				else if (con && con->cursor < con->input.size())
 				{
 					con->input.erase(con->input.begin() + static_cast<std::ptrdiff_t>(con->cursor));
 					refresh_auto_complete();
@@ -1874,28 +2041,28 @@ namespace game_console
 			case VK_LEFT:
 				if (con && con->cursor > 0)
 				{
-					--con->cursor;
+					set_cursor_position(con->cursor - 1);
 					refresh_auto_complete();
 				}
 				break;
 			case VK_RIGHT:
 				if (con && con->cursor < con->input.size())
 				{
-					++con->cursor;
+					set_cursor_position(con->cursor + 1);
 					refresh_auto_complete();
 				}
 				break;
 			case VK_HOME:
 				if (con)
 				{
-					con->cursor = 0;
+					set_cursor_position(0);
 					refresh_auto_complete();
 				}
 				break;
 			case VK_END:
 				if (con)
 				{
-					con->cursor = con->input.size();
+					set_cursor_position(con->input.size());
 					refresh_auto_complete();
 				}
 				break;
