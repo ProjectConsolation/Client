@@ -2,6 +2,7 @@
 #include "loader/component_loader.hpp"
 
 #include "console.hpp"
+#include "game_console.hpp"
 #include "scheduler.hpp"
 
 #include "game/game.hpp"

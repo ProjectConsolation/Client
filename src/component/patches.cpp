@@ -11,6 +11,10 @@
 #include <utils/string.hpp>
 #include <unordered_set>
 
+#ifndef VERSION_BUILD
+#define VERSION_BUILD "0"
+#endif
+
 #define FORCE_BORDERLESS // still needs a few things fixed - 3rd of march, does it still?
 //#define XLIVELESS
 
@@ -18,6 +22,54 @@ namespace patches
 {
 	namespace
 	{
+		std::string build_shortversion_string()
+		{
+			std::string version = VERSION_PRODUCT;
+
+#ifdef DEBUG
+			version += "-dbg";
+#elif defined(NDEBUG)
+			// release keeps the plain semantic version
+#else
+			version += "-nightly";
+#endif
+
+			return version;
+		}
+
+		std::string build_build_label()
+		{
+			std::string short_hash = GIT_HASH;
+			if (short_hash.size() > 7)
+			{
+				short_hash.resize(7);
+			}
+
+			if (GIT_DIRTY)
+			{
+				short_hash += "-dirty";
+			}
+
+			return short_hash;
+		}
+
+		std::string build_timestamp_label()
+		{
+			return std::string(__DATE__) + " " + __TIME__;
+		}
+
+		std::string build_version_string()
+		{
+			return "Project: Consolation "
+				+ build_shortversion_string()
+				+ " build "
+				+ VERSION_BUILD
+				+ " "
+				+ build_build_label()
+				+ " "
+				+ build_timestamp_label()
+				+ " win-x86";
+		}
 
 		int ret_zero()
 		{
@@ -91,6 +143,16 @@ namespace patches
 					domain.value.max = var->max;
 					domain.value.min = var->min;
 					flags = var->flags;
+				}
+			}
+
+			if (type == game::DVAR_TYPE_STRING)
+			{
+				auto* var = find_dvar(dvars::overrides::register_string_overrides, dvarName);
+				if (var)
+				{
+					value.string = var->value.c_str();
+					flags = static_cast<unsigned short>(var->flags);
 				}
 			}
 
@@ -252,6 +314,10 @@ namespace patches
 			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved); 
 			dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_string("version", build_version_string(),
+				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
+			dvars::overrides::register_string("shortversion", build_shortversion_string(),
+				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
 			//dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
 			//dvars::overrides::register_float("jump_height", 39.0, 0, 1000, game::dvar_flags::saved); //adjusted to 39 to allow cod4-like jump onto ledges
 
@@ -281,7 +347,7 @@ namespace patches
 #ifdef DEBUG
 				utils::hook::nop(game::game_offset(0x101AB211), 5);
 
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11A343C0)) = dvars::Dvar_RegisterBool("sv_cheats", 1, "[DEBUG]", game::dvar_flags::none);
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11A343C0)) = dvars::Dvar_RegisterBool("sv_cheats", 1, "Enable Cheats", game::dvar_flags::none);
 #endif
 
 

@@ -8,7 +8,18 @@ namespace game
 	WEAK symbol<void(int a1, int a2, int a3, char* Format, ...)> Com_Error{ game_offset(0x103F77B0) };
 	WEAK symbol<void(int channel, const char* fmt)> Conbuf_AppendText{ game_offset(0x102C3CE0) };
 	WEAK symbol<void(int key, int down, unsigned int time)> CL_KeyEvent{ game_offset(0x1031A680) };
+	WEAK symbol<void()> CL_DrawScreen{ game_offset(0x103119C0) };
 	WEAK symbol<void()> Con_DrawConsole{ game_offset(0x10311F70) };
+	WEAK symbol<void()> Con_DrawSolidConsole{ game_offset(0x10312260) };
+	WEAK symbol<void()> Con_KeyEvent{ game_offset(0x1031A270) };
+	WEAK symbol<void()> Con_SetConsoleRect{ game_offset(0x10313820) };
+	WEAK symbol<void()> Con_DrawVersionString{ game_offset(0x10314D30) };
+	WEAK symbol<void()> Con_DrawTextLimited{ game_offset(0x10314D90) };
+	WEAK symbol<void()> Con_DrawText{ game_offset(0x10314DF0) };
+	WEAK symbol<char(unsigned char* text)> ConDrawInput_DrawInputText{ game_offset(0x10315167) };
+	WEAK symbol<int(unsigned char* text)> ConDrawInput_GetInput{ game_offset(0x103154E3) };
+	WEAK symbol<void()> ConDrawInput_DrawInput{ game_offset(0x103175D0) };
+	WEAK symbol<Font_s*> con_font{ game_offset(0x1125C5B4) };
 
 	WEAK symbol<void(XAssetType type, void(*)(XAssetHeader, void*), const void* userdata, bool overrides)> DB_EnumXAssets_FastFile{ game_offset(0x103DFCA0) };
 	WEAK symbol<XAssetHeader(XAssetType type, const char* name)> DB_FindXAssetHeader{ game_offset(0x103E2260) };
@@ -25,6 +36,8 @@ namespace game
 		float* color, Material* material, int unknown)> R_AddCmdDrawStretchPic{ game_offset(0x103C0820) };
 	WEAK symbol<void(const char* text, int maxChars, Font_s* font, float x, float y, float xScale, float yScale, float rotation, const float* color, int style)>
 		R_AddCmdDrawText{ game_offset(0x103C02B0) };
+	WEAK symbol<int()> R_EndFrame{ game_offset(0x103C1050) };
+	WEAK symbol<int(float arg)> R_IssueDrawCmd{ game_offset(0x103BF970) };
 	WEAK symbol<int(const char* text, int maxChars, Font_s* font)> R_TextWidth{ game_offset(0x1037CFA0) };
 
 	WEAK symbol<int(const char* name)> Scr_LoadScript_{ game_offset(0x1022E7C0) };
@@ -72,5 +85,6 @@ namespace game
 	WEAK symbol<field_t> g_consoleField{ game_offset(0x112633F8) };
 	WEAK symbol<int> g_console_field_width{ game_offset(0x1055C48C) };
 	WEAK symbol<int> con_outputVisible{ game_offset(0x11A76356) };
+	WEAK symbol<unsigned char> con_fullConsoleVisible{ game_offset(0x11276FBC) };
 	WEAK symbol<HWND> main_window{ game_offset(0x113EFA8C) };
 }

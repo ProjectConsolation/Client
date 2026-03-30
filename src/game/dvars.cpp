@@ -145,6 +145,7 @@ namespace dvars
 		std::unordered_map<std::string, dvar_bool> register_bool_overrides;
 		std::unordered_map<std::string, dvar_int> register_int_overrides;
 		std::unordered_map<std::string, dvar_float> register_float_overrides;
+		std::unordered_map<std::string, dvar_string> register_string_overrides;
 
 		void register_bool(const std::string& name, const bool value, const unsigned int flags)
 		{
@@ -172,6 +173,14 @@ namespace dvars
 			values.max = max;
 			values.flags = flags;
 			register_float_overrides[name] = std::move(values);
+		}
+
+		void register_string(const std::string& name, const std::string& value, const unsigned int flags)
+		{
+			dvar_string values{};
+			values.value = value;
+			values.flags = flags;
+			register_string_overrides[name] = std::move(values);
 		}
 	}
 
@@ -249,6 +258,8 @@ namespace dvars
 	public:
 		void post_load() override
 		{
+			dvars::overrides::register_bool("monkeytoy", false, game::dvar_flags::none);
+
 			scheduler::once([]
 				{
 					dvars::Dvar_RegisterBool("r_borderless", 0, "Do not use a border in windowed mode", game::dvar_flags::none);

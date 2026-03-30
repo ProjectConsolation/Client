@@ -97,8 +97,10 @@ namespace dvars
 		extern std::unordered_map<std::string, dvar_bool> register_bool_overrides;
 		extern std::unordered_map<std::string, dvar_int> register_int_overrides;
 		extern std::unordered_map<std::string, dvar_float> register_float_overrides;
+		extern std::unordered_map<std::string, dvar_string> register_string_overrides;
 		void register_bool(const std::string& name, const bool value, const unsigned int flags);
 		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags);
 		void register_float(const std::string& name, const float value, const float min, const float max, const unsigned int flags);
+		void register_string(const std::string& name, const std::string& value, const unsigned int flags);
 	}
 }
