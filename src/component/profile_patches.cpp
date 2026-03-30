@@ -16,6 +16,7 @@ namespace profile_patches
 		const char shared_profile_config_dir_format[] = "players/";
 		const char default_profile_config_name[] = "config_mp.cfg";
 		const char custom_profile_config_name[] = "consolation_mp.cfg";
+		void print_profile_message(const char* fmt, ...);
 		const char* get_dvar_string(const std::size_t dvar_ptr_address)
 		{
 			const auto dvar = *reinterpret_cast<game::dvar_s**>(game::game_offset(dvar_ptr_address));
@@ -450,6 +451,7 @@ namespace profile_patches
 				dedupe_custom_profile_config();
 				print_runtime_config_path();
 			});
+
 		}
 	};
 }
