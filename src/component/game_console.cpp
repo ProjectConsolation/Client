@@ -701,7 +701,8 @@ namespace game_console
 
 				cmd = next;
 				std::string name = name_buffer;
-				if (is_reasonable_console_token(name) && seen_commands.insert(name).second)
+				const auto folded_name = to_lower(name);
+				if (is_reasonable_console_token(name) && seen_commands.insert(folded_name).second)
 				{
 					cached_command_names.emplace_back(std::move(name));
 				}
@@ -722,7 +723,8 @@ namespace game_console
 
 					dvar = next;
 					std::string name = name_buffer;
-					if (is_reasonable_console_token(name) && seen_dvars.insert(name).second)
+					const auto folded_name = to_lower(name);
+					if (is_reasonable_console_token(name) && seen_dvars.insert(folded_name).second)
 					{
 						cached_dvar_names.emplace_back(std::move(name));
 					}
@@ -773,6 +775,15 @@ namespace game_console
 
 			if (overlay_active)
 			{
+				con->history_index = -1;
+				con->scroll_offset = 0;
+				con->output_visible = false;
+				con->output_fullscreen = false;
+			}
+			else
+			{
+				con->input.clear();
+				con->cursor = 0;
 				con->history_index = -1;
 				con->scroll_offset = 0;
 				con->output_visible = false;
