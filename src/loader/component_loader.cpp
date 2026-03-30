@@ -16,6 +16,7 @@ bool component_loader::post_start()
 	{
 		for (const auto& component_ : get_components())
 		{
+			OutputDebugStringA((std::format("[component_loader] post_start {}\n", typeid(*component_).name())).c_str());
 			component_->post_start();
 		}
 	}
@@ -39,6 +40,7 @@ bool component_loader::post_load()
 	{
 		for (const auto& component_ : get_components())
 		{
+			OutputDebugStringA((std::format("[component_loader] post_load {}\n", typeid(*component_).name())).c_str());
 			component_->post_load();
 		}
 	}
