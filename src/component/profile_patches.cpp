@@ -7,6 +7,7 @@
 #include <utils/hook.hpp>
 #include <utils/io.hpp>
 #include <ShlObj.h>
+#include <unordered_map>
 
 namespace profile_patches
 {
@@ -136,6 +137,137 @@ namespace profile_patches
 			return data.find("seta ") != std::string::npos
 				|| data.find("set ") != std::string::npos
 				|| data.find("unbindall") != std::string::npos;
+		}
+
+		std::string to_lower(std::string value)
+		{
+			for (auto& ch : value)
+			{
+				ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+			}
+
+			return value;
+		}
+
+		std::string trim_copy(const std::string& value)
+		{
+			const auto first = value.find_first_not_of(" \t\r\n");
+			if (first == std::string::npos)
+			{
+				return {};
+			}
+
+			const auto last = value.find_last_not_of(" \t\r\n");
+			return value.substr(first, last - first + 1);
+		}
+
+		bool try_parse_dvar_assignment(const std::string& line, std::string* key)
+		{
+			const auto trimmed = trim_copy(line);
+			if (trimmed.empty())
+			{
+				return false;
+			}
+
+			std::size_t offset = 0;
+			if (trimmed.rfind("seta ", 0) == 0)
+			{
+				offset = 5;
+			}
+			else if (trimmed.rfind("set ", 0) == 0)
+			{
+				offset = 4;
+			}
+			else
+			{
+				return false;
+			}
+
+			const auto key_end = trimmed.find_first_of(" \t", offset);
+			if (key_end == std::string::npos || key_end <= offset)
+			{
+				return false;
+			}
+
+			*key = to_lower(trimmed.substr(offset, key_end - offset));
+			return !key->empty();
+		}
+
+		std::string dedupe_config_text(const std::string& data)
+		{
+			std::vector<std::string> lines{};
+			std::size_t start = 0;
+
+			while (start <= data.size())
+			{
+				const auto end = data.find('\n', start);
+				auto line = data.substr(start, end == std::string::npos ? std::string::npos : end - start);
+				if (!line.empty() && line.back() == '\r')
+				{
+					line.pop_back();
+				}
+
+				lines.push_back(std::move(line));
+
+				if (end == std::string::npos)
+				{
+					break;
+				}
+
+				start = end + 1;
+			}
+
+			std::unordered_map<std::string, std::size_t> last_assignment{};
+			for (std::size_t i = 0; i < lines.size(); ++i)
+			{
+				std::string key{};
+				if (try_parse_dvar_assignment(lines[i], &key))
+				{
+					last_assignment[key] = i;
+				}
+			}
+
+			std::string output{};
+			for (std::size_t i = 0; i < lines.size(); ++i)
+			{
+				std::string key{};
+				if (try_parse_dvar_assignment(lines[i], &key))
+				{
+					const auto last = last_assignment.find(key);
+					if (last != last_assignment.end() && last->second != i)
+					{
+						continue;
+					}
+				}
+
+				output.append(lines[i]);
+				output.append("\r\n");
+			}
+
+			return output;
+		}
+
+		void dedupe_custom_profile_config()
+		{
+			if (!should_use_custom_profile_config())
+			{
+				return;
+			}
+
+			const auto path = build_players_file_path(custom_profile_config_name);
+			std::string data{};
+			if (!utils::io::read_file(path, &data) || !looks_like_plaintext_config(data))
+			{
+				return;
+			}
+
+			const auto deduped = dedupe_config_text(data);
+			if (deduped == data)
+			{
+				return;
+			}
+
+			utils::io::write_file(path, deduped, false);
 		}
 
 		void decrypt_in_place(std::string& data)
@@ -287,6 +419,7 @@ namespace profile_patches
 			scheduler::loop([]()
 			{
 				apply_active_profile_config_name();
+				dedupe_custom_profile_config();
 			}, scheduler::main, 1s);
 
 			scheduler::once([]()
@@ -303,11 +436,18 @@ namespace profile_patches
 			{
 				convert_config();
 				apply_profile_config_save_encryption();
+				dedupe_custom_profile_config();
 				print_runtime_config_path();
 			});
 
 			command::add("profile_show_config_path", []()
 			{
+				print_runtime_config_path();
+			});
+
+			command::add("profile_dedupe_config", []()
+			{
+				dedupe_custom_profile_config();
 				print_runtime_config_path();
 			});
 		}
