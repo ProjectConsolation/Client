@@ -15,7 +15,6 @@
 #define VERSION_BUILD "0"
 #endif
 
-#define FORCE_BORDERLESS // still needs a few things fixed - 3rd of march, does it still?
 //#define XLIVELESS
 
 namespace patches
@@ -69,14 +68,98 @@ namespace patches
 				+ " win-x86";
 		}
 
-		int ret_zero()
-		{
-			return 0;
-		}
-
 		int ret_one(DWORD*, int)
 		{
 			return 1;
+		}
+
+		bool dvar_enabled(const char* name)
+		{
+			const auto* const dvar = game::Dvar_FindVar(name);
+			if (!dvar)
+			{
+				return false;
+			}
+
+			switch (dvar->type)
+			{
+			case game::dvar_type::boolean:
+				return dvar->current.enabled;
+			case game::dvar_type::integer:
+				return dvar->current.integer != 0;
+			case game::dvar_type::value:
+				return dvar->current.value != 0.0f;
+			case game::dvar_type::string:
+			case game::dvar_type::enumeration:
+				if (!dvar->current.string)
+				{
+					return false;
+				}
+
+				return dvar->current.string[0] != '\0'
+					&& strcmp(dvar->current.string, "0") != 0
+					&& _stricmp(dvar->current.string, "false") != 0
+					&& _stricmp(dvar->current.string, "off") != 0;
+			default:
+				return dvar->current.integer != 0;
+			}
+		}
+
+		void make_dvar_saved_and_writable(const char* name)
+		{
+			auto* const dvar = game::Dvar_FindVar(name);
+			if (!dvar)
+			{
+				return;
+			}
+
+			const auto writable_flags = static_cast<std::uint16_t>(dvar->flags)
+				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
+
+			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
+		}
+
+		void refresh_window_mode_style()
+		{
+			const auto hwnd = *game::main_window;
+			if (!hwnd || !IsWindow(hwnd))
+			{
+				return;
+			}
+
+			if (dvar_enabled("r_fullscreen"))
+			{
+				return;
+			}
+
+			LONG_PTR style = GetWindowLongPtrA(hwnd, GWL_STYLE);
+			LONG_PTR ex_style = GetWindowLongPtrA(hwnd, GWL_EXSTYLE);
+			LONG_PTR desired_style = style;
+			LONG_PTR desired_ex_style = ex_style;
+
+			if (dvar_enabled("r_borderless"))
+			{
+				desired_style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+				desired_style |= WS_POPUP;
+				desired_ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+				desired_ex_style |= WS_EX_APPWINDOW;
+			}
+			else
+			{
+				desired_style &= ~WS_POPUP;
+				desired_style |= WS_OVERLAPPED | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
+				desired_ex_style |= WS_EX_APPWINDOW | WS_EX_WINDOWEDGE;
+			}
+
+			if (desired_style == style && desired_ex_style == ex_style)
+			{
+				return;
+			}
+
+			SetWindowLongPtrA(hwnd, GWL_STYLE, desired_style);
+			SetWindowLongPtrA(hwnd, GWL_EXSTYLE, desired_ex_style);
+			SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 		}
 
 		HWND __stdcall create_window_ex_stub(DWORD ex_style, LPCSTR class_name, LPCSTR window_name, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE inst, LPVOID param)
@@ -84,6 +167,14 @@ namespace patches
 			if (!strcmp(class_name, "JB_MP"))
 			{
 				window_name = "Project: Consolation - Multiplayer";
+
+				if (!dvar_enabled("r_fullscreen") && dvar_enabled("r_borderless"))
+				{
+					style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+					style |= WS_POPUP;
+					ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+					ex_style |= WS_EX_APPWINDOW;
+				}
 			}
 			return CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
 		}
@@ -252,12 +343,6 @@ namespace patches
 
 			return v13;
 		}
-
-		utils::hook::detour dvar_registerlodscale_hook;
-		game::dvar_s* dvar_registerlodscale_stub()
-		{
-			return dvars::Dvar_RegisterFloat("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0, 0, 3, game::dvar_flags::saved);
-		}
 	}
 
 	class component final : public component_interface
@@ -265,25 +350,8 @@ namespace patches
 	public:
 		void post_load() override
 		{
-#ifdef FORCE_BORDERLESS
-			// force fullscreen to always be false
-			utils::hook::nop(game::game_offset(0x103BE1A2), 2);
-
-			// change window style to 0x90000000
-			utils::hook::set<std::uint8_t>(game::game_offset(0x103BD70C) + 3, 0x00);
-			utils::hook::set<std::uint8_t>(game::game_offset(0x103BD70C) + 4, 0x90);
-
-			/*scheduler::once([]()
-				{
-					r_borderless = game::Dvar_RegisterBool("r_borderless", true, 0, "Remove the windows border when in windowed mode.");
-				}, scheduler::main);*/
-
-#endif
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
-
-			// un-cap fps
-			utils::hook::nop(game::game_offset(0x103F696A), 0x01);
 
 			// nop call to Com_Printf for "SCALEFORM: %s" messages
 			utils::hook::nop(game::game_offset(0x1000230F), 0x05); // TODO: Dvar toggle? Could be useful info
@@ -292,6 +360,9 @@ namespace patches
 
 			// keep the registered version dvar value instead of letting stock init overwrite it
 			utils::hook::nop(game::game_offset(0x103F9E53), 0x05);
+
+			// stop the video restart path from forcibly setting r_fullscreen back to 1
+			utils::hook::nop(game::game_offset(0x103BE16D), 0x05);
 
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
@@ -310,6 +381,8 @@ namespace patches
 #endif
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
+			dvars::overrides::register_bool("r_fullscreen", 1, game::dvar_flags::saved);
+			dvars::overrides::register_int("com_maxfps", 60, 0, 1000, game::dvar_flags::saved);
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved); //cod4
 			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
@@ -348,6 +421,10 @@ namespace patches
 				utils::hook::nop(game::game_offset(0x103B2260), 5);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054944)) = dvars::Dvar_RegisterInt("developer", "Enable development environment", 0, 0, 2, game::dvar_flags::none);
 
+				make_dvar_saved_and_writable("r_fullscreen");
+				make_dvar_saved_and_writable("com_maxfps");
+				refresh_window_mode_style();
+
 				//debug block sv_cheats
 #ifdef DEBUG
 				utils::hook::nop(game::game_offset(0x101AB211), 5);
@@ -361,6 +438,13 @@ namespace patches
 
 				//dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
 			}, scheduler::main);
+
+			scheduler::loop([]
+			{
+				make_dvar_saved_and_writable("r_fullscreen");
+				make_dvar_saved_and_writable("com_maxfps");
+				refresh_window_mode_style();
+			}, scheduler::main, 250ms);
 		}
 	};
 }
