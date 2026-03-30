@@ -315,6 +315,7 @@ namespace patches
 			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved); 
 			dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
+			dvars::overrides::register_float("input_viewSensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved);
 			dvars::overrides::register_string("version", build_version_string(),
 				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
 			dvars::overrides::register_string("shortversion", build_shortversion_string(),
@@ -353,7 +354,6 @@ namespace patches
 
 
 				//dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
-				//dvars::overrides::register_float("input_viewSensitivity", 1, 0.01, 30, game::dvar_flags::saved); //- idk what to do, loading a profile resets this and dvar never saves
 			}, scheduler::main);
 		}
 	};
