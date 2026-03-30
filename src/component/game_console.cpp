@@ -200,8 +200,6 @@ namespace game_console
 			}
 
 			version += " build ";
-			version += VERSION_BUILD;
-			version += " ";
 			version += short_hash;
 
 			if (GIT_DIRTY)
