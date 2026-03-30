@@ -340,6 +340,9 @@ namespace patches
 				utils::hook::nop(game::game_offset(0x101DB65A), 5);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x118EE1C0)) = dvars::Dvar_RegisterFloat("jump_height", "The maximum height of a player's jump", 41.f, 0, 1000.f, game::dvar_flags::saved);
 
+				utils::hook::nop(game::game_offset(0x10321221), 5);
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11260BD0)) = dvars::Dvar_RegisterFloat("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved);
+
 				//dvars::Dvar_RegisterFloat("cg_fovScale", "Scale applied to the field of view", 1.0, 0, 2.0, game::dvar_flags::saved); //doesnt save
 
 				utils::hook::nop(game::game_offset(0x103B2260), 5);
@@ -348,8 +351,11 @@ namespace patches
 				//debug block sv_cheats
 #ifdef DEBUG
 				utils::hook::nop(game::game_offset(0x101AB211), 5);
+				utils::hook::nop(game::game_offset(0x10245A2A), 5);
 
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11A343C0)) = dvars::Dvar_RegisterBool("sv_cheats", 1, "Enable Cheats", game::dvar_flags::none);
+				auto* const sv_cheats = dvars::Dvar_RegisterBool("sv_cheats", 1, "Enable Cheats", game::dvar_flags::none);
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11A343C0)) = sv_cheats;
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x1149FCD8)) = sv_cheats;
 #endif
 
 
