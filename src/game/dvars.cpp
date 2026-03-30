@@ -226,7 +226,7 @@ namespace dvars
 	game::dvar_s* Dvar_RegisterInt(const char* dvar_name, const char* description, int value_default, int min, int max, std::uint16_t flags)
 	{
 		game::DvarValue value{};
-		value.value = value_default;
+		value.integer = value_default;
 
 		game::DvarLimits domain{};
 		domain.integer.max = max;
