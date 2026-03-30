@@ -18,6 +18,7 @@ namespace bots
 		constexpr int PS_ORIGIN_OFFSET = 0x20;
 		constexpr int PS_MAXHEALTH_OFFSET = 0x32C4;
 		constexpr int CLIENT_ENTITYPTR_OFF = 0x2128C;
+		constexpr int CLIENT_LAST_USERCMD_OFF = 0x20E9C;
 		constexpr int CLIENT_USERINFO_OFF = 1604;
 		constexpr int SNAPINFO_STRIDE = 13504;
 		constexpr int SNAPINFO_DEAD_OFF = 0x3228;
@@ -25,9 +26,12 @@ namespace bots
 		constexpr int ENTITYNUM_NONE = 1023;
 		constexpr float IW_RAD_TO_ANGLE = 10430.378f;
 		constexpr int MAX_CLIENTS = 18;
-		constexpr int TARGET_MEMORY_MS = 2500;
-		constexpr int SEARCH_UPDATE_MS = 1500;
+		constexpr int TARGET_MEMORY_MS = 5000;
+		constexpr int SEARCH_UPDATE_MS = 900;
+		constexpr int STUCK_REPATH_MS = 1400;
 		constexpr int AIM_SETTLE_THRESHOLD = 1400;
+		constexpr int FIRE_VISIBILITY_THRESHOLD = 3;
+		constexpr int FIRE_ALIGNMENT_THRESHOLD = 1200;
 		constexpr float BOT_EYE_HEIGHT = 56.0f;
 		constexpr float TARGET_EYE_HEIGHT = 48.0f;
 		constexpr float TARGET_TORSO_HEIGHT = 26.0f;
@@ -40,6 +44,7 @@ namespace bots
 		constexpr float CROUCH_RANGE = 384.0f;
 		constexpr float SPRINT_RANGE = 700.0f;
 		constexpr float FIRE_RANGE = 1400.0f;
+		constexpr float STUCK_DIST_EPSILON = 24.0f;
 
 		inline game::entity_t* g_entities()
 		{
@@ -126,6 +131,35 @@ namespace bots
 			return reinterpret_cast<const char*>(client_at(idx) + CLIENT_USERINFO_OFF);
 		}
 
+		inline game::usercmd_t* client_last_usercmd(int idx)
+		{
+			return reinterpret_cast<game::usercmd_t*>(client_at(idx) + CLIENT_LAST_USERCMD_OFF);
+		}
+
+		bool client_recently_fired(int idx, int command_time)
+		{
+			__try
+			{
+				auto* const cmd = client_last_usercmd(idx);
+				if (!cmd)
+				{
+					return false;
+				}
+
+				if ((cmd->buttons & game::BUTTON_ATTACK) == 0)
+				{
+					return false;
+				}
+
+				const int age = command_time - cmd->serverTime;
+				return age >= 0 && age <= 1200;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+		}
+
 		std::string get_info_value(const char* info, const char* key)
 		{
 			if (!info || !key)
@@ -180,12 +214,18 @@ namespace bots
 			}
 
 			const auto lower = utils::string::to_lower(value);
-			if (lower == "axis" || lower == "1")
+			if (lower == "axis" || lower == "1"
+				|| lower.find("axis") != std::string::npos
+				|| lower.find("cell") != std::string::npos
+				|| lower.find("enemy") != std::string::npos)
 			{
 				return game::bot_team::axis;
 			}
 
-			if (lower == "allies" || lower == "2")
+			if (lower == "allies" || lower == "2"
+				|| lower.find("allies") != std::string::npos
+				|| lower.find("mi6") != std::string::npos
+				|| lower.find("friendly") != std::string::npos)
 			{
 				return game::bot_team::allies;
 			}
@@ -235,6 +275,11 @@ namespace bots
 			const auto bot_team = client_team(bot_idx);
 			const auto target_team = client_team(target_idx);
 
+			if (bot_team == game::bot_team::unknown && target_team == game::bot_team::unknown)
+			{
+				return false;
+			}
+
 			if (bot_team == game::bot_team::unknown || bot_team == game::bot_team::free)
 			{
 				return target_team != game::bot_team::spectator;
@@ -257,6 +302,8 @@ namespace bots
 		static int s_last_cmd_pitch[MAX_CLIENTS] = {};
 		static int s_search_yaw[MAX_CLIENTS] = {};
 		static int s_next_search_time[MAX_CLIENTS] = {};
+		static int s_last_progress_time[MAX_CLIENTS] = {};
+		static float s_last_progress_origin[MAX_CLIENTS][3] = {};
 		static int s_last_applied_bot_max_health = 0;
 
 		int bot_state_index(int client_idx)
@@ -295,6 +342,10 @@ namespace bots
 			s_last_seen_origin[idx][2] = 0.0f;
 			s_last_cmd_yaw[idx] = 0;
 			s_last_cmd_pitch[idx] = 0;
+			s_last_progress_time[idx] = 0;
+			s_last_progress_origin[idx][0] = 0.0f;
+			s_last_progress_origin[idx][1] = 0.0f;
+			s_last_progress_origin[idx][2] = 0.0f;
 		}
 
 		void get_eye_position(const game::playerState_t* ps, float eye_height, float* out)
@@ -497,7 +548,7 @@ namespace bots
 			if (command_time >= s_next_search_time[state_idx])
 			{
 				const int phase = command_time / SEARCH_UPDATE_MS;
-				const int degrees = ((phase * 57) + bot_idx * 71) % 360;
+				const int degrees = ((phase * 45) + bot_idx * 35) % 360;
 				s_search_yaw[state_idx] = static_cast<int>((degrees * (32768.0f / 180.0f)) - 32768.0f);
 				s_next_search_time[state_idx] = command_time + SEARCH_UPDATE_MS;
 			}
@@ -506,8 +557,40 @@ namespace bots
 			cmd.angles[0] = 0;
 			cmd.angles[2] = 0;
 			cmd.forwardmove = 127;
-			cmd.rightmove = ((command_time / 500) + bot_idx) & 1 ? 24 : -24;
+			cmd.rightmove = 0;
 			cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_SPRINT);
+		}
+
+		bool bot_is_stuck(int bot_idx, const game::playerState_t* bot_ps)
+		{
+			const int state_idx = bot_state_index(bot_idx);
+			if (state_idx < 0 || !bot_ps)
+			{
+				return false;
+			}
+
+			float current_origin[3] =
+			{
+				ps_origin(bot_ps, 0),
+				ps_origin(bot_ps, 1),
+				ps_origin(bot_ps, 2)
+			};
+
+			if (s_last_progress_time[state_idx] == 0)
+			{
+				copy_vec3(s_last_progress_origin[state_idx], current_origin);
+				s_last_progress_time[state_idx] = bot_ps->commandTime;
+				return false;
+			}
+
+			if (distance_squared_3d(s_last_progress_origin[state_idx], current_origin) > (STUCK_DIST_EPSILON * STUCK_DIST_EPSILON))
+			{
+				copy_vec3(s_last_progress_origin[state_idx], current_origin);
+				s_last_progress_time[state_idx] = bot_ps->commandTime;
+				return false;
+			}
+
+			return (bot_ps->commandTime - s_last_progress_time[state_idx]) >= STUCK_REPATH_MS;
 		}
 
 		void call_sv_client_think_real(std::uintptr_t client, game::usercmd_t* cmd)
@@ -529,9 +612,9 @@ namespace bots
 				: 100;
 		}
 
-		void sanitize_bot_health(int client_idx, bool force_full_health)
+		void sanitize_bot_health(int client_idx, bool force_full_health, bool assume_bot = false)
 		{
-			if (client_is_real_player(client_idx))
+			if (!assume_bot && client_is_real_player(client_idx))
 			{
 				return;
 			}
@@ -649,7 +732,7 @@ namespace bots
 			sync_bot_health_from_dvar();
 
 			const int bot_idx = static_cast<int>((client - clients_base) / CLIENT_STRIDE);
-			sanitize_bot_health(bot_idx, false);
+			sanitize_bot_health(bot_idx, false, true);
 
 			game::usercmd_t cmd = {};
 
@@ -680,6 +763,7 @@ namespace bots
 
 				if (bot_ps)
 				{
+					cmd.serverTime = bot_ps->commandTime;
 					get_eye_position(bot_ps, BOT_EYE_HEIGHT, bot_eye);
 
 					for (int i = 0; i < maxcl; ++i)
@@ -725,6 +809,11 @@ namespace bots
 								score += 50000.0f;
 							}
 
+							if (client_recently_fired(i, bot_ps->commandTime))
+							{
+								score += 85000.0f;
+							}
+
 							if (score > best_hidden_score)
 							{
 								best_hidden_score = score;
@@ -759,6 +848,13 @@ namespace bots
 					{
 						target_idx = best_hidden_idx;
 						s_tracked_target[state_idx] = target_idx;
+
+						auto* const hidden_ps = entity_ps(entity_at(target_idx));
+						if (hidden_ps)
+						{
+							get_eye_position(hidden_ps, TARGET_EYE_HEIGHT, s_last_seen_origin[state_idx]);
+							s_last_visible_time[state_idx] = bot_ps->commandTime;
+						}
 					}
 					else
 					{
@@ -800,7 +896,38 @@ namespace bots
 					copy_vec3(move_goal, goal);
 
 					bool moving_to_cover = false;
-					if (target_visible && best_visibility >= 0.4f && distance_squared_3d(bot_eye, goal) <= FIRE_RANGE * FIRE_RANGE)
+					const int bot_health = bot_ent ? bot_ent->health : get_bot_max_health();
+
+					const float dx = goal[0] - bot_eye[0];
+					const float dy = goal[1] - bot_eye[1];
+					const float aim_z = target_visible
+						? (ps_origin(tgt_ps, 2) + TARGET_TORSO_HEIGHT)
+						: goal[2];
+					const float dz = aim_z - bot_eye[2];
+					const float hdist = vector_length_2d(dx, dy);
+					const float dist = vector_length_3d(dx, dy, dz);
+					const float move_dx = move_goal[0] - bot_eye[0];
+					const float move_dy = move_goal[1] - bot_eye[1];
+					const bool should_seek_cover = target_visible
+						&& best_visibility >= 0.4f
+						&& dist <= FIRE_RANGE
+						&& bot_health <= std::max(35, get_bot_max_health() / 2);
+					const int behavior_tick = bot_ps->commandTime / 250;
+					const bool stuck = bot_is_stuck(bot_idx, bot_ps);
+					const int desired_yaw = vector_to_yaw_units(dx, dy);
+					const int desired_pitch = std::clamp(static_cast<int>(std::atan2f(-dz, hdist) * IW_RAD_TO_ANGLE), -1400, 1400);
+					int move_yaw = vector_to_yaw_units(move_dx, move_dy);
+					const int yaw_delta = state_idx >= 0 ? std::abs(normalize_angle_units(desired_yaw - s_last_cmd_yaw[state_idx])) : 0;
+					const int pitch_delta = state_idx >= 0 ? std::abs(normalize_angle_units(desired_pitch - s_last_cmd_pitch[state_idx])) : 0;
+					const bool aim_settled = yaw_delta <= AIM_SETTLE_THRESHOLD && pitch_delta <= AIM_SETTLE_THRESHOLD;
+
+					if (stuck)
+					{
+						move_yaw = normalize_angle_units(move_yaw + ((behavior_tick + bot_idx) & 1 ? 8192 : -8192));
+						moving_to_cover = false;
+					}
+
+					if (should_seek_cover)
 					{
 						float cover_goal[3] = {};
 						if (find_cover_goal(bot_eye, bot_idx, enemy_eye, target_idx, cover_goal))
@@ -809,21 +936,6 @@ namespace bots
 							moving_to_cover = distance_squared_3d(bot_eye, cover_goal) > (COVER_COMMIT_RANGE * COVER_COMMIT_RANGE);
 						}
 					}
-
-					const float dx = goal[0] - bot_eye[0];
-					const float dy = goal[1] - bot_eye[1];
-					const float dz = goal[2] - bot_eye[2];
-					const float hdist = vector_length_2d(dx, dy);
-					const float dist = vector_length_3d(dx, dy, dz);
-					const float move_dx = move_goal[0] - bot_eye[0];
-					const float move_dy = move_goal[1] - bot_eye[1];
-					const int behavior_tick = bot_ps->commandTime / 250;
-					const int desired_yaw = vector_to_yaw_units(dx, dy);
-					const int desired_pitch = static_cast<int>(std::atan2f(-dz, hdist) * IW_RAD_TO_ANGLE);
-					const int move_yaw = vector_to_yaw_units(move_dx, move_dy);
-					const int yaw_delta = state_idx >= 0 ? std::abs(normalize_angle_units(desired_yaw - s_last_cmd_yaw[state_idx])) : 0;
-					const int pitch_delta = state_idx >= 0 ? std::abs(normalize_angle_units(desired_pitch - s_last_cmd_pitch[state_idx])) : 0;
-					const bool aim_settled = yaw_delta <= AIM_SETTLE_THRESHOLD && pitch_delta <= AIM_SETTLE_THRESHOLD;
 
 					cmd.angles[1] = desired_yaw;
 					cmd.angles[0] = desired_pitch;
@@ -843,24 +955,48 @@ namespace bots
 						target_visible ? static_cast<std::int8_t>(48) : static_cast<std::int8_t>(32)
 					);
 
-					if (target_visible && !moving_to_cover && dist < FIRE_RANGE)
+					if (stuck)
 					{
-						cmd.rightmove = (behavior_tick + bot_idx) & 1 ? 32 : -32;
+						cmd.forwardmove = ((behavior_tick + bot_idx) & 1) ? 127 : static_cast<std::int8_t>(-96);
+						cmd.rightmove = ((behavior_tick + bot_idx) & 2) ? 96 : -96;
+						if (bot_ps->groundEntityNum != ENTITYNUM_NONE)
+						{
+							cmd.upmove = 127;
+						}
+						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_SPRINT);
 					}
 
-					if (moving_to_cover || !target_visible || dist > SPRINT_RANGE)
+					if (target_visible && !moving_to_cover && dist < FIRE_RANGE && dist > 192.0f)
+					{
+						const int strafe_phase = (behavior_tick + bot_idx) % 4;
+						if (strafe_phase == 0)
+						{
+							cmd.rightmove = 24;
+						}
+						else if (strafe_phase == 2)
+						{
+							cmd.rightmove = -24;
+						}
+						else
+						{
+							cmd.rightmove = 0;
+						}
+					}
+
+					if (!target_visible || dist > SPRINT_RANGE)
 					{
 						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_SPRINT);
 					}
 
-					if ((moving_to_cover && best_visibility >= 0.4f) || (target_visible && dist < CROUCH_RANGE && ((behavior_tick + bot_idx) % 3 == 0)))
+					if (!stuck && target_visible && dist < CROUCH_RANGE && dist > 160.0f && ((behavior_tick + bot_idx) % 5 == 0))
 					{
 						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_CROUCH);
 					}
 
-					if (target_visible && best_visibility >= 0.4f && dist <= MELEE_RANGE)
+					if (target_visible && best_visibility > 0.0f && dist <= (MELEE_RANGE * 1.5f))
 					{
 						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_MELEE_BREATH);
+						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
 						cmd.forwardmove = 127;
 					}
 					else
@@ -871,14 +1007,27 @@ namespace bots
 						}
 
 						const auto* const atk = sv_bots_press_attack_dvar();
-						if (atk && atk->current.enabled && target_visible && best_visibility >= 0.4f && aim_settled && dist <= FIRE_RANGE && !moving_to_cover)
+						if (atk
+							&& atk->current.enabled
+							&& target_visible
+							&& best_visibility > 0.0f
+							&& dist <= FIRE_RANGE
+							&& (aim_settled
+								|| yaw_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)
+								|| pitch_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)))
 						{
-							if (state_idx >= 0)
+							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
+
+							if (dist > 224.0f)
 							{
-								s_attack_phase[state_idx] = !s_attack_phase[state_idx];
-								if (s_attack_phase[state_idx])
+								cmd.forwardmove = std::max<std::int8_t>(cmd.forwardmove, 48);
+								if (!stuck && ((behavior_tick + bot_idx) & 1) == 0)
 								{
-									cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
+									cmd.rightmove = 32;
+								}
+								else if (!stuck)
+								{
+									cmd.rightmove = -32;
 								}
 							}
 						}
@@ -900,6 +1049,7 @@ namespace bots
 
 			*reinterpret_cast<int*>(client + 0x08) = *reinterpret_cast<int*>(client + 0x10) - 1;
 			call_sv_client_think_real(client, &cmd);
+			sanitize_bot_health(bot_idx, false, true);
 		}
 	}
 
@@ -925,6 +1075,8 @@ namespace bots
 					std::memset(s_last_cmd_pitch, 0, sizeof(s_last_cmd_pitch));
 					std::memset(s_search_yaw, 0, sizeof(s_search_yaw));
 					std::memset(s_next_search_time, 0, sizeof(s_next_search_time));
+					std::memset(s_last_progress_time, 0, sizeof(s_last_progress_time));
+					std::memset(s_last_progress_origin, 0, sizeof(s_last_progress_origin));
 					s_last_applied_bot_max_health = 0;
 				});
 		}
