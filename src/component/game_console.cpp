@@ -471,12 +471,87 @@ namespace game_console
 
 		bool try_copy_c_string(const char* text, std::string& out)
 		{
-			if (!text || !*text)
+			out.clear();
+
+			char buffer[512]{};
+			__try
+			{
+				if (!text || !*text)
+				{
+					return false;
+				}
+
+				std::size_t index = 0;
+				for (; index + 1 < sizeof(buffer); ++index)
+				{
+					const auto ch = text[index];
+					buffer[index] = ch;
+					if (ch == '\0')
+					{
+						break;
+					}
+				}
+
+				buffer[sizeof(buffer) - 1] = '\0';
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
 			{
 				return false;
 			}
 
-			out = text;
+			if (!buffer[0])
+			{
+				return false;
+			}
+
+			out = buffer;
+			return true;
+		}
+
+		bool try_get_dvar_value_ptr(game::dvar_s* dvar, const game::DvarValue value, const char** value_out)
+		{
+			if (value_out)
+			{
+				*value_out = nullptr;
+			}
+
+			if (!dvar)
+			{
+				return false;
+			}
+
+			__try
+			{
+				if (value_out)
+				{
+					*value_out = dvars::Dvar_ValueToString(dvar, value);
+				}
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+
+			return value_out && *value_out != nullptr;
+		}
+
+		bool try_copy_dvar_domain(game::dvar_s* dvar, game::dvar_type& type_out, game::DvarLimits& domain_out)
+		{
+			if (!dvar)
+			{
+				return false;
+			}
+
+			__try
+			{
+				type_out = dvar->type;
+				domain_out = dvar->domain;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+
 			return true;
 		}
 
@@ -1291,10 +1366,41 @@ namespace game_console
 			{
 				auto* const dvar = game::Dvar_FindVar(con->auto_complete_matches[0].c_str());
 				char description_buffer[256]{};
+				std::string current_value{};
+				std::string default_value{};
+				std::string domain{};
+				if (dvar)
+				{
+					const char* current_value_ptr = nullptr;
+					const char* default_value_ptr = nullptr;
+					if (try_get_dvar_value_ptr(dvar, dvar->current, &current_value_ptr))
+					{
+						std::string raw_value{};
+						if (try_copy_c_string(current_value_ptr, raw_value))
+						{
+							current_value = sanitize_display_text(raw_value);
+						}
+					}
+
+					if (try_get_dvar_value_ptr(dvar, dvar->reset, &default_value_ptr))
+					{
+						std::string raw_value{};
+						if (try_copy_c_string(default_value_ptr, raw_value))
+						{
+							default_value = sanitize_display_text(raw_value);
+						}
+					}
+
+					game::dvar_type domain_type{};
+					game::DvarLimits domain_limits{};
+					if (try_copy_dvar_domain(dvar, domain_type, domain_limits))
+					{
+						domain = sanitize_display_text(dvars::dvar_get_domain(domain_type, domain_limits));
+					}
+				}
 				const auto has_description = dvar
 					&& safe_read_dvar_description(dvar, description_buffer, sizeof(description_buffer))
 					&& !sanitize_display_text(description_buffer).empty();
-				const auto domain = dvar ? sanitize_display_text(dvars::dvar_get_domain(dvar->type, dvar->domain)) : std::string{};
 				const auto has_domain = !domain.empty();
 				const auto line_count = dvar ? 2 : 1;
 				draw_hint_box(bounds, hint_x, line_count, color_hint_box);
@@ -1303,9 +1409,9 @@ namespace game_console
 				if (dvar)
 				{
 					const auto offset = std::max(96.0f, (bounds.screen_max[0] - hint_x) / 2.6f);
-					draw_hint_text(bounds, hint_x, 0, dvars::Dvar_ValueToString(dvar, dvar->current), color_dvar_value, offset);
+					draw_hint_text(bounds, hint_x, 0, current_value.empty() ? "<unavailable>" : current_value.c_str(), color_dvar_value, offset);
 					draw_hint_text(bounds, hint_x, 1, "  default", color_dvar_inactive);
-					draw_hint_text(bounds, hint_x, 1, dvars::Dvar_ValueToString(dvar, dvar->reset), color_dvar_inactive, offset);
+					draw_hint_text(bounds, hint_x, 1, default_value.empty() ? "<unavailable>" : default_value.c_str(), color_dvar_inactive, offset);
 
 					if (has_description || has_domain)
 					{
@@ -1339,7 +1445,17 @@ namespace game_console
 				draw_hint_text(bounds, hint_x, static_cast<int>(i), con->auto_complete_matches[i].c_str(), dvar ? color_dvar_match : color_cmd_match);
 				if (dvar)
 				{
-					draw_hint_text(bounds, hint_x, static_cast<int>(i), dvars::Dvar_ValueToString(dvar, dvar->current), color_dvar_value, offset);
+					std::string current_value{};
+					const char* current_value_ptr = nullptr;
+					if (try_get_dvar_value_ptr(dvar, dvar->current, &current_value_ptr))
+					{
+						std::string raw_value{};
+						if (try_copy_c_string(current_value_ptr, raw_value))
+						{
+							current_value = sanitize_display_text(raw_value);
+						}
+					}
+					draw_hint_text(bounds, hint_x, static_cast<int>(i), current_value.empty() ? "<unavailable>" : current_value.c_str(), color_dvar_value, offset);
 				}
 			}
 		}

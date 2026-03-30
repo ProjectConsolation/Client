@@ -149,13 +149,16 @@ namespace patches
 			{
 				window_name = "Project: Consolation - Multiplayer";
 
-				if (!dvar_enabled("r_fullscreen"))
+				const bool fullscreen = dvar_enabled("r_fullscreen");
+				const bool borderless = dvar_enabled("r_borderless");
+
+				if (!fullscreen)
 				{
 					x = dvar_int_value("vid_xpos", x);
 					y = dvar_int_value("vid_ypos", y);
 				}
 
-				if (!dvar_enabled("r_fullscreen") && dvar_enabled("r_borderless"))
+				if (!fullscreen && borderless)
 				{
 					style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
 					style |= WS_POPUP;
@@ -186,6 +189,11 @@ namespace patches
 		utils::hook::detour dvar_registernew_hook;
 		game::dvar_s* Dvar_RegisterNew_Stub(const char* dvarName, game::DvarType type, unsigned short flags, char* desc, int unk, game::DvarValue value, game::DvarLimits domain)
 		{
+			if (type == game::DVAR_TYPE_FLOAT_2 && !_stricmp(dvarName, "cg_debugInfoCornerOffset"))
+			{
+				value.vector[0] = 0.0f;
+				value.vector[1] = 0.0f;
+			}
 
 			if (type == game::DVAR_TYPE_BOOL)
 			{
@@ -348,6 +356,9 @@ namespace patches
 			// keep the registered version dvar value instead of letting stock init overwrite it
 			utils::hook::nop(game::game_offset(0x103F9E53), 0x05);
 
+			// stop an engine UI path from intentionally breaking into the debugger
+			utils::hook::nop(game::game_offset(0x1027D3C4), 0x05);
+
 			// stop the video restart path from forcibly setting r_fullscreen back to 1
 			utils::hook::nop(game::game_offset(0x103BE16D), 0x05);
 
@@ -412,6 +423,7 @@ namespace patches
 				make_dvar_saved_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
+				make_dvar_saved_and_writable("sv_cheats");
 
 				//debug block sv_cheats
 #ifdef DEBUG
@@ -433,6 +445,7 @@ namespace patches
 				make_dvar_saved_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
+				make_dvar_saved_and_writable("sv_cheats");
 			}, scheduler::main, 250ms);
 		}
 	};

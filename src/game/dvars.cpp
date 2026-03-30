@@ -235,6 +235,16 @@ namespace dvars
 		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_INT, flags, description, 0, value, domain);
 	}
 
+	game::dvar_s* Dvar_RegisterString(const char* dvar_name, const char* value_default, const char* description, std::uint16_t flags)
+	{
+		game::DvarValue value{};
+		value.string = value_default;
+
+		game::DvarLimits domain{};
+		console::debug("registered dvar '%s'\n", dvar_name);
+		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_STRING, flags, description, 0, value, domain);
+	}
+
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value)
 	{
 		unsigned int _func = game::game_offset(0x10274F80);
