@@ -1,3 +1,0 @@
-- [Home](./Home.md)
-- [Extended Features](./Extended-Features.md)
-- [Console](./Console.md)
