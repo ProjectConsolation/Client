@@ -103,6 +103,7 @@ namespace game_console
 		void draw_console_overlay();
 		void insert_character(char ch);
 		void insert_text(std::string text);
+		void set_cursor_position(std::size_t cursor);
 		void refresh_auto_complete();
 		void clear_dead_key_state();
 		void cl_key_event_stub();
