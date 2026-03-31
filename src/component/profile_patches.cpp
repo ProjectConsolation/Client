@@ -8,15 +8,17 @@
 #include <utils/io.hpp>
 #include <ShlObj.h>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace profile_patches
 {
 	namespace
 	{
-		const char shared_profile_config_dir_format[] = "players/";
 		const char default_profile_config_name[] = "config_mp.cfg";
 		const char custom_profile_config_name[] = "consolation_mp.cfg";
+		const char decrypted_profile_config_name[] = "consolation_mp_decrypted.cfg";
 		void print_profile_message(const char* fmt, ...);
+		std::string build_profile_file_path(const char* filename);
 		const char* get_dvar_string(const std::size_t dvar_ptr_address)
 		{
 			const auto dvar = *reinterpret_cast<game::dvar_s**>(game::game_offset(dvar_ptr_address));
@@ -76,24 +78,30 @@ namespace profile_patches
 			return join_path(get_players_directory(), filename);
 		}
 
-		bool should_use_custom_profile_config()
+		std::string build_legacy_shared_config_path()
 		{
-			return utils::io::file_exists(build_players_file_path(custom_profile_config_name));
+			return build_players_file_path(custom_profile_config_name);
 		}
 
-		const char* get_active_profile_config_name()
+		bool should_use_custom_profile_config()
 		{
-			return should_use_custom_profile_config() ? custom_profile_config_name : default_profile_config_name;
+			return utils::io::file_exists(build_profile_file_path(custom_profile_config_name));
 		}
 
 		std::string build_runtime_config_path()
 		{
-			return build_players_file_path(get_active_profile_config_name());
+			return build_profile_file_path(custom_profile_config_name);
 		}
 
 		std::string build_decrypted_output_path()
 		{
-			return build_players_file_path("consolation_mp_decrypted.cfg");
+			const auto path = build_profile_file_path(decrypted_profile_config_name);
+			if (!path.empty())
+			{
+				return path;
+			}
+
+			return build_players_file_path(decrypted_profile_config_name);
 		}
 
 		std::string build_profile_file_path(const char* filename)
@@ -111,6 +119,11 @@ namespace profile_patches
 		std::string build_profile_config_path()
 		{
 			return build_profile_file_path("config_mp.cfg");
+		}
+
+		std::string build_custom_profile_config_path()
+		{
+			return build_profile_file_path(custom_profile_config_name);
 		}
 
 		bool looks_like_plaintext_config(const std::string& data)
@@ -162,7 +175,28 @@ namespace profile_patches
 			return value.substr(first, last - first + 1);
 		}
 
-		bool try_parse_dvar_assignment(const std::string& line, std::string* key)
+		const char* find_canonical_dvar_name(const std::string& key)
+		{
+			static const std::unordered_map<std::string, const char*> canonical_names =
+			{
+				{"con_outputheightscale", "con_outputHeightScale"},
+				{"cg_fovscale", "cg_fovScale"},
+				{"input_viewsensitivity", "input_viewSensitivity"},
+				{"ui_smallfont", "ui_smallFont"},
+				{"ui_bigfont", "ui_bigFont"},
+				{"ui_extrabigfont", "ui_extraBigFont"},
+				{"r_lodscale", "r_lodScale"},
+				{"m_rawinput", "m_rawInput"},
+				{"bot_maxhealth", "bot_maxHealth"},
+				{"g_debugvelocity", "g_debugVelocity"},
+				{"g_debuglocalization", "g_debugLocalization"},
+			};
+
+			const auto canonical = canonical_names.find(to_lower(key));
+			return canonical != canonical_names.end() ? canonical->second : nullptr;
+		}
+
+		bool try_parse_dvar_assignment(std::string& line, std::string* key)
 		{
 			const auto trimmed = trim_copy(line);
 			if (trimmed.empty())
@@ -190,12 +224,31 @@ namespace profile_patches
 				return false;
 			}
 
-			*key = to_lower(trimmed.substr(offset, key_end - offset));
+			const auto raw_key = trimmed.substr(offset, key_end - offset);
+			*key = to_lower(raw_key);
+			if (const auto* canonical_name = find_canonical_dvar_name(raw_key))
+			{
+				line = trimmed.substr(0, offset) + canonical_name + trimmed.substr(key_end);
+			}
+			else
+			{
+				line = trimmed;
+			}
+
 			return !key->empty();
+		}
+
+		bool should_strip_runtime_only_dvar(const std::string& key)
+		{
+			return key == "r_aspectratiocustom"
+				|| key == "r_aspectratiocustomenable"
+				|| key == "r_custommode"
+				|| key == "r_ultrawidecustommode";
 		}
 
 		std::string dedupe_config_text(const std::string& data)
 		{
+			const auto line_ending = data.find("\r\n") != std::string::npos ? "\r\n" : "\n";
 			std::vector<std::string> lines{};
 			std::size_t start = 0;
 
@@ -218,31 +271,26 @@ namespace profile_patches
 				start = end + 1;
 			}
 
-			std::unordered_map<std::string, std::size_t> last_assignment{};
-			for (std::size_t i = 0; i < lines.size(); ++i)
-			{
-				std::string key{};
-				if (try_parse_dvar_assignment(lines[i], &key))
-				{
-					last_assignment[key] = i;
-				}
-			}
-
+			std::unordered_set<std::string> seen_assignments{};
 			std::string output{};
 			for (std::size_t i = 0; i < lines.size(); ++i)
 			{
 				std::string key{};
 				if (try_parse_dvar_assignment(lines[i], &key))
 				{
-					const auto last = last_assignment.find(key);
-					if (last != last_assignment.end() && last->second != i)
+					if (should_strip_runtime_only_dvar(key))
+					{
+						continue;
+					}
+
+					if (!seen_assignments.insert(key).second)
 					{
 						continue;
 					}
 				}
 
 				output.append(lines[i]);
-				output.append("\r\n");
+				output.append(line_ending);
 			}
 
 			return output;
@@ -255,7 +303,7 @@ namespace profile_patches
 				return;
 			}
 
-			const auto path = build_players_file_path(custom_profile_config_name);
+			const auto path = build_custom_profile_config_path();
 			std::string data{};
 			if (!utils::io::read_file(path, &data) || !looks_like_plaintext_config(data))
 			{
@@ -365,22 +413,17 @@ namespace profile_patches
 
 		void convert_config()
 		{
-			const auto output_path = build_players_file_path(custom_profile_config_name);
-			convert_config_to_path(build_profile_config_path(), build_runtime_config_path(), output_path, "profile_convert_config");
-		}
-
-		void use_shared_profile_config_directory()
-		{
-			utils::hook::set<std::uint32_t>(
-				game::game_offset(0x103F163B),
-				static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(shared_profile_config_dir_format))
+			convert_config_to_path(
+				build_legacy_shared_config_path(),
+				build_profile_config_path(),
+				build_custom_profile_config_path(),
+				"profile_convert_config"
 			);
 		}
 
 		void apply_active_profile_config_name()
 		{
-			const auto* active_name = get_active_profile_config_name();
-			const auto active_name_value = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(active_name));
+			const auto active_name_value = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(custom_profile_config_name));
 
 			utils::hook::set<std::uint32_t>(game::game_offset(0x103F18EF), active_name_value);
 			utils::hook::set<std::uint32_t>(game::game_offset(0x103F1A53), active_name_value);
@@ -389,21 +432,11 @@ namespace profile_patches
 
 		void apply_profile_config_save_encryption()
 		{
-			if (should_use_custom_profile_config())
-			{
-				utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D71), 0x83);
-				utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D72), 0xC4);
-				utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D73), 0x08);
-				utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D74), 0x90);
-				utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D75), 0x90);
-				return;
-			}
-
-			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D71), 0xE8);
-			utils::hook::set<std::int32_t>(
-				game::game_offset(0x103F6D72),
-				static_cast<std::int32_t>(game::game_offset(0x103ECD50) - (game::game_offset(0x103F6D71) + 5))
-			);
+			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D71), 0x83);
+			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D72), 0xC4);
+			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D73), 0x08);
+			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D74), 0x90);
+			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D75), 0x90);
 		}
 
 	}
@@ -413,45 +446,39 @@ namespace profile_patches
 	public:
 		void post_load() override
 		{
-			use_shared_profile_config_directory();
+			// Safer phase-one profile config support: only redirect the exact
+			// config filename sites, and keep the broader profile-path helper
+			// untouched so profile creation/existence checks still behave normally.
 			apply_active_profile_config_name();
 			apply_profile_config_save_encryption();
 
-			scheduler::loop([]()
-			{
-				apply_active_profile_config_name();
-				dedupe_custom_profile_config();
-			}, scheduler::main, 1s);
-
 			scheduler::once([]()
 			{
-				print_runtime_config_path();
-			}, scheduler::main, 2s);
+				command::add("profile_decrypt_config", []()
+				{
+					migrate_config();
+				});
 
-			command::add("profile_decrypt_config", []()
-			{
-				migrate_config();
-			});
+				command::add("profile_convert_config", []()
+				{
+					convert_config();
+					apply_active_profile_config_name();
+					apply_profile_config_save_encryption();
+					dedupe_custom_profile_config();
+					print_runtime_config_path();
+				});
 
-			command::add("profile_convert_config", []()
-			{
-				convert_config();
-				apply_profile_config_save_encryption();
-				dedupe_custom_profile_config();
-				print_runtime_config_path();
-			});
+				command::add("profile_show_config_path", []()
+				{
+					print_runtime_config_path();
+				});
 
-			command::add("profile_show_config_path", []()
-			{
-				print_runtime_config_path();
-			});
-
-			command::add("profile_dedupe_config", []()
-			{
-				dedupe_custom_profile_config();
-				print_runtime_config_path();
-			});
-
+				command::add("profile_dedupe_config", []()
+				{
+					dedupe_custom_profile_config();
+					print_runtime_config_path();
+				});
+			}, scheduler::main);
 		}
 	};
 }

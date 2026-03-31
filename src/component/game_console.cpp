@@ -1054,7 +1054,7 @@ namespace game_console
 
 					if (exact)
 					{
-						if (name == input && exact_seen.insert(candidate).second)
+						if (name == input && exact_seen.insert(name).second)
 						{
 							exact_matches.emplace_back(candidate);
 						}
@@ -1063,21 +1063,21 @@ namespace game_console
 
 					if (name == input)
 					{
-						if (exact_seen.insert(candidate).second)
+						if (exact_seen.insert(name).second)
 						{
 							exact_matches.emplace_back(candidate);
 						}
 					}
 					else if (name.rfind(input, 0) == 0)
 					{
-						if (prefix_seen.insert(candidate).second)
+						if (prefix_seen.insert(name).second)
 						{
 							prefix_matches.emplace_back(candidate);
 						}
 					}
 					else if (name.find(input) != std::string::npos)
 					{
-						if (contains_seen.insert(candidate).second)
+						if (contains_seen.insert(name).second)
 						{
 							contains_matches.emplace_back(candidate);
 						}
@@ -1975,6 +1975,11 @@ namespace game_console
 				refresh_auto_complete();
 				return true;
 			case 'C':
+				if (!is_any_shift_down())
+				{
+					return false;
+				}
+
 				if (con && !con->input.empty())
 				{
 					if (has_input_selection())
@@ -2215,6 +2220,28 @@ namespace game_console
 				key_was_down[key_index] = down;
 			}
 		}
+
+		void safe_process_console_input()
+		{
+			if (process_shutting_down || !component_ready || !overlay_active || !con)
+			{
+				return;
+			}
+
+			const auto hwnd = get_window();
+			if (!hwnd || !IsWindow(hwnd) || GetForegroundWindow() != hwnd)
+			{
+				return;
+			}
+
+			__try
+			{
+				process_console_input();
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+			}
+		}
 	}
 
 	bool is_active()
@@ -2331,7 +2358,10 @@ namespace game_console
 					was_oem5_down = oem5_down;
 					was_oem102_down = oem102_down;
 				}, scheduler::main, 50ms);
-			scheduler::loop(process_console_input, scheduler::main, 16ms);
+
+			// Process direct keyboard input through a guarded wrapper so transient
+			// startup/input-state faults do not kill the whole game.
+			scheduler::loop(safe_process_console_input, scheduler::main, 16ms);
 		}
 
 		void pre_destroy() override
