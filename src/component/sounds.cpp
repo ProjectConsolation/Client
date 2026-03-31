@@ -10,7 +10,7 @@
 #include <utils/hook.hpp>
 #include <utils/nt.hpp>
 
-namespace music
+namespace sounds
 {
 	namespace
 	{
@@ -210,6 +210,7 @@ namespace music
 
 			return original(request, index);
 		}
+
 	}
 
 	class component final : public component_interface
@@ -217,16 +218,16 @@ namespace music
 	public:
 		void post_load() override
 		{
-			if (const auto proc = utils::nt::library("mss32.dll").get_proc<void*>("_AIL_set_stream_loop_block@12"))
-			{
-				ail_set_stream_loop_block_hook.create(proc, ail_set_stream_loop_block_stub);
-			}
-
 			utils::hook::call(game::game_offset(music_stream_callsite_1), open_music_stream_stub);
 			utils::hook::call(game::game_offset(music_stream_callsite_2), open_music_stream_stub);
 			utils::hook::call(game::game_offset(music_stream_callsite_3), open_music_stream_stub);
 			utils::hook::call(game::game_offset(ail_open_stream_callsite_1), ail_open_stream_stub);
 			utils::hook::call(game::game_offset(ail_open_stream_callsite_2), ail_open_stream_stub);
+
+			if (const auto proc = utils::nt::library("mss32.dll").get_proc<void*>("_AIL_set_stream_loop_block@12"))
+			{
+				ail_set_stream_loop_block_hook.create(proc, ail_set_stream_loop_block_stub);
+			}
 		}
 
 		void pre_destroy() override
@@ -237,4 +238,4 @@ namespace music
 }
 
 
-REGISTER_COMPONENT(music::component)
+REGISTER_COMPONENT(sounds::component)
