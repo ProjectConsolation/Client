@@ -29,6 +29,13 @@ namespace dvars
 	extern game::dvar_s* r_borderless;
 	extern game::dvar_s* bot_maxHealth;
 	extern game::dvar_s* m_rawInput;
+	extern game::dvar_s* cg_drawWatermark;
+	extern game::dvar_s* cg_drawVersion;
+	extern game::dvar_s* cg_drawVersionX;
+	extern game::dvar_s* cg_drawVersionY;
+	extern game::dvar_s* r_aspectRatioCustomEnable;
+	extern game::dvar_s* r_aspectRatioCustom;
+	extern game::dvar_s* r_ultrawideCustomMode;
 
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain);
 	std::string dvar_get_domain(const game::dvar_type type, const game::DvarLimits& domain);

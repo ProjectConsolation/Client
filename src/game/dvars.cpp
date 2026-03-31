@@ -28,8 +28,10 @@ namespace dvars
 	game::dvar_s* r_borderless = nullptr;
 	game::dvar_s* bot_maxHealth = nullptr;
 	game::dvar_s* m_rawInput = nullptr;
-
-	// TODO: remake: cg_drawVersion, cg_overheadNamesFont
+	game::dvar_s* cg_drawWatermark = nullptr;
+	game::dvar_s* cg_drawVersion = nullptr;
+	game::dvar_s* cg_drawVersionX = nullptr;
+	game::dvar_s* cg_drawVersionY = nullptr;
 
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain)
 	{
@@ -277,12 +279,20 @@ namespace dvars
 					dvars::Dvar_RegisterBool("g_debugLocalization", 0, "[DEBUG] Print information to console about unlocalized strings", game::dvar_flags::none);
 					bot_maxHealth = dvars::Dvar_RegisterInt("bot_maxHealth", "Maximum health for bots on spawn", 100, 1, 1000, game::dvar_flags::none);
 					m_rawInput = dvars::Dvar_RegisterBool("m_rawInput", 1, "Use raw mouse input.", game::dvar_flags::saved);
+					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
+					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
+					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Y offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 				}, scheduler::main);
 
 			scheduler::on_shutdown([]
 				{
 					bot_maxHealth = nullptr;
 					m_rawInput = nullptr;
+					cg_drawWatermark = nullptr;
+					cg_drawVersion = nullptr;
+					cg_drawVersionX = nullptr;
+					cg_drawVersionY = nullptr;
 				});
 		}
 	};

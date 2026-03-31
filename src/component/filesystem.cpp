@@ -33,11 +33,11 @@ namespace filesystem
 
 			filesystem::register_path(L".");
 			filesystem::register_path(L"consolation");
-			filesystem::register_path(L"devraw_shared");
-			filesystem::register_path(L"devraw");
-			filesystem::register_path(L"raw_shared");
-			filesystem::register_path(L"raw");
-			filesystem::register_path(L"main");
+			//filesystem::register_path(L"devraw_shared");
+			//filesystem::register_path(L"devraw");
+			//filesystem::register_path(L"raw_shared");
+			//filesystem::register_path(L"raw");
+			//filesystem::register_path(L"main");
 
 			fs_startup_hook.invoke<void>(name);
 		}

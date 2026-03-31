@@ -189,7 +189,8 @@ namespace scheduler
 		void post_load() override
 		{
 			//utils::hook::call(0x4FD7AB, scheduler::server_frame_stub);
-			r_end_frame_hook.create(0x102DFB60, scheduler::render_frame_stub); //this is actually CL_DrawActive
+			//r_end_frame_hook.create(0x102DFB60, scheduler::render_frame_stub); //this is actually CL_DrawActive
+			r_end_frame_hook.create(0x103C1050, scheduler::render_frame_stub); 
 			main_frame_hook.create(game::game_offset(0x103F7470), scheduler::main_frame_stub); // may be wrong?
 
 			g_shutdown_game_hook.create(game::game_offset(0x101AB0B0), g_shutdown_game_stub);
