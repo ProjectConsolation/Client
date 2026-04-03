@@ -133,4 +133,4 @@ namespace exception
     };
 }
 
-REGISTER_COMPONENT(exception::component) //re-enabled cus why not, hope i wont get fucked
+//REGISTER_COMPONENT(exception::component)
