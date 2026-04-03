@@ -1,6 +1,17 @@
 #include <std_include.hpp>
 #include "component_loader.hpp"
 
+namespace
+{
+	void log_component_event(const std::string& stage, const std::string& component_name)
+	{
+		const auto line = std::format("[component_loader] {} {}\n", stage, component_name);
+		OutputDebugStringA(line.c_str());
+		std::printf("%s", line.c_str());
+		std::fflush(stdout);
+	}
+}
+
 void component_loader::register_component(std::unique_ptr<component_interface>&& component_)
 {
 	get_components().push_back(std::move(component_));
@@ -17,7 +28,7 @@ bool component_loader::post_start()
 		for (const auto& component_ : get_components())
 		{
 			const auto component_name = std::string(typeid(*component_).name());
-			OutputDebugStringA((std::format("[component_loader] post_start {}\n", component_name)).c_str());
+			log_component_event("post_start", component_name);
 
 			try
 			{
@@ -62,7 +73,7 @@ bool component_loader::post_load()
 		for (const auto& component_ : get_components())
 		{
 			const auto component_name = std::string(typeid(*component_).name());
-			OutputDebugStringA((std::format("[component_loader] post_load {}\n", component_name)).c_str());
+			log_component_event("post_load", component_name);
 
 			try
 			{
