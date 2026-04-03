@@ -16,8 +16,29 @@ bool component_loader::post_start()
 	{
 		for (const auto& component_ : get_components())
 		{
-			OutputDebugStringA((std::format("[component_loader] post_start {}\n", typeid(*component_).name())).c_str());
-			component_->post_start();
+			const auto component_name = std::string(typeid(*component_).name());
+			OutputDebugStringA((std::format("[component_loader] post_start {}\n", component_name)).c_str());
+
+			try
+			{
+				component_->post_start();
+			}
+			catch (premature_shutdown_trigger&)
+			{
+				throw;
+			}
+			catch (const std::exception& error)
+			{
+				throw std::runtime_error(std::format("post_start failed in {}: {}", component_name, error.what()));
+			}
+			catch (const char* error)
+			{
+				throw std::runtime_error(std::format("post_start failed in {}: {}", component_name, error));
+			}
+			catch (...)
+			{
+				throw std::runtime_error(std::format("post_start failed in {}: unknown exception", component_name));
+			}
 		}
 	}
 	catch (premature_shutdown_trigger&)
@@ -40,8 +61,29 @@ bool component_loader::post_load()
 	{
 		for (const auto& component_ : get_components())
 		{
-			OutputDebugStringA((std::format("[component_loader] post_load {}\n", typeid(*component_).name())).c_str());
-			component_->post_load();
+			const auto component_name = std::string(typeid(*component_).name());
+			OutputDebugStringA((std::format("[component_loader] post_load {}\n", component_name)).c_str());
+
+			try
+			{
+				component_->post_load();
+			}
+			catch (premature_shutdown_trigger&)
+			{
+				throw;
+			}
+			catch (const std::exception& error)
+			{
+				throw std::runtime_error(std::format("post_load failed in {}: {}", component_name, error.what()));
+			}
+			catch (const char* error)
+			{
+				throw std::runtime_error(std::format("post_load failed in {}: {}", component_name, error));
+			}
+			catch (...)
+			{
+				throw std::runtime_error(std::format("post_load failed in {}: unknown exception", component_name));
+			}
 		}
 	}
 	catch (premature_shutdown_trigger&)
