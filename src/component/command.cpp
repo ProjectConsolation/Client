@@ -331,11 +331,6 @@ namespace command
 				{
 					load_bot_names();
 
-					add("marco", []()
-						{
-							printf("polo\n");
-						});
-
 					/*add("kick", [](const params& argument)
 						{
 							if (argument.size() < 2)

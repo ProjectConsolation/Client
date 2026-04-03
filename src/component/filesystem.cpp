@@ -15,12 +15,6 @@ namespace filesystem
 {
 	namespace
 	{
-		bool is_xport_mode()
-		{
-			const auto* const command_line = GetCommandLineA();
-			return command_line && std::strstr(command_line, "-xport") != nullptr;
-		}
-
 		utils::hook::detour fs_startup_hook;
 
 		bool initialized = false;
@@ -209,11 +203,6 @@ namespace filesystem
 	class component final : public component_interface
 	{
 	public:
-		bool is_supported() override
-		{
-			return !is_xport_mode();
-		}
-
 		void post_load() override
 		{
 			fs_startup_hook.create(game::game_offset(0x10272D80), fs_startup_stub);
