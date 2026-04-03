@@ -1,9 +1,11 @@
 #include <std_include.hpp>
 
 #include "loader/component_loader.hpp"
-#include "component/command.hpp"
-#include "component/scheduler.hpp"
-#include "component/console.hpp"
+
+#include "command.hpp"
+#include "console.hpp"
+#include "scheduler.hpp"
+
 #include "game/game.hpp"
 #include "game/dvars.hpp"
 
@@ -23,9 +25,6 @@ namespace ultrawide
 		constexpr auto renderer_monitor_aspect = 0x10E271B0;
 		constexpr auto renderer_render_aspect = 0x10E271B4;
 
-		game::dvar_s* r_aspectRatioCustom = nullptr;
-		game::dvar_s* r_aspectRatioCustomEnable = nullptr;
-		game::dvar_s* r_ultrawideCustomMode = nullptr;
 		bool sticky_custom_resolution_enabled = false;
 		float sticky_custom_ratio = 16.0f / 9.0f;
 		float original_aspect_ratio = 16.0f / 9.0f;
@@ -46,14 +45,14 @@ namespace ultrawide
 
 		void sync_sticky_custom_resolution_state()
 		{
-			if (!r_ultrawideCustomMode || !r_ultrawideCustomMode->current.string)
+			if (!dvars::r_ultrawideCustomMode || !dvars::r_ultrawideCustomMode->current.string)
 			{
 				return;
 			}
 
 			int width = 0;
 			int height = 0;
-			if (parse_resolution(r_ultrawideCustomMode->current.string, width, height))
+			if (parse_resolution(dvars::r_ultrawideCustomMode->current.string, width, height))
 			{
 				sticky_custom_resolution_enabled = true;
 				sticky_custom_ratio = static_cast<float>(width) / static_cast<float>(height);
@@ -63,6 +62,30 @@ namespace ultrawide
 				sticky_custom_resolution_enabled = false;
 				sticky_custom_ratio = 16.0f / 9.0f;
 			}
+		}
+
+		void set_bool_dvar(game::dvar_s* dvar, const bool value)
+		{
+			if (!dvar)
+			{
+				return;
+			}
+
+			dvar->current.enabled = value;
+			dvar->latched.enabled = value;
+			dvar->reset.enabled = value;
+		}
+
+		void set_float_dvar(game::dvar_s* dvar, const float value)
+		{
+			if (!dvar)
+			{
+				return;
+			}
+
+			dvar->current.value = value;
+			dvar->latched.value = value;
+			dvar->reset.value = value;
 		}
 
 		void set_custom_resolution(const std::string& resolution)
@@ -132,24 +155,13 @@ namespace ultrawide
 
 			if (sticky_custom_resolution_enabled)
 			{
-				if (r_aspectRatioCustomEnable)
-				{
-					r_aspectRatioCustomEnable->current.enabled = true;
-					r_aspectRatioCustomEnable->latched.enabled = true;
-					r_aspectRatioCustomEnable->reset.enabled = true;
-				}
-
-				if (r_aspectRatioCustom)
-				{
-					r_aspectRatioCustom->current.value = sticky_custom_ratio;
-					r_aspectRatioCustom->latched.value = sticky_custom_ratio;
-					r_aspectRatioCustom->reset.value = sticky_custom_ratio;
-				}
+				set_bool_dvar(dvars::r_aspectRatioCustomEnable, true);
+				set_float_dvar(dvars::r_aspectRatioCustom, sticky_custom_ratio);
 			}
 
-			const auto enabled = r_aspectRatioCustomEnable && r_aspectRatioCustomEnable->current.enabled;
-			const auto custom_ratio = r_aspectRatioCustom
-				? std::clamp(r_aspectRatioCustom->current.value, 4.0f / 3.0f, 63.0f / 9.0f)
+			const auto enabled = dvars::r_aspectRatioCustomEnable && dvars::r_aspectRatioCustomEnable->current.enabled;
+			const auto custom_ratio = dvars::r_aspectRatioCustom
+				? std::clamp(dvars::r_aspectRatioCustom->current.value, 4.0f / 3.0f, 63.0f / 9.0f)
 				: original_aspect_ratio;
 
 			*aspect_ratio = original_aspect_ratio;
@@ -181,9 +193,7 @@ namespace ultrawide
 				const auto is_wide = enabled
 					? (custom_ratio > 1.5f)
 					: (original_renderer_aspect_ratio > 1.5f);
-				widescreen->current.enabled = is_wide;
-				widescreen->latched.enabled = is_wide;
-				widescreen->reset.enabled = is_wide;
+				set_bool_dvar(widescreen, is_wide);
 			}
 
 			if (auto* const is_widescreen = game::Dvar_FindVar("r_isWideScreen"))
@@ -191,9 +201,7 @@ namespace ultrawide
 				const auto is_wide = enabled
 					? (custom_ratio > 1.5f)
 					: (original_renderer_aspect_ratio > 1.5f);
-				is_widescreen->current.enabled = is_wide;
-				is_widescreen->latched.enabled = is_wide;
-				is_widescreen->reset.enabled = is_wide;
+				set_bool_dvar(is_widescreen, is_wide);
 			}
 		}
 	}
@@ -205,30 +213,29 @@ namespace ultrawide
 		{
 			scheduler::once([]()
 			{
-				// Allow valid r_customMode values even when the engine thinks it's in fullscreen.
 				utils::hook::nop(game::game_offset(custom_mode_fullscreen_gate), 2);
 
-				r_aspectRatioCustomEnable = dvars::Dvar_RegisterBool(
+				dvars::r_aspectRatioCustomEnable = dvars::Dvar_RegisterBool(
 					"r_aspectRatioCustomEnable", 0,
 					"Enable custom ultrawide aspect ratio overrides.",
 					game::dvar_flags::saved);
 
-				r_aspectRatioCustom = dvars::Dvar_RegisterFloat(
+				dvars::r_aspectRatioCustom = dvars::Dvar_RegisterFloat(
 					"r_aspectRatioCustom",
 					"Screen aspect ratio override. Divide width by height to get the aspect ratio value. Example: 21 / 9 = 2.3333",
 					16.0f / 9.0f, 4.0f / 3.0f, 63.0f / 9.0f,
 					game::dvar_flags::saved);
 
-				r_ultrawideCustomMode = dvars::Dvar_RegisterString(
+				dvars::r_ultrawideCustomMode = dvars::Dvar_RegisterString(
 					"r_ultrawideCustomMode",
 					"disabled",
 					"Saved ultrawide custom resolution in WxH format for Consolation.",
 					game::dvar_flags::saved);
 
-				sticky_custom_resolution_enabled = r_aspectRatioCustomEnable && r_aspectRatioCustomEnable->current.enabled;
-				if (r_aspectRatioCustom)
+				sticky_custom_resolution_enabled = dvars::r_aspectRatioCustomEnable && dvars::r_aspectRatioCustomEnable->current.enabled;
+				if (dvars::r_aspectRatioCustom)
 				{
-					sticky_custom_ratio = std::clamp(r_aspectRatioCustom->current.value, 4.0f / 3.0f, 63.0f / 9.0f);
+					sticky_custom_ratio = std::clamp(dvars::r_aspectRatioCustom->current.value, 4.0f / 3.0f, 63.0f / 9.0f);
 				}
 				sync_sticky_custom_resolution_state();
 
@@ -260,8 +267,8 @@ namespace ultrawide
 
 					console::info(
 						"dumpultrawide: enabled=%d custom=%.6f cl_ingame=%d keyCatchers=0x%X aspect=%.6f renderer=%.6f monitor=%.6f render=%.6f wideScreen=%d r_isWideScreen=%d\n",
-						r_aspectRatioCustomEnable ? static_cast<int>(r_aspectRatioCustomEnable->current.enabled) : -1,
-						r_aspectRatioCustom ? r_aspectRatioCustom->current.value : -1.0f,
+						dvars::r_aspectRatioCustomEnable ? static_cast<int>(dvars::r_aspectRatioCustomEnable->current.enabled) : -1,
+						dvars::r_aspectRatioCustom ? dvars::r_aspectRatioCustom->current.value : -1.0f,
 						cl_ingame ? static_cast<int>(cl_ingame->current.enabled) : -1,
 						game::keyCatchers ? *game::keyCatchers : 0,
 						aspect_ratio ? *aspect_ratio : -1.0f,
@@ -271,14 +278,24 @@ namespace ultrawide
 						widescreen ? static_cast<int>(widescreen->current.enabled) : -1,
 						is_widescreen ? static_cast<int>(is_widescreen->current.enabled) : -1);
 				});
+			}, scheduler::main);
 
+			scheduler::once([]()
+			{
 				apply_custom_aspect_ratio();
-			}, scheduler::pipeline::main);
+			}, scheduler::main, 3000ms);
 
 			scheduler::loop([]()
 			{
 				apply_custom_aspect_ratio();
-			}, scheduler::pipeline::main, 16ms);
+			}, scheduler::main, 250ms);
+		}
+
+		void pre_destroy() override
+		{
+			dvars::r_aspectRatioCustomEnable = nullptr;
+			dvars::r_aspectRatioCustom = nullptr;
+			dvars::r_ultrawideCustomMode = nullptr;
 		}
 	};
 }

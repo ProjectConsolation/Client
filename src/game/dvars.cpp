@@ -32,6 +32,9 @@ namespace dvars
 	game::dvar_s* cg_drawVersion = nullptr;
 	game::dvar_s* cg_drawVersionX = nullptr;
 	game::dvar_s* cg_drawVersionY = nullptr;
+	game::dvar_s* r_aspectRatioCustomEnable = nullptr;
+	game::dvar_s* r_aspectRatioCustom = nullptr;
+	game::dvar_s* r_ultrawideCustomMode = nullptr;
 
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain)
 	{
@@ -293,6 +296,9 @@ namespace dvars
 					cg_drawVersion = nullptr;
 					cg_drawVersionX = nullptr;
 					cg_drawVersionY = nullptr;
+					r_aspectRatioCustomEnable = nullptr;
+					r_aspectRatioCustom = nullptr;
+					r_ultrawideCustomMode = nullptr;
 				});
 		}
 	};
