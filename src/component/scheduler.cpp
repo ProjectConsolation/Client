@@ -13,6 +13,12 @@ namespace scheduler
 {
 	namespace
 	{
+		bool is_xport_mode()
+		{
+			const auto* const command_line = GetCommandLineA();
+			return command_line && std::strstr(command_line, "-xport") != nullptr;
+		}
+
 		struct task
 		{
 			std::function<bool()> handler{};
@@ -174,6 +180,11 @@ namespace scheduler
 	class component final : public component_interface
 	{
 	public:
+		bool is_supported() override
+		{
+			return !is_xport_mode();
+		}
+
 		void post_start() override
 		{
 			thread = utils::thread::create_named_thread("Async Scheduler", []()

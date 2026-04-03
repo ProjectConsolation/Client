@@ -21,6 +21,12 @@ namespace console
 {
 	namespace
 	{
+		bool is_xport_mode()
+		{
+			const auto* const command_line = GetCommandLineA();
+			return command_line && std::strstr(command_line, "-xport") != nullptr;
+		}
+
 		utils::hook::detour printf_hook;
 		utils::hook::detour com_printf_hook;
 
@@ -556,6 +562,11 @@ namespace console
 			freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
 
 			ShowWindow(GetConsoleWindow(), SW_HIDE);
+		}
+
+		bool is_supported() override
+		{
+			return !is_xport_mode();
 		}
 
 		void post_load() override

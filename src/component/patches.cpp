@@ -21,6 +21,12 @@ namespace patches
 {
 	namespace
 	{
+		bool is_xport_mode()
+		{
+			const auto* const command_line = GetCommandLineA();
+			return command_line && std::strstr(command_line, "-xport") != nullptr;
+		}
+
 		std::string build_shortversion_string()
 		{
 			std::string version = VERSION_PRODUCT;
@@ -343,6 +349,11 @@ namespace patches
 	class component final : public component_interface
 	{
 	public:
+		bool is_supported() override
+		{
+			return !is_xport_mode();
+		}
+
 		void post_load() override
 		{
 			// branding - intercept import for CreateWindowExA to change window title
