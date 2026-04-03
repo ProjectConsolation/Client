@@ -7,7 +7,6 @@
 
 #include "game/game.hpp"
 
-#include <utils/hook.hpp>
 #include <utils/nt.hpp>
 
 namespace export_
@@ -29,11 +28,9 @@ namespace export_
 			bool symbol_error_logged = false;
 			bool load_error_logged = false;
 			bool console_opened = false;
-			bool rendering_disabled = false;
 		};
 
 		state loader_state{};
-		utils::hook::detour cl_draw_screen_hook{};
 
 		bool is_enabled()
 		{
@@ -69,7 +66,7 @@ namespace export_
 			return *game::main_window;
 		}
 
-		void hide_main_window()
+		void reduce_game_visibility()
 		{
 			const auto window = get_main_window();
 			if (!window || !IsWindow(window))
@@ -77,25 +74,7 @@ namespace export_
 				return;
 			}
 
-			ShowWindow(window, SW_HIDE);
-		}
-
-		void cl_draw_screen_stub()
-		{
-			hide_main_window();
-		}
-
-		void disable_game_rendering()
-		{
-			if (loader_state.rendering_disabled || !GetModuleHandleA("jb_mp_s.dll"))
-			{
-				return;
-			}
-
-			hide_main_window();
-			cl_draw_screen_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_DrawScreen.get()), cl_draw_screen_stub);
-			loader_state.rendering_disabled = true;
-			console::info("export: disabled game screen drawing for -xport mode\n");
+			ShowWindow(window, SW_MINIMIZE);
 		}
 
 		std::filesystem::path get_default_dll_path()
@@ -193,7 +172,7 @@ namespace export_
 				return scheduler::cond_continue;
 			}
 
-			disable_game_rendering();
+			reduce_game_visibility();
 
 			if (!ensure_module_loaded())
 			{
@@ -234,8 +213,6 @@ namespace export_
 			{
 				FreeLibrary(loader_state.module);
 			}
-
-			cl_draw_screen_hook.clear();
 
 			loader_state = {};
 		}
