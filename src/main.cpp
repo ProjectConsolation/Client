@@ -102,10 +102,25 @@ namespace
 			//MessageBoxA(NULL, "GAME LOADED", "DEBUG", MB_DEFBUTTON1);
 #endif
 		}
-		catch (std::string& error)
+		catch (const std::exception& error)
+		{
+			component_loader::pre_destroy();
+			MessageBoxA(nullptr, error.what(), "ERROR", MB_ICONERROR);
+		}
+		catch (const char* error)
+		{
+			component_loader::pre_destroy();
+			MessageBoxA(nullptr, error, "ERROR", MB_ICONERROR);
+		}
+		catch (const std::string& error)
 		{
 			component_loader::pre_destroy();
 			MessageBoxA(nullptr, error.data(), "ERROR", MB_ICONERROR);
+		}
+		catch (...)
+		{
+			component_loader::pre_destroy();
+			MessageBoxA(nullptr, "Unknown startup failure", "ERROR", MB_ICONERROR);
 		}
 	}
 }

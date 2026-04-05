@@ -28,6 +28,13 @@ namespace dvars
 	game::dvar_s* r_borderless = nullptr;
 	game::dvar_s* bot_maxHealth = nullptr;
 	game::dvar_s* m_rawInput = nullptr;
+	game::dvar_s* gpad_enabled = nullptr;
+	game::dvar_s* gpad_present = nullptr;
+	game::dvar_s* gpad_in_use = nullptr;
+	game::dvar_s* gpad_debug = nullptr;
+	game::dvar_s* gpad_stick_deadzone_min = nullptr;
+	game::dvar_s* gpad_menu_scroll_delay_first = nullptr;
+	game::dvar_s* gpad_menu_scroll_delay_rest = nullptr;
 	game::dvar_s* cg_drawWatermark = nullptr;
 	game::dvar_s* cg_drawVersion = nullptr;
 	game::dvar_s* cg_drawVersionX = nullptr;
@@ -282,6 +289,13 @@ namespace dvars
 					dvars::Dvar_RegisterBool("g_debugLocalization", 0, "[DEBUG] Print information to console about unlocalized strings", game::dvar_flags::none);
 					bot_maxHealth = dvars::Dvar_RegisterInt("bot_maxHealth", "Maximum health for bots on spawn", 100, 1, 1000, game::dvar_flags::none);
 					m_rawInput = dvars::Dvar_RegisterBool("m_rawInput", 1, "Use raw mouse input.", game::dvar_flags::saved);
+					gpad_enabled = dvars::Dvar_RegisterBool("gpad_enabled", 0, "Enable XInput gamepad input.", game::dvar_flags::saved);
+					gpad_present = dvars::Dvar_RegisterBool("gpad_present", 0, "True when a supported gamepad is connected.", game::dvar_flags::none);
+					gpad_in_use = dvars::Dvar_RegisterBool("gpad_in_use", 0, "True when a gamepad is currently being used.", game::dvar_flags::none);
+					gpad_debug = dvars::Dvar_RegisterBool("gpad_debug", 0, "Print gamepad debug information.", game::dvar_flags::none);
+					gpad_stick_deadzone_min = dvars::Dvar_RegisterFloat("gpad_stick_deadzone_min", "Minimum stick deadzone for menu navigation.", 0.2f, 0.0f, 1.0f, game::dvar_flags::saved);
+					gpad_menu_scroll_delay_first = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_first", "Initial menu repeat delay for gamepad input in milliseconds.", 420, 0, 1000, game::dvar_flags::saved);
+					gpad_menu_scroll_delay_rest = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_rest", "Subsequent menu repeat delay for gamepad input in milliseconds.", 210, 0, 1000, game::dvar_flags::saved);
 					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
 					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
@@ -292,6 +306,13 @@ namespace dvars
 				{
 					bot_maxHealth = nullptr;
 					m_rawInput = nullptr;
+					gpad_enabled = nullptr;
+					gpad_present = nullptr;
+					gpad_in_use = nullptr;
+					gpad_debug = nullptr;
+					gpad_stick_deadzone_min = nullptr;
+					gpad_menu_scroll_delay_first = nullptr;
+					gpad_menu_scroll_delay_rest = nullptr;
 					cg_drawWatermark = nullptr;
 					cg_drawVersion = nullptr;
 					cg_drawVersionX = nullptr;

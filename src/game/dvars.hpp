@@ -29,6 +29,13 @@ namespace dvars
 	extern game::dvar_s* r_borderless;
 	extern game::dvar_s* bot_maxHealth;
 	extern game::dvar_s* m_rawInput;
+	extern game::dvar_s* gpad_enabled;
+	extern game::dvar_s* gpad_present;
+	extern game::dvar_s* gpad_in_use;
+	extern game::dvar_s* gpad_debug;
+	extern game::dvar_s* gpad_stick_deadzone_min;
+	extern game::dvar_s* gpad_menu_scroll_delay_first;
+	extern game::dvar_s* gpad_menu_scroll_delay_rest;
 	extern game::dvar_s* cg_drawWatermark;
 	extern game::dvar_s* cg_drawVersion;
 	extern game::dvar_s* cg_drawVersionX;

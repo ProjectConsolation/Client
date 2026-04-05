@@ -123,7 +123,7 @@ namespace game_console
 				return;
 			}
 
-			cl_key_event_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_KeyEvent.get()), cl_key_event_stub);
+			cl_key_event_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_KeyEvent_.get()), cl_key_event_stub);
 			cl_console_print_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_ConsolePrint.get()), cl_console_print_stub);
 			con_set_console_rect_hook.create(reinterpret_cast<std::uintptr_t>(game::Con_SetConsoleRect.get()), con_set_console_rect_stub);
 			hooks_installed = true;

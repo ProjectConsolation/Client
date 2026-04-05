@@ -37,6 +37,7 @@ namespace game
 	};
 
 	void Cbuf_AddText(int controller, const char* text);
+	void CL_KeyEvent(int localClientNum, int key, int down, unsigned int time);
 	void Cmd_AddCommandInternal(const char* name, void(__cdecl* function)(), cmd_function_s* cmd);
 	bool DB_IsXAssetDefault(XAssetType type, const char* name);
 	void DB_EnumXAssetEntries(XAssetType type, std::function<void(XAssetEntryPoolEntry*)> callback, bool overrides);

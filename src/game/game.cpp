@@ -33,6 +33,21 @@ namespace game
 		}
 	}
 
+	void CL_KeyEvent(int localClientNum, int key, int down, unsigned int time)
+	{
+		int func_loc = game_offset(0x1031A680);
+
+		__asm
+		{
+			push time
+			push down
+			push key
+			mov ecx, localClientNum
+			call func_loc
+			add esp, 0xC
+		}
+	}
+
 	// half of this is inlined on QoS, so just re-writing it all since its little work
 	cmd_function_s* Cmd_FindCommand(const char* name)
 	{
