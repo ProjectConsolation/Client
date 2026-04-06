@@ -38,14 +38,14 @@ namespace gamepad
 			float right_stick_y = 0.0f;
 			float left_trigger = 0.0f;
 			float right_trigger = 0.0f;
-			float yaw_remainder = 0.0f;
-			float pitch_remainder = 0.0f;
 		};
 
 		controller_state pad{};
 		bool shutdown_requested = false;
 		bool create_cmd_callsite_patched = false;
+		bool native_look_callsite_patched = false;
 		std::array<std::uint8_t, 5> original_create_cmd_call{};
+		std::array<std::uint8_t, 5> original_native_look_call{};
 
 		enum direction
 		{
@@ -60,25 +60,24 @@ namespace gamepad
 			WORD xinput_mask;
 			int gameplay_key;
 			int menu_key;
-			bool handled_natively_in_gameplay;
 		};
 
 		constexpr digital_mapping digital_buttons[]
 		{
-			{XINPUT_GAMEPAD_A, 0, game::K_ENTER, true},
-			{XINPUT_GAMEPAD_B, 0, game::K_ESCAPE, true},
-			{XINPUT_GAMEPAD_X, 0, 0, true},
-			{XINPUT_GAMEPAD_Y, game::K_BUTTON_Y, 0, false},
-			{XINPUT_GAMEPAD_LEFT_SHOULDER, game::K_BUTTON_LSHLDR, game::K_PGUP, false},
-			{XINPUT_GAMEPAD_RIGHT_SHOULDER, game::K_BUTTON_RSHLDR, game::K_PGDN, false},
-			{XINPUT_GAMEPAD_START, game::K_BUTTON_START, game::K_ENTER, false},
-			{XINPUT_GAMEPAD_BACK, game::K_BUTTON_BACK, game::K_ESCAPE, false},
-			{XINPUT_GAMEPAD_LEFT_THUMB, 0, 0, true},
-			{XINPUT_GAMEPAD_RIGHT_THUMB, 0, 0, true},
-			{XINPUT_GAMEPAD_DPAD_UP, game::K_DPAD_UP, game::K_UPARROW, false},
-			{XINPUT_GAMEPAD_DPAD_DOWN, game::K_DPAD_DOWN, game::K_DOWNARROW, false},
-			{XINPUT_GAMEPAD_DPAD_LEFT, game::K_DPAD_LEFT, game::K_LEFTARROW, false},
-			{XINPUT_GAMEPAD_DPAD_RIGHT, game::K_DPAD_RIGHT, game::K_RIGHTARROW, false},
+			{XINPUT_GAMEPAD_A, game::K_BUTTON_A, game::K_ENTER},
+			{XINPUT_GAMEPAD_B, game::K_BUTTON_B, game::K_ESCAPE},
+			{XINPUT_GAMEPAD_X, game::K_BUTTON_X, 0},
+			{XINPUT_GAMEPAD_Y, game::K_BUTTON_Y, 0},
+			{XINPUT_GAMEPAD_LEFT_SHOULDER, game::K_BUTTON_LSHLDR, game::K_PGUP},
+			{XINPUT_GAMEPAD_RIGHT_SHOULDER, game::K_BUTTON_RSHLDR, game::K_PGDN},
+			{XINPUT_GAMEPAD_START, game::K_BUTTON_START, game::K_ENTER},
+			{XINPUT_GAMEPAD_BACK, game::K_BUTTON_BACK, game::K_ESCAPE},
+			{XINPUT_GAMEPAD_LEFT_THUMB, game::K_BUTTON_LSTICK, 0},
+			{XINPUT_GAMEPAD_RIGHT_THUMB, game::K_BUTTON_RSTICK, 0},
+			{XINPUT_GAMEPAD_DPAD_UP, game::K_DPAD_UP, game::K_UPARROW},
+			{XINPUT_GAMEPAD_DPAD_DOWN, game::K_DPAD_DOWN, game::K_DOWNARROW},
+			{XINPUT_GAMEPAD_DPAD_LEFT, game::K_DPAD_LEFT, game::K_LEFTARROW},
+			{XINPUT_GAMEPAD_DPAD_RIGHT, game::K_DPAD_RIGHT, game::K_RIGHTARROW},
 		};
 
 		bool is_gamepad_enabled()
@@ -171,6 +170,114 @@ namespace gamepad
 			fire_key_event(key, false, time);
 		}
 
+		const char* get_fallback_gameplay_command(const int key)
+		{
+			switch (key)
+			{
+			case game::K_BUTTON_A:
+				return "+gostand";
+			case game::K_BUTTON_B:
+				return "+stance";
+			case game::K_BUTTON_X:
+				return "+usereload";
+			case game::K_BUTTON_Y:
+				return "weapnext";
+			case game::K_BUTTON_LTRIG:
+				return "+speed";
+			case game::K_BUTTON_LSHLDR:
+				return "+smoke";
+			case game::K_BUTTON_RSHLDR:
+				return "+frag";
+			case game::K_BUTTON_START:
+				return "togglemenu";
+			case game::K_BUTTON_BACK:
+				return "+scores";
+			case game::K_BUTTON_LSTICK:
+				return "+breath_sprint";
+			case game::K_BUTTON_RSTICK:
+				return "+melee";
+			case game::K_BUTTON_RTRIG:
+				return "+attack";
+			default:
+				return nullptr;
+			}
+		}
+
+		void queue_command(const int key, const char* command, const bool down, const DWORD time)
+		{
+			if (!command || !*command)
+			{
+				return;
+			}
+
+			char buffer[1024]{};
+
+			if (command[0] == '+')
+			{
+				if (down)
+				{
+					sprintf_s(buffer, "%s %i %u\n", command, key, time);
+				}
+				else
+				{
+					sprintf_s(buffer, "-%s %i %u\n", &command[1], key, time);
+				}
+
+				game::Cbuf_AddText(0, buffer);
+				return;
+			}
+
+			if (down)
+			{
+				sprintf_s(buffer, "%s\n", command);
+				game::Cbuf_AddText(0, buffer);
+			}
+		}
+
+		void handle_gameplay_button_event(const int key, const bool is_down, const DWORD time)
+		{
+			if (!key)
+			{
+				return;
+			}
+
+			auto& player_key_state = game::playerKeys[0];
+			auto& key_state = player_key_state.keys[key];
+
+			if (is_down)
+			{
+				key_state.down = 1;
+				if (++key_state.repeats == 1)
+				{
+					player_key_state.anyKeyDown++;
+				}
+			}
+			else
+			{
+				key_state.down = 0;
+				if (key_state.repeats > 0)
+				{
+					key_state.repeats = 0;
+					player_key_state.anyKeyDown = std::max(0, player_key_state.anyKeyDown - 1);
+				}
+			}
+
+			const auto* command = get_fallback_gameplay_command(key);
+			if (!command)
+			{
+				return;
+			}
+
+			// Match IW3SP's behavior closely enough for gameplay buttons:
+			// send the bound +command on press and its matching -command on release.
+			if (is_down && key_state.repeats > 1)
+			{
+				return;
+			}
+
+			queue_command(key, command, is_down, time);
+		}
+
 		void debug_print(const char* fmt, ...)
 		{
 			if (!dvars::gpad_debug || !dvars::gpad_debug->current.enabled)
@@ -252,8 +359,6 @@ namespace gamepad
 
 			pad.menu_direction_down.fill(false);
 			pad.menu_next_repeat_time.fill(0);
-			pad.yaw_remainder = 0.0f;
-			pad.pitch_remainder = 0.0f;
 		}
 
 		void update_activity(const DWORD time)
@@ -324,9 +429,20 @@ namespace gamepad
 				{
 					fire_key_event(mapping.menu_key, is_down, time);
 				}
-				else if (!mapping.handled_natively_in_gameplay)
+				else
 				{
-					fire_key_event(mapping.gameplay_key, is_down, time);
+					switch (mapping.gameplay_key)
+					{
+					case game::K_BUTTON_START:
+						fire_key_event(game::K_ESCAPE, is_down, time);
+						break;
+					case game::K_BUTTON_BACK:
+						fire_key_event(game::K_TAB, is_down, time);
+						break;
+					default:
+						handle_gameplay_button_event(mapping.gameplay_key, is_down, time);
+						break;
+					}
 				}
 
 				if (is_down)
@@ -336,19 +452,28 @@ namespace gamepad
 			}
 		}
 
-		int normalize_angle_units(int angle)
+		void handle_trigger_button(const float current_value, const float previous_value, const int gameplay_key, const int menu_key, const DWORD time)
 		{
-			while (angle > 32768)
+			const auto was_down = previous_value > 0.0f;
+			const auto is_down = current_value > 0.0f;
+			if (was_down == is_down)
 			{
-				angle -= 65536;
+				return;
 			}
 
-			while (angle < -32768)
+			if (pad.menu_mode)
 			{
-				angle += 65536;
+				fire_key_event(menu_key, is_down, time);
+			}
+			else
+			{
+				handle_gameplay_button_event(gameplay_key, is_down, time);
 			}
 
-			return angle;
+			if (is_down)
+			{
+				update_activity(time);
+			}
 		}
 
 		std::int8_t clamp_cmd_axis(const int value)
@@ -362,6 +487,50 @@ namespace gamepad
 			return dvar ? std::clamp(dvar->current.value, 0.01f, 30.0f) : 1.0f;
 		}
 
+		float* get_native_pitch_offset()
+		{
+			return reinterpret_cast<float*>(game::game_offset(0x11A9FEC0));
+		}
+
+		float* get_native_yaw_offset()
+		{
+			return reinterpret_cast<float*>(game::game_offset(0x11A9FEC4));
+		}
+
+		void apply_native_view_input()
+		{
+			if (!should_drive_native_cmd())
+			{
+				return;
+			}
+
+			const auto yaw_axis = -pad.right_stick_x;
+			auto pitch_axis = pad.right_stick_y;
+
+			if (!dvars::input_invertPitch || !dvars::input_invertPitch->current.enabled)
+			{
+				pitch_axis *= -1.0f;
+			}
+
+			if (std::fabs(yaw_axis) <= 0.0f && std::fabs(pitch_axis) <= 0.0f)
+			{
+				return;
+			}
+
+			constexpr float angle_units_per_degree = 65536.0f / 360.0f;
+			const auto look_rate_degrees = (1200.0f * get_view_sensitivity()) / angle_units_per_degree;
+
+			auto* const pitch = get_native_pitch_offset();
+			auto* const yaw = get_native_yaw_offset();
+			if (!pitch || !yaw)
+			{
+				return;
+			}
+
+			*pitch = std::clamp(*pitch + (pitch_axis * look_rate_degrees), -85.0f, 85.0f);
+			*yaw += yaw_axis * look_rate_degrees;
+		}
+
 		void apply_native_gamepad_to_cmd(game::usercmd_t* cmd)
 		{
 			if (!cmd || !should_drive_native_cmd())
@@ -371,13 +540,6 @@ namespace gamepad
 
 			const auto forward = pad.left_stick_y;
 			const auto side = pad.left_stick_x;
-			const auto yaw_axis = -pad.right_stick_x;
-			auto pitch_axis = pad.right_stick_y;
-
-			if (!dvars::input_invertPitch || !dvars::input_invertPitch->current.enabled)
-			{
-				pitch_axis *= -1.0f;
-			}
 
 			float move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
 			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
@@ -391,53 +553,6 @@ namespace gamepad
 			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + static_cast<int>(std::floor(forward * move_scale)));
 			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + static_cast<int>(std::floor(side * move_scale)));
 
-			const auto turn_rate = 1200.0f * get_view_sensitivity();
-			pad.yaw_remainder += yaw_axis * turn_rate;
-			pad.pitch_remainder += pitch_axis * turn_rate;
-
-			const auto yaw_delta = static_cast<int>(pad.yaw_remainder);
-			const auto pitch_delta = static_cast<int>(pad.pitch_remainder);
-
-			pad.yaw_remainder -= static_cast<float>(yaw_delta);
-			pad.pitch_remainder -= static_cast<float>(pitch_delta);
-
-			cmd->angles[1] = normalize_angle_units(cmd->angles[1] + yaw_delta);
-			cmd->angles[0] = normalize_angle_units(cmd->angles[0] + pitch_delta);
-
-			if (pad.right_trigger > 0.0f)
-			{
-				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_ATTACK);
-			}
-
-			if (pad.left_trigger > 0.0f)
-			{
-				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_ADS);
-			}
-
-			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB) != 0)
-			{
-				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_SPRINT);
-			}
-
-			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB) != 0)
-			{
-				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_MELEE_BREATH);
-			}
-
-			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_X) != 0)
-			{
-				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_USE | game::BUTTON_RELOAD);
-			}
-
-			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_B) != 0)
-			{
-				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_CROUCH);
-			}
-
-			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_A) != 0)
-			{
-				cmd->upmove = 127;
-			}
 		}
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
@@ -460,6 +575,23 @@ namespace gamepad
 			return result;
 		}
 
+		void __cdecl native_look_body(game::usercmd_t* cmd, const int local_client_num)
+		{
+			const auto func_loc = static_cast<int>(game::game_offset(0x102FC4D0));
+
+			// Feed the engine-owned view offset globals before the stock look path runs,
+			// so QoS encodes the same live camera state into the outgoing usercmd.
+			apply_native_view_input();
+
+			__asm
+			{
+				push cmd
+				mov eax, local_client_num
+				call func_loc
+				add esp, 4
+			}
+		}
+
 		__declspec(naked) void build_cmd_stub()
 		{
 			__asm
@@ -468,6 +600,19 @@ namespace gamepad
 				push edx
 				push eax
 				call build_cmd_body
+				add esp, 8
+				ret
+			}
+		}
+
+		__declspec(naked) void native_look_stub()
+		{
+			__asm
+			{
+				mov edx, [esp + 4]
+				push eax
+				push edx
+				call native_look_body
 				add esp, 8
 				ret
 			}
@@ -489,6 +634,22 @@ namespace gamepad
 			create_cmd_callsite_patched = true;
 		}
 
+		void install_native_look_hook()
+		{
+			if (native_look_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_native_look_call.size(); ++i)
+			{
+				original_native_look_call[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFBFE + i));
+			}
+
+			utils::hook::call(game::game_offset(0x102FFBFE), native_look_stub);
+			native_look_callsite_patched = true;
+		}
+
 		void restore_native_cmd_hook()
 		{
 			if (!create_cmd_callsite_patched)
@@ -502,6 +663,21 @@ namespace gamepad
 			}
 
 			create_cmd_callsite_patched = false;
+		}
+
+		void restore_native_look_hook()
+		{
+			if (!native_look_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_native_look_call.size(); ++i)
+			{
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFBFE + static_cast<int>(i)), original_native_look_call[i]);
+			}
+
+			native_look_callsite_patched = false;
 		}
 
 		void poll_controller()
@@ -551,6 +727,20 @@ namespace gamepad
 			}
 
 			handle_digital_buttons(pad.state.Gamepad, pad.previous_state.Gamepad, time);
+			handle_trigger_button(
+				pad.left_trigger,
+				normalize_trigger(pad.previous_state.Gamepad.bLeftTrigger),
+				game::K_BUTTON_LTRIG,
+				0,
+				time
+			);
+			handle_trigger_button(
+				pad.right_trigger,
+				normalize_trigger(pad.previous_state.Gamepad.bRightTrigger),
+				game::K_BUTTON_RTRIG,
+				0,
+				time
+			);
 
 			if (pad.menu_mode)
 			{
@@ -594,6 +784,7 @@ namespace gamepad
 		void post_load() override
 		{
 			install_native_cmd_hook();
+			install_native_look_hook();
 
 			scheduler::loop([]()
 			{
@@ -605,6 +796,7 @@ namespace gamepad
 				shutdown_requested = true;
 				release_all_inputs(GetTickCount());
 				restore_native_cmd_hook();
+				restore_native_look_hook();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
 			});
@@ -614,6 +806,7 @@ namespace gamepad
 		{
 			shutdown_requested = true;
 			restore_native_cmd_hook();
+			restore_native_look_hook();
 		}
 	};
 }

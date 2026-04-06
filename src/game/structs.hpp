@@ -1040,7 +1040,7 @@ namespace game
 	{
 		int down;
 		int repeats;
-		int binding;
+		const char* binding;
 	};
 
 	struct PlayerKeyState

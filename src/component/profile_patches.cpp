@@ -250,6 +250,7 @@ namespace profile_patches
 		{
 			const auto line_ending = data.find("\r\n") != std::string::npos ? "\r\n" : "\n";
 			std::vector<std::string> lines{};
+			std::vector<std::string> line_keys{};
 			std::size_t start = 0;
 
 			while (start <= data.size())
@@ -262,6 +263,7 @@ namespace profile_patches
 				}
 
 				lines.push_back(std::move(line));
+				line_keys.emplace_back();
 
 				if (end == std::string::npos)
 				{
@@ -271,19 +273,34 @@ namespace profile_patches
 				start = end + 1;
 			}
 
-			std::unordered_set<std::string> seen_assignments{};
-			std::string output{};
+			std::unordered_map<std::string, std::size_t> last_assignment_index{};
 			for (std::size_t i = 0; i < lines.size(); ++i)
 			{
 				std::string key{};
-				if (try_parse_dvar_assignment(lines[i], &key))
+				auto normalized_line = lines[i];
+				if (!try_parse_dvar_assignment(normalized_line, &key))
 				{
-					if (should_strip_runtime_only_dvar(key))
-					{
-						continue;
-					}
+					continue;
+				}
 
-					if (!seen_assignments.insert(key).second)
+				if (should_strip_runtime_only_dvar(key))
+				{
+					continue;
+				}
+
+				lines[i] = std::move(normalized_line);
+				line_keys[i] = key;
+				last_assignment_index[key] = i;
+			}
+
+			std::string output{};
+			for (std::size_t i = 0; i < lines.size(); ++i)
+			{
+				const auto& key = line_keys[i];
+				if (!key.empty())
+				{
+					const auto last = last_assignment_index.find(key);
+					if (last != last_assignment_index.end() && last->second != i)
 					{
 						continue;
 					}
@@ -454,6 +471,8 @@ namespace profile_patches
 
 			scheduler::once([]()
 			{
+				dedupe_custom_profile_config();
+
 				command::add("profile_decrypt_config", []()
 				{
 					migrate_config();
@@ -479,6 +498,11 @@ namespace profile_patches
 					print_runtime_config_path();
 				});
 			}, scheduler::main);
+
+			scheduler::on_shutdown([]()
+			{
+				dedupe_custom_profile_config();
+			});
 		}
 	};
 }
