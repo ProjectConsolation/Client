@@ -1,7 +1,6 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 
-#include "gamepad.hpp"
 #include "scheduler.hpp"
 
 #include "game/game.hpp"
@@ -245,18 +244,6 @@ namespace mouse_input
 
 			if (raw_dx == 0 && raw_dy == 0)
 			{
-				if (gamepad::should_override_mouse())
-				{
-					int gamepad_dx = 0;
-					int gamepad_dy = 0;
-					if (gamepad::consume_right_stick_delta(gamepad_dx, gamepad_dy))
-					{
-						pending_event.dx = gamepad_dx;
-						pending_event.dy = gamepad_dy;
-						return call_original_mouse_event(pending_event);
-					}
-				}
-
 				return call_original_mouse_event(pending_event);
 			}
 

@@ -33,8 +33,11 @@ namespace dvars
 	game::dvar_s* gpad_in_use = nullptr;
 	game::dvar_s* gpad_debug = nullptr;
 	game::dvar_s* gpad_stick_deadzone_min = nullptr;
+	game::dvar_s* gpad_stick_deadzone_max = nullptr;
+	game::dvar_s* gpad_button_deadzone = nullptr;
 	game::dvar_s* gpad_menu_scroll_delay_first = nullptr;
 	game::dvar_s* gpad_menu_scroll_delay_rest = nullptr;
+	game::dvar_s* input_invertPitch = nullptr;
 	game::dvar_s* cg_drawWatermark = nullptr;
 	game::dvar_s* cg_drawVersion = nullptr;
 	game::dvar_s* cg_drawVersionX = nullptr;
@@ -294,8 +297,11 @@ namespace dvars
 					gpad_in_use = dvars::Dvar_RegisterBool("gpad_in_use", 0, "True when a gamepad is currently being used.", game::dvar_flags::none);
 					gpad_debug = dvars::Dvar_RegisterBool("gpad_debug", 0, "Print gamepad debug information.", game::dvar_flags::none);
 					gpad_stick_deadzone_min = dvars::Dvar_RegisterFloat("gpad_stick_deadzone_min", "Minimum stick deadzone for menu navigation.", 0.2f, 0.0f, 1.0f, game::dvar_flags::saved);
+					gpad_stick_deadzone_max = dvars::Dvar_RegisterFloat("gpad_stick_deadzone_max", "Maximum stick deadzone for native gamepad movement.", 0.01f, 0.0f, 1.0f, game::dvar_flags::saved);
+					gpad_button_deadzone = dvars::Dvar_RegisterFloat("gpad_button_deadzone", "Trigger deadzone for native gamepad buttons.", 0.13f, 0.0f, 1.0f, game::dvar_flags::saved);
 					gpad_menu_scroll_delay_first = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_first", "Initial menu repeat delay for gamepad input in milliseconds.", 420, 0, 1000, game::dvar_flags::saved);
 					gpad_menu_scroll_delay_rest = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_rest", "Subsequent menu repeat delay for gamepad input in milliseconds.", 210, 0, 1000, game::dvar_flags::saved);
+					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
 					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
 					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
@@ -311,8 +317,11 @@ namespace dvars
 					gpad_in_use = nullptr;
 					gpad_debug = nullptr;
 					gpad_stick_deadzone_min = nullptr;
+					gpad_stick_deadzone_max = nullptr;
+					gpad_button_deadzone = nullptr;
 					gpad_menu_scroll_delay_first = nullptr;
 					gpad_menu_scroll_delay_rest = nullptr;
+					input_invertPitch = nullptr;
 					cg_drawWatermark = nullptr;
 					cg_drawVersion = nullptr;
 					cg_drawVersionX = nullptr;

@@ -4,13 +4,18 @@
 
 #include "scheduler.hpp"
 #include "gamepad.hpp"
+#include "game_console.hpp"
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <Xinput.h>
+
+#include <utils/hook.hpp>
 
 #pragma comment(lib, "xinput9_1_0.lib")
 
@@ -21,18 +26,26 @@ namespace gamepad
 		struct controller_state
 		{
 			bool connected = false;
+			bool menu_mode = false;
 			XINPUT_STATE state{};
 			XINPUT_STATE previous_state{};
 			std::array<bool, 4> menu_direction_down{};
 			std::array<DWORD, 4> menu_next_repeat_time{};
-			std::array<bool, 4> move_direction_down{};
 			DWORD last_activity_time = 0;
-			float accumulated_look_x = 0.0f;
-			float accumulated_look_y = 0.0f;
+			float left_stick_x = 0.0f;
+			float left_stick_y = 0.0f;
+			float right_stick_x = 0.0f;
+			float right_stick_y = 0.0f;
+			float left_trigger = 0.0f;
+			float right_trigger = 0.0f;
+			float yaw_remainder = 0.0f;
+			float pitch_remainder = 0.0f;
 		};
 
 		controller_state pad{};
 		bool shutdown_requested = false;
+		bool create_cmd_callsite_patched = false;
+		std::array<std::uint8_t, 5> original_create_cmd_call{};
 
 		enum direction
 		{
@@ -47,24 +60,25 @@ namespace gamepad
 			WORD xinput_mask;
 			int gameplay_key;
 			int menu_key;
+			bool handled_natively_in_gameplay;
 		};
 
 		constexpr digital_mapping digital_buttons[]
 		{
-			{XINPUT_GAMEPAD_A, ' ', game::K_ENTER},
-			{XINPUT_GAMEPAD_B, 'c', game::K_ESCAPE},
-			{XINPUT_GAMEPAD_X, 'f', 'r'},
-			{XINPUT_GAMEPAD_Y, 'q', 'q'},
-			{XINPUT_GAMEPAD_LEFT_SHOULDER, 'q', game::K_PGUP},
-			{XINPUT_GAMEPAD_RIGHT_SHOULDER, 'e', game::K_PGDN},
-			{XINPUT_GAMEPAD_START, game::K_ESCAPE, game::K_ENTER},
-			{XINPUT_GAMEPAD_BACK, game::K_TAB, game::K_ESCAPE},
-			{XINPUT_GAMEPAD_LEFT_THUMB, game::K_SHIFT, 0},
-			{XINPUT_GAMEPAD_RIGHT_THUMB, 'v', 0},
-			{XINPUT_GAMEPAD_DPAD_UP, game::K_UPARROW, game::K_UPARROW},
-			{XINPUT_GAMEPAD_DPAD_DOWN, game::K_DOWNARROW, game::K_DOWNARROW},
-			{XINPUT_GAMEPAD_DPAD_LEFT, game::K_LEFTARROW, game::K_LEFTARROW},
-			{XINPUT_GAMEPAD_DPAD_RIGHT, game::K_RIGHTARROW, game::K_RIGHTARROW},
+			{XINPUT_GAMEPAD_A, 0, game::K_ENTER, true},
+			{XINPUT_GAMEPAD_B, 0, game::K_ESCAPE, true},
+			{XINPUT_GAMEPAD_X, 0, 0, true},
+			{XINPUT_GAMEPAD_Y, game::K_BUTTON_Y, 0, false},
+			{XINPUT_GAMEPAD_LEFT_SHOULDER, game::K_BUTTON_LSHLDR, game::K_PGUP, false},
+			{XINPUT_GAMEPAD_RIGHT_SHOULDER, game::K_BUTTON_RSHLDR, game::K_PGDN, false},
+			{XINPUT_GAMEPAD_START, game::K_BUTTON_START, game::K_ENTER, false},
+			{XINPUT_GAMEPAD_BACK, game::K_BUTTON_BACK, game::K_ESCAPE, false},
+			{XINPUT_GAMEPAD_LEFT_THUMB, 0, 0, true},
+			{XINPUT_GAMEPAD_RIGHT_THUMB, 0, 0, true},
+			{XINPUT_GAMEPAD_DPAD_UP, game::K_DPAD_UP, game::K_UPARROW, false},
+			{XINPUT_GAMEPAD_DPAD_DOWN, game::K_DPAD_DOWN, game::K_DOWNARROW, false},
+			{XINPUT_GAMEPAD_DPAD_LEFT, game::K_DPAD_LEFT, game::K_LEFTARROW, false},
+			{XINPUT_GAMEPAD_DPAD_RIGHT, game::K_DPAD_RIGHT, game::K_RIGHTARROW, false},
 		};
 
 		bool is_gamepad_enabled()
@@ -74,18 +88,45 @@ namespace gamepad
 
 		bool is_menu_mode()
 		{
-			return game::keyCatchers && *game::keyCatchers != 0;
+			return game_console::is_active() || (game::keyCatchers && *game::keyCatchers != 0);
 		}
 
-		int get_deadzone()
+		bool should_drive_native_cmd()
+		{
+			return is_gamepad_enabled()
+				&& pad.connected
+				&& !shutdown_requested
+				&& !is_menu_mode();
+		}
+
+		float get_stick_deadzone_min()
 		{
 			if (!dvars::gpad_stick_deadzone_min)
 			{
-				return XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE;
+				return 0.2f;
 			}
 
-			const auto value = std::clamp(dvars::gpad_stick_deadzone_min->current.value, 0.0f, 1.0f);
-			return static_cast<int>(value * 32767.0f);
+			return std::clamp(dvars::gpad_stick_deadzone_min->current.value, 0.0f, 1.0f);
+		}
+
+		float get_stick_deadzone_max()
+		{
+			if (!dvars::gpad_stick_deadzone_max)
+			{
+				return 0.01f;
+			}
+
+			return std::clamp(dvars::gpad_stick_deadzone_max->current.value, 0.0f, 1.0f);
+		}
+
+		float get_trigger_deadzone()
+		{
+			if (!dvars::gpad_button_deadzone)
+			{
+				return 0.13f;
+			}
+
+			return std::clamp(dvars::gpad_button_deadzone->current.value, 0.0f, 1.0f);
 		}
 
 		DWORD get_first_repeat_delay()
@@ -146,6 +187,61 @@ namespace gamepad
 			game::Com_Printf(0, "%s", buffer);
 		}
 
+		void normalize_stick_pair(const SHORT x, const SHORT y, float& out_x, float& out_y)
+		{
+			if (x == 0 && y == 0)
+			{
+				out_x = 0.0f;
+				out_y = 0.0f;
+				return;
+			}
+
+			float stick_x = static_cast<float>(x) / static_cast<float>(std::numeric_limits<SHORT>::max());
+			float stick_y = static_cast<float>(y) / static_cast<float>(std::numeric_limits<SHORT>::max());
+			const auto length = std::sqrt((stick_x * stick_x) + (stick_y * stick_y));
+
+			if (length <= 0.0f)
+			{
+				out_x = 0.0f;
+				out_y = 0.0f;
+				return;
+			}
+
+			const auto min_deadzone = get_stick_deadzone_min();
+			const auto max_deadzone = get_stick_deadzone_max();
+			const auto deadzone_total = min_deadzone + max_deadzone;
+
+			float scaled_length = 0.0f;
+			if (length >= min_deadzone)
+			{
+				if (length <= (1.0f - max_deadzone))
+				{
+					scaled_length = (length - min_deadzone) / std::max(0.001f, 1.0f - deadzone_total);
+				}
+				else
+				{
+					scaled_length = 1.0f;
+				}
+			}
+
+			const auto normalized_x = stick_x / length;
+			const auto normalized_y = stick_y / length;
+			out_x = normalized_x * scaled_length;
+			out_y = normalized_y * scaled_length;
+		}
+
+		float normalize_trigger(const BYTE value)
+		{
+			const auto normalized = static_cast<float>(value) / 255.0f;
+			const auto deadzone = get_trigger_deadzone();
+			if (normalized <= deadzone)
+			{
+				return 0.0f;
+			}
+
+			return std::clamp((normalized - deadzone) / std::max(0.001f, 1.0f - deadzone), 0.0f, 1.0f);
+		}
+
 		void release_all_inputs(const DWORD time)
 		{
 			for (const auto& mapping : digital_buttons)
@@ -154,58 +250,15 @@ namespace gamepad
 				fire_key_event(mapping.menu_key, false, time);
 			}
 
-			fire_key_event(game::K_MOUSE1, false, time);
-			fire_key_event(game::K_MOUSE2, false, time);
-			fire_key_event('w', false, time);
-			fire_key_event('a', false, time);
-			fire_key_event('s', false, time);
-			fire_key_event('d', false, time);
+			pad.menu_direction_down.fill(false);
+			pad.menu_next_repeat_time.fill(0);
+			pad.yaw_remainder = 0.0f;
+			pad.pitch_remainder = 0.0f;
 		}
 
 		void update_activity(const DWORD time)
 		{
 			pad.last_activity_time = time;
-		}
-
-		void handle_digital_buttons(const XINPUT_GAMEPAD& current, const XINPUT_GAMEPAD& previous, const DWORD time)
-		{
-			const auto menu_mode = is_menu_mode();
-
-			for (const auto& mapping : digital_buttons)
-			{
-				const auto was_down = (previous.wButtons & mapping.xinput_mask) != 0;
-				const auto is_down = (current.wButtons & mapping.xinput_mask) != 0;
-
-				if (was_down == is_down)
-				{
-					continue;
-				}
-
-				const auto key = menu_mode ? mapping.menu_key : mapping.gameplay_key;
-				fire_key_event(key, is_down, time);
-				if (is_down)
-				{
-					update_activity(time);
-				}
-			}
-		}
-
-		void handle_triggers(const BYTE current_value, const BYTE previous_value, const int key, const DWORD time)
-		{
-			constexpr BYTE threshold = XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
-			const auto was_down = previous_value > threshold;
-			const auto is_down = current_value > threshold;
-
-			if (was_down == is_down)
-			{
-				return;
-			}
-
-			fire_key_event(key, is_down, time);
-			if (is_down)
-			{
-				update_activity(time);
-			}
 		}
 
 		void handle_menu_direction(const direction dir, const int key, const bool active, const DWORD time)
@@ -238,67 +291,217 @@ namespace gamepad
 			next_repeat = 0;
 		}
 
-		void handle_left_stick_menu_input(const XINPUT_GAMEPAD& state, const DWORD time)
+		void handle_left_stick_menu_input(const DWORD time)
 		{
-			const auto deadzone = get_deadzone();
-			handle_menu_direction(dir_up, game::K_UPARROW, state.sThumbLY >= deadzone, time);
-			handle_menu_direction(dir_down, game::K_DOWNARROW, state.sThumbLY <= -deadzone, time);
-			handle_menu_direction(dir_left, game::K_LEFTARROW, state.sThumbLX <= -deadzone, time);
-			handle_menu_direction(dir_right, game::K_RIGHTARROW, state.sThumbLX >= deadzone, time);
+			const auto threshold = std::max(0.05f, get_stick_deadzone_min() + 0.05f);
+			handle_menu_direction(dir_up, game::K_UPARROW, pad.left_stick_y >= threshold, time);
+			handle_menu_direction(dir_down, game::K_DOWNARROW, pad.left_stick_y <= -threshold, time);
+			handle_menu_direction(dir_left, game::K_LEFTARROW, pad.left_stick_x <= -threshold, time);
+			handle_menu_direction(dir_right, game::K_RIGHTARROW, pad.left_stick_x >= threshold, time);
 		}
 
-		void set_move_key(const direction dir, const int key, const bool active, const DWORD time)
+		void update_analog_state(const XINPUT_GAMEPAD& state)
 		{
-			auto& was_down = pad.move_direction_down[dir];
-			if (was_down == active)
-			{
-				return;
-			}
-
-			fire_key_event(key, active, time);
-			was_down = active;
-			if (active)
-			{
-				update_activity(time);
-			}
+			normalize_stick_pair(state.sThumbLX, state.sThumbLY, pad.left_stick_x, pad.left_stick_y);
+			normalize_stick_pair(state.sThumbRX, state.sThumbRY, pad.right_stick_x, pad.right_stick_y);
+			pad.left_trigger = normalize_trigger(state.bLeftTrigger);
+			pad.right_trigger = normalize_trigger(state.bRightTrigger);
 		}
 
-		void handle_left_stick_game_input(const XINPUT_GAMEPAD& state, const DWORD time)
+		void handle_digital_buttons(const XINPUT_GAMEPAD& current, const XINPUT_GAMEPAD& previous, const DWORD time)
 		{
-			const auto deadzone = get_deadzone();
-			set_move_key(dir_up, 'w', state.sThumbLY >= deadzone, time);
-			set_move_key(dir_down, 's', state.sThumbLY <= -deadzone, time);
-			set_move_key(dir_left, 'a', state.sThumbLX <= -deadzone, time);
-			set_move_key(dir_right, 'd', state.sThumbLX >= deadzone, time);
-		}
-
-		void accumulate_right_stick_look(const XINPUT_GAMEPAD& state, const DWORD time)
-		{
-			const auto deadzone = get_deadzone();
-			const auto normalize_axis = [deadzone](const SHORT value)
+			for (const auto& mapping : digital_buttons)
 			{
-				if (std::abs(static_cast<int>(value)) <= deadzone)
+				const auto was_down = (previous.wButtons & mapping.xinput_mask) != 0;
+				const auto is_down = (current.wButtons & mapping.xinput_mask) != 0;
+
+				if (was_down == is_down)
 				{
-					return 0.0f;
+					continue;
 				}
 
-				const auto sign = value < 0 ? -1.0f : 1.0f;
-				const auto magnitude = (std::abs(static_cast<int>(value)) - deadzone) / static_cast<float>(32767 - deadzone);
-				return std::clamp(sign * magnitude, -1.0f, 1.0f);
-			};
+				if (pad.menu_mode)
+				{
+					fire_key_event(mapping.menu_key, is_down, time);
+				}
+				else if (!mapping.handled_natively_in_gameplay)
+				{
+					fire_key_event(mapping.gameplay_key, is_down, time);
+				}
 
-			const auto x = normalize_axis(state.sThumbRX);
-			const auto y = normalize_axis(state.sThumbRY);
+				if (is_down)
+				{
+					update_activity(time);
+				}
+			}
+		}
 
-			if (x == 0.0f && y == 0.0f)
+		int normalize_angle_units(int angle)
+		{
+			while (angle > 32768)
+			{
+				angle -= 65536;
+			}
+
+			while (angle < -32768)
+			{
+				angle += 65536;
+			}
+
+			return angle;
+		}
+
+		std::int8_t clamp_cmd_axis(const int value)
+		{
+			return static_cast<std::int8_t>(std::clamp(value, -127, 127));
+		}
+
+		float get_view_sensitivity()
+		{
+			const auto* const dvar = game::Dvar_FindVar("input_viewSensitivity");
+			return dvar ? std::clamp(dvar->current.value, 0.01f, 30.0f) : 1.0f;
+		}
+
+		void apply_native_gamepad_to_cmd(game::usercmd_t* cmd)
+		{
+			if (!cmd || !should_drive_native_cmd())
 			{
 				return;
 			}
 
-			constexpr float look_scale = 14.0f;
-			pad.accumulated_look_x += x * look_scale;
-			pad.accumulated_look_y += y * look_scale;
-			update_activity(time);
+			const auto forward = pad.left_stick_y;
+			const auto side = pad.left_stick_x;
+			const auto yaw_axis = -pad.right_stick_x;
+			auto pitch_axis = pad.right_stick_y;
+
+			if (!dvars::input_invertPitch || !dvars::input_invertPitch->current.enabled)
+			{
+				pitch_axis *= -1.0f;
+			}
+
+			float move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
+			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
+			{
+				const auto length = std::fabs(side) <= std::fabs(forward)
+					? (forward != 0.0f ? side / forward : 0.0f)
+					: (side != 0.0f ? forward / side : 0.0f);
+				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+			}
+
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + static_cast<int>(std::floor(forward * move_scale)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + static_cast<int>(std::floor(side * move_scale)));
+
+			const auto turn_rate = 1200.0f * get_view_sensitivity();
+			pad.yaw_remainder += yaw_axis * turn_rate;
+			pad.pitch_remainder += pitch_axis * turn_rate;
+
+			const auto yaw_delta = static_cast<int>(pad.yaw_remainder);
+			const auto pitch_delta = static_cast<int>(pad.pitch_remainder);
+
+			pad.yaw_remainder -= static_cast<float>(yaw_delta);
+			pad.pitch_remainder -= static_cast<float>(pitch_delta);
+
+			cmd->angles[1] = normalize_angle_units(cmd->angles[1] + yaw_delta);
+			cmd->angles[0] = normalize_angle_units(cmd->angles[0] + pitch_delta);
+
+			if (pad.right_trigger > 0.0f)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_ATTACK);
+			}
+
+			if (pad.left_trigger > 0.0f)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_ADS);
+			}
+
+			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB) != 0)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_SPRINT);
+			}
+
+			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB) != 0)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_MELEE_BREATH);
+			}
+
+			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_X) != 0)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_USE | game::BUTTON_RELOAD);
+			}
+
+			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_B) != 0)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_CROUCH);
+			}
+
+			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_A) != 0)
+			{
+				cmd->upmove = 127;
+			}
+		}
+
+		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
+		{
+			// This is the stock QoS usercmd builder reached from 0x102FFCD4.
+			// We let the game build its normal command first, then layer native pad input on top.
+			const auto func_loc = static_cast<int>(game::game_offset(0x102FFB80));
+			game::usercmd_t* result = nullptr;
+
+			__asm
+			{
+				push local_client_num
+				mov eax, cmd
+				call func_loc
+				add esp, 4
+				mov result, eax
+			}
+
+			apply_native_gamepad_to_cmd(result);
+			return result;
+		}
+
+		__declspec(naked) void build_cmd_stub()
+		{
+			__asm
+			{
+				mov edx, [esp + 4]
+				push edx
+				push eax
+				call build_cmd_body
+				add esp, 8
+				ret
+			}
+		}
+
+		void install_native_cmd_hook()
+		{
+			if (create_cmd_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_create_cmd_call.size(); ++i)
+			{
+				original_create_cmd_call[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFCD4 + i));
+			}
+
+			utils::hook::call(game::game_offset(0x102FFCD4), build_cmd_stub);
+			create_cmd_callsite_patched = true;
+		}
+
+		void restore_native_cmd_hook()
+		{
+			if (!create_cmd_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_create_cmd_call.size(); ++i)
+			{
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFCD4 + static_cast<int>(i)), original_create_cmd_call[i]);
+			}
+
+			create_cmd_callsite_patched = false;
 		}
 
 		void poll_controller()
@@ -329,6 +532,15 @@ namespace gamepad
 
 			pad.connected = true;
 			pad.state = state;
+			update_analog_state(pad.state.Gamepad);
+
+			const auto menu_mode = is_menu_mode();
+			if (menu_mode != pad.menu_mode)
+			{
+				release_all_inputs(time);
+				pad.previous_state = {};
+				pad.menu_mode = menu_mode;
+			}
 
 			if (!is_gamepad_enabled())
 			{
@@ -340,51 +552,40 @@ namespace gamepad
 
 			handle_digital_buttons(pad.state.Gamepad, pad.previous_state.Gamepad, time);
 
-			if (is_menu_mode())
+			if (pad.menu_mode)
 			{
-				handle_left_stick_menu_input(pad.state.Gamepad, time);
-			}
-			else
-			{
-				handle_left_stick_game_input(pad.state.Gamepad, time);
+				handle_left_stick_menu_input(time);
 			}
 
-			handle_triggers(pad.state.Gamepad.bLeftTrigger, pad.previous_state.Gamepad.bLeftTrigger, game::K_MOUSE2, time);
-			handle_triggers(pad.state.Gamepad.bRightTrigger, pad.previous_state.Gamepad.bRightTrigger, game::K_MOUSE1, time);
-			accumulate_right_stick_look(pad.state.Gamepad, time);
+			const auto has_analog_activity =
+				std::fabs(pad.left_stick_x) > 0.0f
+				|| std::fabs(pad.left_stick_y) > 0.0f
+				|| std::fabs(pad.right_stick_x) > 0.0f
+				|| std::fabs(pad.right_stick_y) > 0.0f
+				|| pad.left_trigger > 0.0f
+				|| pad.right_trigger > 0.0f;
+
+			if (has_analog_activity || pad.state.Gamepad.wButtons != 0)
+			{
+				update_activity(time);
+			}
 
 			const auto in_use = (time - pad.last_activity_time) <= 2000u;
 			set_bool_dvar(dvars::gpad_in_use, in_use);
 
-			debug_print("gpad: buttons=0x%04X lx=%d ly=%d rx=%d ry=%d lt=%u rt=%u menu=%d in_use=%d\n",
+			debug_print("gpad: buttons=0x%04X lx=%.3f ly=%.3f rx=%.3f ry=%.3f lt=%.3f rt=%.3f menu=%d in_use=%d\n",
 				pad.state.Gamepad.wButtons,
-				pad.state.Gamepad.sThumbLX,
-				pad.state.Gamepad.sThumbLY,
-				pad.state.Gamepad.sThumbRX,
-				pad.state.Gamepad.sThumbRY,
-				pad.state.Gamepad.bLeftTrigger,
-				pad.state.Gamepad.bRightTrigger,
-				static_cast<int>(is_menu_mode()),
+				pad.left_stick_x,
+				pad.left_stick_y,
+				pad.right_stick_x,
+				pad.right_stick_y,
+				pad.left_trigger,
+				pad.right_trigger,
+				static_cast<int>(pad.menu_mode),
 				static_cast<int>(in_use));
 
 			pad.previous_state = pad.state;
 		}
-	}
-
-	bool should_override_mouse()
-	{
-		return is_gamepad_enabled() && dvars::gpad_in_use && dvars::gpad_in_use->current.enabled;
-	}
-
-	bool consume_right_stick_delta(int& dx, int& dy)
-	{
-		dx = static_cast<int>(pad.accumulated_look_x);
-		dy = static_cast<int>(-pad.accumulated_look_y);
-
-		pad.accumulated_look_x -= static_cast<float>(dx);
-		pad.accumulated_look_y += static_cast<float>(dy);
-
-		return dx != 0 || dy != 0;
 	}
 
 	class component final : public component_interface
@@ -392,6 +593,8 @@ namespace gamepad
 	public:
 		void post_load() override
 		{
+			install_native_cmd_hook();
+
 			scheduler::loop([]()
 			{
 				poll_controller();
@@ -401,6 +604,7 @@ namespace gamepad
 			{
 				shutdown_requested = true;
 				release_all_inputs(GetTickCount());
+				restore_native_cmd_hook();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
 			});
@@ -409,6 +613,7 @@ namespace gamepad
 		void pre_destroy() override
 		{
 			shutdown_requested = true;
+			restore_native_cmd_hook();
 		}
 	};
 }
