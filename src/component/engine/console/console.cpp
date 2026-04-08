@@ -1,9 +1,9 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 
-#include "console.hpp"
-#include "game_console.hpp"
-#include "scheduler.hpp"
+#include "component/engine/console/console.hpp"
+#include "component/engine/console/game_console.hpp"
+#include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"
 

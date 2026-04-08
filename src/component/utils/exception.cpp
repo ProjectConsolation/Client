@@ -2,7 +2,7 @@
 #include "loader/component_loader.hpp"
 #include "game/game.hpp"
 
-#include "scheduler.hpp"
+#include "component/utils/scheduler.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/io.hpp>
@@ -133,4 +133,4 @@ namespace exception
     };
 }
 
-//REGISTER_COMPONENT(exception::component)
+REGISTER_COMPONENT(exception::component)
