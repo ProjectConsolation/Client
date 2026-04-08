@@ -3,7 +3,6 @@
 #include "loader/component_loader.hpp"
 
 #include "component/utils/scheduler.hpp"
-#include "component/gamepad/gamepad.hpp"
 #include "component/engine/console/game_console.hpp"
 
 #include "game/game.hpp"
@@ -29,10 +28,7 @@ namespace xinput
 			bool menu_mode = false;
 			XINPUT_STATE state{};
 			XINPUT_STATE previous_state{};
-			gamepad::normalized_state normalized{};
-			gamepad::normalized_state previous_normalized{};
 			std::array<bool, 4> menu_direction_down{};
-			std::array<bool, 4> apad_direction_down{};
 			std::array<DWORD, 4> menu_next_repeat_time{};
 			DWORD last_activity_time = 0;
 			float left_stick_x = 0.0f;
@@ -49,6 +45,14 @@ namespace xinput
 		bool native_look_callsite_patched = false;
 		std::array<std::uint8_t, 5> original_create_cmd_call{};
 		std::array<std::uint8_t, 5> original_native_look_call{};
+
+		enum direction
+		{
+			dir_up = 0,
+			dir_down,
+			dir_left,
+			dir_right,
+		};
 
 		struct digital_mapping
 		{
@@ -236,12 +240,25 @@ namespace xinput
 				return;
 			}
 
-			fire_key_event(key, is_down, time);
+			auto& player_key_state = game::playerKeys[0];
+			auto& key_state = player_key_state.keys[key];
 
-			const auto& key_state = game::playerKeys[0].keys[key];
-			if (key_state.binding && *key_state.binding)
+			if (is_down)
 			{
-				return;
+				key_state.down = 1;
+				if (++key_state.repeats == 1)
+				{
+					player_key_state.anyKeyDown++;
+				}
+			}
+			else
+			{
+				key_state.down = 0;
+				if (key_state.repeats > 0)
+				{
+					key_state.repeats = 0;
+					player_key_state.anyKeyDown = std::max(0, player_key_state.anyKeyDown - 1);
+				}
 			}
 
 			const auto* command = get_fallback_gameplay_command(key);
@@ -250,8 +267,6 @@ namespace xinput
 				return;
 			}
 
-			// Match IW3SP's behavior closely enough for gameplay buttons:
-			// if the engine has no direct binding for a gamepad key, preserve sensible defaults.
 			if (is_down && key_state.repeats > 1)
 			{
 				return;
@@ -340,12 +355,7 @@ namespace xinput
 			}
 
 			pad.menu_direction_down.fill(false);
-			pad.apad_direction_down.fill(false);
 			pad.menu_next_repeat_time.fill(0);
-			fire_key_event(game::K_APAD_UP, false, time);
-			fire_key_event(game::K_APAD_DOWN, false, time);
-			fire_key_event(game::K_APAD_LEFT, false, time);
-			fire_key_event(game::K_APAD_RIGHT, false, time);
 		}
 
 		void update_activity(const DWORD time)
@@ -353,7 +363,7 @@ namespace xinput
 			pad.last_activity_time = time;
 		}
 
-		void handle_menu_direction(const gamepad::direction dir, const int key, const bool active, const DWORD time)
+		void handle_menu_direction(const direction dir, const int key, const bool active, const DWORD time)
 		{
 			auto& is_down = pad.menu_direction_down[dir];
 			auto& next_repeat = pad.menu_next_repeat_time[dir];
@@ -386,36 +396,10 @@ namespace xinput
 		void handle_left_stick_menu_input(const DWORD time)
 		{
 			const auto threshold = std::max(0.05f, get_stick_deadzone_min() + 0.05f);
-			handle_menu_direction(gamepad::dir_up, game::K_UPARROW, pad.left_stick_y >= threshold, time);
-			handle_menu_direction(gamepad::dir_down, game::K_DOWNARROW, pad.left_stick_y <= -threshold, time);
-			handle_menu_direction(gamepad::dir_left, game::K_LEFTARROW, pad.left_stick_x <= -threshold, time);
-			handle_menu_direction(gamepad::dir_right, game::K_RIGHTARROW, pad.left_stick_x >= threshold, time);
-		}
-
-		void handle_apad_direction(const gamepad::direction dir, const int key, const bool active, const DWORD time)
-		{
-			auto& was_down = pad.apad_direction_down[dir];
-			if (was_down == active)
-			{
-				return;
-			}
-
-			fire_key_event(key, active, time);
-			was_down = active;
-
-			if (active)
-			{
-				update_activity(time);
-			}
-		}
-
-		void handle_left_stick_apad_input(const DWORD time)
-		{
-			const auto threshold = std::max(0.05f, get_stick_deadzone_min() + 0.05f);
-			handle_apad_direction(gamepad::dir_up, game::K_APAD_UP, pad.left_stick_y >= threshold, time);
-			handle_apad_direction(gamepad::dir_down, game::K_APAD_DOWN, pad.left_stick_y <= -threshold, time);
-			handle_apad_direction(gamepad::dir_left, game::K_APAD_LEFT, pad.left_stick_x <= -threshold, time);
-			handle_apad_direction(gamepad::dir_right, game::K_APAD_RIGHT, pad.left_stick_x >= threshold, time);
+			handle_menu_direction(dir_up, game::K_UPARROW, pad.left_stick_y >= threshold, time);
+			handle_menu_direction(dir_down, game::K_DOWNARROW, pad.left_stick_y <= -threshold, time);
+			handle_menu_direction(dir_left, game::K_LEFTARROW, pad.left_stick_x <= -threshold, time);
+			handle_menu_direction(dir_right, game::K_RIGHTARROW, pad.left_stick_x >= threshold, time);
 		}
 
 		void update_analog_state(const XINPUT_GAMEPAD& state)
@@ -424,13 +408,6 @@ namespace xinput
 			normalize_stick_pair(state.sThumbRX, state.sThumbRY, pad.right_stick_x, pad.right_stick_y);
 			pad.left_trigger = normalize_trigger(state.bLeftTrigger);
 			pad.right_trigger = normalize_trigger(state.bRightTrigger);
-			pad.normalized.left_stick_x = pad.left_stick_x;
-			pad.normalized.left_stick_y = pad.left_stick_y;
-			pad.normalized.right_stick_x = pad.right_stick_x;
-			pad.normalized.right_stick_y = pad.right_stick_y;
-			pad.normalized.left_trigger = pad.left_trigger;
-			pad.normalized.right_trigger = pad.right_trigger;
-			pad.normalized.buttons = state.wButtons;
 		}
 
 		void handle_digital_buttons(const XINPUT_GAMEPAD& current, const XINPUT_GAMEPAD& previous, const DWORD time)
@@ -451,7 +428,18 @@ namespace xinput
 				}
 				else
 				{
-					handle_gameplay_button_event(mapping.gameplay_key, is_down, time);
+					switch (mapping.gameplay_key)
+					{
+					case game::K_BUTTON_START:
+						fire_key_event(game::K_ESCAPE, is_down, time);
+						break;
+					case game::K_BUTTON_BACK:
+						fire_key_event(game::K_TAB, is_down, time);
+						break;
+					default:
+						handle_gameplay_button_event(mapping.gameplay_key, is_down, time);
+						break;
+					}
 				}
 
 				if (is_down)
@@ -566,8 +554,6 @@ namespace xinput
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
 		{
-			// This is the stock QoS usercmd builder reached from 0x102FFCD4.
-			// We let the game build its normal command first, then layer native pad input on top.
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FFB80));
 			game::usercmd_t* result = nullptr;
 
@@ -588,8 +574,6 @@ namespace xinput
 		{
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FC4D0));
 
-			// Feed the engine-owned view offset globals before the stock look path runs,
-			// so QoS encodes the same live camera state into the outgoing usercmd.
 			apply_native_view_input();
 
 			__asm
@@ -755,10 +739,6 @@ namespace xinput
 			{
 				handle_left_stick_menu_input(time);
 			}
-			else
-			{
-				handle_left_stick_apad_input(time);
-			}
 
 			const auto has_analog_activity =
 				std::fabs(pad.left_stick_x) > 0.0f
@@ -788,7 +768,6 @@ namespace xinput
 				static_cast<int>(in_use));
 
 			pad.previous_state = pad.state;
-			pad.previous_normalized = pad.normalized;
 		}
 	}
 
