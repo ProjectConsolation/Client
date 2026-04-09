@@ -16,6 +16,7 @@ namespace filesystem
 	namespace
 	{
 		utils::hook::detour fs_startup_hook;
+		utils::hook::detour sys_default_install_path_hook;
 
 		bool initialized = false;
 
@@ -62,10 +63,32 @@ namespace filesystem
 			return true;
 		}
 
+		std::string resolve_install_path()
+		{
+			char buffer[MAX_PATH]{};
+			if (GetModuleFileNameA(nullptr, buffer, MAX_PATH) > 0)
+			{
+				return std::filesystem::path(buffer).parent_path().generic_string();
+			}
+
+			return std::filesystem::current_path().generic_string();
+		}
+
 		const char* sys_default_install_path_stub()
 		{
-			static auto current_path = std::filesystem::current_path().string();
-			return current_path.data();
+			static const std::string fallback_path = resolve_install_path();
+
+			const auto* original_path = sys_default_install_path_hook.invoke<const char*>();
+			if (original_path && *original_path)
+			{
+				const std::filesystem::path candidate(original_path);
+				if (std::filesystem::exists(candidate / "main") || std::filesystem::exists(candidate))
+				{
+					return original_path;
+				}
+			}
+
+			return fallback_path.c_str();
 		}
 	}
 
@@ -206,8 +229,7 @@ namespace filesystem
 		void post_load() override
 		{
 			fs_startup_hook.create(game::game_offset(0x10272D80), fs_startup_stub);
-
-			utils::hook::jump(game::game_offset(0x10274AA0), sys_default_install_path_stub);
+			sys_default_install_path_hook.create(game::game_offset(0x10274AA0), sys_default_install_path_stub);
 		}
 	};
 }
