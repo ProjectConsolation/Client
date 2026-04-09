@@ -507,4 +507,4 @@ namespace profile_patches
 	};
 }
 
-REGISTER_COMPONENT(profile_patches::component)
+//REGISTER_COMPONENT(profile_patches::component)

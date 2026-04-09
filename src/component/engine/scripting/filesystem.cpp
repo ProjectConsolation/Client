@@ -3,7 +3,7 @@
 
 #include "component/engine/console/command.hpp"
 #include "component/engine/console/console.hpp"
-#include "filesystem.hpp"
+#include "component/engine/scripting/filesystem.hpp"
 
 #include "game/game.hpp"
 

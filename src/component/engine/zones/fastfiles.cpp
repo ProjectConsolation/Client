@@ -3,7 +3,7 @@
 
 #include "game/game.hpp"
 
-#include "fastfiles.hpp"
+#include "component/engine/zones/fastfiles.hpp"
 #include "component/engine/console/command.hpp"
 #include "component/engine/console/console.hpp"
 

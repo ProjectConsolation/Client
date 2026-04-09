@@ -2,8 +2,8 @@
 #include "loader/component_loader.hpp"
 
 #include "component/engine/console/console.hpp"
-#include "filesystem.hpp"
-#include "gsc.hpp"
+#include "component/engine/scripting/filesystem.hpp"
+#include "component/engine/scripting/gsc.hpp"
 #include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"

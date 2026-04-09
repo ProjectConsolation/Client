@@ -300,4 +300,4 @@ namespace ultrawide
 	};
 }
 
-REGISTER_COMPONENT(ultrawide::component)
+//REGISTER_COMPONENT(ultrawide::component)
