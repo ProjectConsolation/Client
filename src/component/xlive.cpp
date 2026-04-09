@@ -55,7 +55,7 @@
 #include <std_include.hpp>
 #include <utils/hook.hpp>
 #include "loader/component_loader.hpp"
-#include "component/engine/patches/xlive.hpp"
+#include "xlive.hpp"
 
 namespace xlive
 {

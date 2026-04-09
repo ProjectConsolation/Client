@@ -2,22 +2,19 @@
 
 #include "loader/component_loader.hpp"
 
-#include "component/engine/console/console.hpp"
-#include "component/engine/scripting/filesystem.hpp"
+#include "console.hpp"
+#include "filesystem.hpp"
 
 #include "game/game.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/nt.hpp>
-#include <utils/string.hpp>
 
 namespace sounds
 {
 	namespace
 	{
 		utils::hook::detour ail_set_stream_loop_block_hook;
-		utils::hook::detour com_error_hook;
-		bool bus_def_error_ignored = false;
 
 		constexpr auto music_stream_callsite_1 = 0x103FFDC0;
 		constexpr auto music_stream_callsite_2 = 0x103FFE5B;
@@ -34,12 +31,6 @@ namespace sounds
 
 		std::string current_override_path;
 		std::string last_notified_override;
-
-		bool command_line_has(const char* token)
-		{
-			const auto* const cmd = GetCommandLineA();
-			return cmd && token && std::strstr(cmd, token) != nullptr;
-		}
 
 		std::string sanitize_name(std::string value)
 		{
@@ -180,40 +171,6 @@ namespace sounds
 			console::warn("overriding %s with %s\n", alias, override_path.c_str());
 		}
 
-		void __cdecl com_error_stub(int a1, int a2, int a3, char* fmt, ...)
-		{
-			char buffer[2048]{};
-			va_list ap;
-			va_start(ap, fmt);
-			vsnprintf_s(buffer, _TRUNCATE, fmt, ap);
-			va_end(ap);
-
-			if (!bus_def_error_ignored
-				&& (utils::string::string_contains(buffer, "soundaliases/bus.def")
-					|| utils::string::string_contains(buffer, "bus.def")))
-			{
-				bus_def_error_ignored = true;
-				game::Com_Printf(0, "sounds: missing bus.def (continuing without sound)\n");
-
-				if (auto* dvar = game::Dvar_FindVar("snd_disable"))
-				{
-					dvar->current.enabled = true;
-					dvar->latched.enabled = true;
-					dvar->reset.enabled = true;
-				}
-				if (auto* dvar = game::Dvar_FindVar("s_nosound"))
-				{
-					dvar->current.enabled = true;
-					dvar->latched.enabled = true;
-					dvar->reset.enabled = true;
-				}
-
-				return;
-			}
-
-			com_error_hook.invoke<void>(a1, a2, a3, "%s", buffer);
-		}
-
 		int __cdecl open_music_stream_stub(const char*** request, int index)
 		{
 			using open_stream_t = int(__cdecl*)(const char***, int);
@@ -261,11 +218,6 @@ namespace sounds
 	public:
 		void post_load() override
 		{
-			if (!command_line_has("-no_busdef_bypass"))
-			{
-				com_error_hook.create(game::Com_Error, com_error_stub);
-			}
-
 			utils::hook::call(game::game_offset(music_stream_callsite_1), open_music_stream_stub);
 			utils::hook::call(game::game_offset(music_stream_callsite_2), open_music_stream_stub);
 			utils::hook::call(game::game_offset(music_stream_callsite_3), open_music_stream_stub);
@@ -286,4 +238,4 @@ namespace sounds
 }
 
 
-REGISTER_COMPONENT(sounds::component)
+// REGISTER_COMPONENT(sounds::component)

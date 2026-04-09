@@ -2,14 +2,12 @@
 #include "loader/component_loader.hpp"
 #include "game/game.hpp"
 
-#include "component/utils/scheduler.hpp"
+#include "scheduler.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
 #include <utils/thread.hpp>
-#include <atomic>
-#include <thread>
 
 #include <exception/minidump.hpp>
 
@@ -17,11 +15,6 @@ namespace exception
 {
     namespace
     {
-        using namespace std::chrono_literals;
-
-        std::atomic<unsigned long long> last_heartbeat_ms{0};
-        std::atomic<bool> watchdog_running{false};
-
         thread_local struct
         {
             DWORD code = 0;
@@ -94,19 +87,10 @@ namespace exception
 
         void write_minidump(const LPEXCEPTION_POINTERS exceptioninfo)
         {
-            utils::io::create_directory("minidumps");
             const std::string crash_name = utils::string::va("minidumps/consolation-crash-%s.dmp",
                                                              utils::string::get_timestamp().data());
             create_minidump(exceptioninfo);
             utils::io::write_file(crash_name, create_minidump(exceptioninfo), false);
-        }
-
-        void write_hang_dump()
-        {
-            utils::io::create_directory("minidumps");
-            const std::string crash_name = utils::string::va("minidumps/consolation-hang-%s.dmp",
-                                                             utils::string::get_timestamp().data());
-            utils::io::write_file(crash_name, create_minidump(), false);
         }
 
         bool is_harmless_error(const LPEXCEPTION_POINTERS exceptioninfo)
@@ -136,44 +120,6 @@ namespace exception
             // Don't register anything here...
             return &exception_filter;
         }
-
-        bool command_line_has(const char* token)
-        {
-            const auto* const cmd = GetCommandLineA();
-            return cmd && token && std::strstr(cmd, token) != nullptr;
-        }
-
-        void start_watchdog()
-        {
-            if (watchdog_running.exchange(true))
-            {
-                return;
-            }
-
-            last_heartbeat_ms = GetTickCount64();
-
-            std::thread([]()
-            {
-                constexpr auto timeout_ms = 10000ULL;
-
-                while (true)
-                {
-                    std::this_thread::sleep_for(1s);
-                    const auto now = GetTickCount64();
-                    const auto last = last_heartbeat_ms.load();
-                    if (now - last >= timeout_ms)
-                    {
-                        write_hang_dump();
-                        TerminateProcess(GetCurrentProcess(), 0xDEAD);
-                    }
-                }
-            }).detach();
-
-            scheduler::loop([]()
-            {
-                last_heartbeat_ms = GetTickCount64();
-            }, scheduler::main, 250ms);
-        }
     }
 
     class component final : public component_interface
@@ -181,32 +127,10 @@ namespace exception
     public:
         void post_load() override
         {
-            if (command_line_has("-no_crashdump"))
-            {
-                return;
-            }
-
-            if (!command_line_has("-no_watchdog"))
-            {
-                start_watchdog();
-            }
-
-            const auto enable_handler = []()
-            {
-                SetUnhandledExceptionFilter(exception_filter);
-                utils::hook::jump(reinterpret_cast<uintptr_t>(&SetUnhandledExceptionFilter), set_unhandled_exception_filter_stub);
-            };
-
-            if (command_line_has("-crashdump"))
-            {
-                enable_handler();
-                return;
-            }
-
-            // Delay hook to avoid interfering with early boot while still capturing later crashes.
-            scheduler::once(enable_handler, scheduler::main, 15s);
+            SetUnhandledExceptionFilter(exception_filter);
+            utils::hook::jump(reinterpret_cast<uintptr_t>(&SetUnhandledExceptionFilter), set_unhandled_exception_filter_stub);
         }
     };
 }
 
-REGISTER_COMPONENT(exception::component)
+//REGISTER_COMPONENT(exception::component)

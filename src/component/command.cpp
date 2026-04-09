@@ -1,14 +1,14 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 
-#include "component/engine/console/command.hpp"
-#include "component/engine/console/console.hpp"
-#include "component/utils/scheduler.hpp"
+#include "command.hpp"
+#include "console.hpp"
+#include "scheduler.hpp"
 
 #include <utils/memory.hpp>
 #include <utils/string.hpp>
 #include <utils/io.hpp>
-#include "component/engine/zones/fastfiles.hpp"
+#include "fastfiles.hpp"
 #include <game/dvars.hpp>
 
 namespace command

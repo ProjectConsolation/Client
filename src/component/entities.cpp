@@ -1,6 +1,6 @@
 #include <std_include.hpp>
 
-#include <component/engine/console/console.hpp>
+#include <component/console.hpp>
 #include <game/game.hpp>
 #include <game/structs.hpp>
 #include <utils/string.hpp>

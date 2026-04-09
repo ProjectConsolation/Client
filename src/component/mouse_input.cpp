@@ -1,7 +1,7 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 
-#include "component/utils/scheduler.hpp"
+#include "scheduler.hpp"
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"

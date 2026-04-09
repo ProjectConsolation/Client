@@ -43,7 +43,7 @@ namespace exception
 			                                      nullptr);
 
 			if (!MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file_handle, get_minidump_type(),
-			                       exceptioninfo ? &minidump_exception_info : nullptr,
+			                       &minidump_exception_info,
 			                       nullptr,
 			                       nullptr))
 			{
@@ -90,10 +90,5 @@ namespace exception
 		});
 
 		return read_file(file_handle);
-	}
-
-	std::string create_minidump()
-	{
-		return create_minidump(nullptr);
 	}
 }

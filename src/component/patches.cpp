@@ -1,9 +1,8 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 
-#include "component/engine/console/command.hpp"
-#include "component/engine/console/console.hpp"
-#include "component/utils/scheduler.hpp"
+#include "console.hpp"
+#include "scheduler.hpp"
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"
@@ -185,91 +184,6 @@ namespace patches
 		bool find_dvar(std::unordered_set<std::string>& set, const std::string& name)
 		{
 			return set.find(name) != set.end();
-		}
-
-		bool parse_resolution(const char* text, int& width, int& height)
-		{
-			width = 0;
-			height = 0;
-			if (!text || !*text)
-			{
-				return false;
-			}
-
-			return std::sscanf(text, "%ix%i", &width, &height) == 2 && width > 0 && height > 0;
-		}
-
-		bool is_near_16_9(const int width, const int height)
-		{
-			const auto aspect = static_cast<float>(width) / static_cast<float>(height);
-			const auto diff = std::fabs(aspect - (16.0f / 9.0f));
-			return diff <= 0.01f;
-		}
-
-		bool find_best_16_9_under(const int width, const int height, int& out_width, int& out_height)
-		{
-			static constexpr std::array<std::pair<int, int>, 10> candidates =
-			{ {
-				{3840, 2160},
-				{2560, 1440},
-				{1920, 1080},
-				{1600, 900},
-				{1366, 768},
-				{1280, 720},
-				{1024, 576},
-				{960, 540},
-				{854, 480},
-				{800, 450},
-			} };
-
-			for (const auto& candidate : candidates)
-			{
-				if (candidate.first <= width && candidate.second <= height)
-				{
-					out_width = candidate.first;
-					out_height = candidate.second;
-					return true;
-				}
-			}
-
-			return false;
-		}
-
-		void sanitize_custom_resolution()
-		{
-			const auto* const fullscreen = game::Dvar_FindVar("r_fullscreen");
-			if (fullscreen && !fullscreen->current.enabled)
-			{
-				return;
-			}
-
-			const auto* const custom_mode = game::Dvar_FindVar("r_customMode");
-			if (!custom_mode || !custom_mode->current.string || !custom_mode->current.string[0])
-			{
-				return;
-			}
-
-			int width = 0;
-			int height = 0;
-			if (!parse_resolution(custom_mode->current.string, width, height))
-			{
-				return;
-			}
-
-			if (is_near_16_9(width, height))
-			{
-				return;
-			}
-
-			int safe_width = 0;
-			int safe_height = 0;
-			if (!find_best_16_9_under(width, height, safe_width, safe_height))
-			{
-				return;
-			}
-
-			console::info("sanitize_res: %ix%i -> %ix%i\n", width, height, safe_width, safe_height);
-			command::execute(utils::string::va("seta r_customMode \"%ix%i\"\n", safe_width, safe_height));
 		}
 
 		utils::hook::detour dvar_registernew_hook;
@@ -523,7 +437,6 @@ namespace patches
 
 
 				//dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
-				sanitize_custom_resolution();
 			}, scheduler::main);
 
 			scheduler::loop([]

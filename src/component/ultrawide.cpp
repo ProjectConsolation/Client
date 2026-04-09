@@ -2,9 +2,9 @@
 
 #include "loader/component_loader.hpp"
 
-#include "component/engine/console/command.hpp"
-#include "component/engine/console/console.hpp"
-#include "component/utils/scheduler.hpp"
+#include "command.hpp"
+#include "console.hpp"
+#include "scheduler.hpp"
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"
@@ -300,4 +300,4 @@ namespace ultrawide
 	};
 }
 
-//REGISTER_COMPONENT(ultrawide::component)
+REGISTER_COMPONENT(ultrawide::component)

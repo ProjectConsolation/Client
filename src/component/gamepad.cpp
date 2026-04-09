@@ -2,9 +2,9 @@
 
 #include "loader/component_loader.hpp"
 
-#include "component/utils/scheduler.hpp"
-#include "component/gamepad/gamepad.hpp"
-#include "component/engine/console/game_console.hpp"
+#include "scheduler.hpp"
+#include "gamepad.hpp"
+#include "game_console.hpp"
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"
@@ -19,7 +19,7 @@
 
 #pragma comment(lib, "xinput9_1_0.lib")
 
-namespace xinput
+namespace gamepad
 {
 	namespace
 	{
@@ -268,6 +268,8 @@ namespace xinput
 				return;
 			}
 
+			// Match IW3SP's behavior closely enough for gameplay buttons:
+			// send the bound +command on press and its matching -command on release.
 			if (is_down && key_state.repeats > 1)
 			{
 				return;
@@ -555,6 +557,8 @@ namespace xinput
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
 		{
+			// This is the stock QoS usercmd builder reached from 0x102FFCD4.
+			// We let the game build its normal command first, then layer native pad input on top.
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FFB80));
 			game::usercmd_t* result = nullptr;
 
@@ -575,6 +579,8 @@ namespace xinput
 		{
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FC4D0));
 
+			// Feed the engine-owned view offset globals before the stock look path runs,
+			// so QoS encodes the same live camera state into the outgoing usercmd.
 			apply_native_view_input();
 
 			__asm
@@ -805,4 +811,4 @@ namespace xinput
 	};
 }
 
-REGISTER_COMPONENT(xinput::component)
+REGISTER_COMPONENT(gamepad::component)
