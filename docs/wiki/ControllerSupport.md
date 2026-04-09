@@ -5,9 +5,9 @@ This page describes current controller support and how it behaves in-game.
 ## Current Status (WIP)
 
 - **XInput** is implemented and active, but still basic.
-- **SDL** backend exists as a scaffold only and is not active yet.
+- **SDL2** backend now exists as an optional runtime-loaded path and is still very basic / WIP.
 - **DirectInput** is not supported.
-- **DualShock/DualSense** work only if emulated as XInput (for example DS4Windows / Steam Input).
+- **DualShock/DualSense** are planned as native SDL devices first, not via a full custom HID path yet.
 
 ## XInput Behavior
 
@@ -20,10 +20,14 @@ The XInput layer currently handles:
 
 If a gamepad key has no binding in the engine, fallback commands are used.
 
-## SDL Backend (Planned)
+## SDL Backend (Experimental)
 
-`sdl_input` is currently a stub only.  
-It is present in the project layout so the backend split is in place, but there is no live SDL device polling or SDL linkage yet.
+`sdl_input` is no longer just a placeholder.
+
+- It now uses **runtime loading** for `SDL2.dll` / `SDL2-2.0.dll`
+- If no SDL2 runtime is present, the backend stays inactive and the game falls back to the existing XInput-only behavior
+- The current SDL path is intended for **PlayStation-style controllers first**
+- This backend is still **very basic** and should be treated as work-in-progress
 
 ## Build Note
 
@@ -38,10 +42,11 @@ Because that path is under `Program Files`, compiling or copying the output ther
 - No rumble / vibration yet
 - No native DualShock / DualSense extras yet (touchpad, gyro, lightbar)
 - Only the first controller is used
+- SDL support currently depends on a compatible SDL2 runtime being present next to the game or otherwise loadable by Windows
 
 ## Planned Work
 
 - Finish stabilizing the XInput implementation
-- Add SDL device polling
+- Finish stabilizing the SDL polling path
 - Allow choosing backend (`XInput` vs `SDL`)
-- Add planned native PlayStation controller support through SDL or HID
+- Add fuller native PlayStation controller support through SDL, with HID-only work only if SDL proves too limited
