@@ -4,8 +4,8 @@
 #include "game/game.hpp"
 
 #include "fastfiles.hpp"
-#include "command.hpp"
-#include "console.hpp"
+#include "component/engine/console/command.hpp"
+#include "component/engine/console/console.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/memory.hpp>

@@ -6,7 +6,7 @@
 #include <utils/io.hpp>
 #include <utils/hook.hpp>
 #include <ShellScalingApi.h>
-#include "component/xlive.hpp"
+#include "component/engine/patches/xlive.hpp"
 
 #ifdef DEBUG
 #include <crtdbg.h>

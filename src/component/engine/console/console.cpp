@@ -3,7 +3,7 @@
 
 #include "console.hpp"
 #include "game_console.hpp"
-#include "scheduler.hpp"
+#include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"
 

@@ -2,9 +2,9 @@
 
 #include "loader/component_loader.hpp"
 
-#include "scheduler.hpp"
-#include "gamepad.hpp"
-#include "game_console.hpp"
+#include "component/utils/scheduler.hpp"
+#include "component/gamepad/gamepad.hpp"
+#include "component/engine/console/game_console.hpp"
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"

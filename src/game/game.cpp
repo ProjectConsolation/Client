@@ -1,6 +1,6 @@
 #include <std_include.hpp>
 
-#include "component/console.hpp"
+#include "component/engine/console/console.hpp"
 
 #include "game/game.hpp"
 

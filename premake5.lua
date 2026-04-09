@@ -275,6 +275,7 @@ workspace "consolation-client"
 
 	architecture "x86"
 	platforms "Win32"
+	toolset "v145"
 
 	systemversion "latest"
 	symbols "On"
@@ -321,6 +322,26 @@ workspace "consolation-client"
 			"./src/**.hpp",
 			"./src/**.cpp",
 			"./src/**.rc"
+		}
+
+		vpaths
+		{
+			["component/gamepad"] = { "./src/component/gamepad/*.cpp", "./src/component/gamepad/*.hpp", "./src/component/gamepad/*.h" },
+			["component/engine"] = { "./src/component/engine/*.cpp", "./src/component/engine/*.hpp", "./src/component/engine/*.h" },
+			["component/engine/console"] = { "./src/component/engine/console/*.cpp", "./src/component/engine/console/*.hpp", "./src/component/engine/console/*.h" },
+			["component/engine/mouse_input"] = { "./src/component/engine/mouse_input/*.cpp", "./src/component/engine/mouse_input/*.hpp", "./src/component/engine/mouse_input/*.h" },
+			["component/engine/patches"] = { "./src/component/engine/patches/*.cpp", "./src/component/engine/patches/*.hpp", "./src/component/engine/patches/*.h" },
+			["component/engine/renderer"] = { "./src/component/engine/renderer/*.cpp", "./src/component/engine/renderer/*.hpp", "./src/component/engine/renderer/*.h" },
+			["component/engine/scripting"] = { "./src/component/engine/scripting/*.cpp", "./src/component/engine/scripting/*.hpp", "./src/component/engine/scripting/*.h" },
+			["component/engine/ux"] = { "./src/component/engine/ux/*.cpp", "./src/component/engine/ux/*.hpp", "./src/component/engine/ux/*.h" },
+			["component/engine/zones"] = { "./src/component/engine/zones/*.cpp", "./src/component/engine/zones/*.hpp", "./src/component/engine/zones/*.h" },
+			["component/utils"] = { "./src/component/utils/*.cpp", "./src/component/utils/*.hpp", "./src/component/utils/*.h" },
+			["component"] = { "./src/component/*.cpp", "./src/component/*.hpp", "./src/component/*.h" },
+			["exception"] = { "./src/exception/**.cpp", "./src/exception/**.hpp", "./src/exception/**.h" },
+			["game"] = { "./src/game/**.cpp", "./src/game/**.hpp", "./src/game/**.h" },
+			["loader"] = { "./src/loader/**.cpp", "./src/loader/**.hpp", "./src/loader/**.h" },
+			["utils"] = { "./src/utils/**.cpp", "./src/utils/**.hpp", "./src/utils/**.h" },
+			[""] = { "./src/main.cpp", "./src/sdllp.cpp", "./src/std_include.cpp", "./src/resource.rc", "./src/resource.hpp" },
 		}
 
 		includedirs 
