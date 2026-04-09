@@ -2,7 +2,6 @@
 
 #include "loader/component_loader.hpp"
 
-#include "console.hpp"
 #include "filesystem.hpp"
 
 #include "game/game.hpp"
@@ -29,7 +28,8 @@ namespace sounds
 			const char* name;
 		};
 
-		std::string current_override_path;
+		thread_local std::string current_override_path;
+		std::mutex override_notice_mutex;
 		std::string last_notified_override;
 
 		std::string sanitize_name(std::string value)
@@ -120,13 +120,6 @@ namespace sounds
 				return 0;
 			}
 
-			game::Com_Printf(
-				0,
-				"sounds: AIL_open_stream file='%s' override='%s'\n",
-				filename ? filename : "<null>",
-				current_override_path.empty() ? "<none>" : current_override_path.c_str()
-			);
-
 			if (!current_override_path.empty())
 			{
 				filename = current_override_path.c_str();
@@ -139,13 +132,6 @@ namespace sounds
 		{
 			if (!current_override_path.empty())
 			{
-				game::Com_Printf(
-					0,
-					"sounds: skipping stock loop block %d..%d for override='%s'\n",
-					loop_start,
-					loop_end,
-					current_override_path.c_str()
-				);
 				return;
 			}
 
@@ -161,6 +147,7 @@ namespace sounds
 
 			const auto alias = alias_name && *alias_name ? alias_name : "<unknown>";
 			const auto key = std::format("{}|{}", alias, override_path);
+			std::lock_guard lock(override_notice_mutex);
 			if (last_notified_override == key)
 			{
 				return;
@@ -168,7 +155,7 @@ namespace sounds
 
 			last_notified_override = key;
 
-			console::warn("overriding %s with %s\n", alias, override_path.c_str());
+			game::Com_Printf(0, "sounds: overriding %s with %s\n", alias, override_path.c_str());
 		}
 
 		int __cdecl open_music_stream_stub(const char*** request, int index)
@@ -177,31 +164,19 @@ namespace sounds
 			const auto original = reinterpret_cast<open_stream_t>(game::game_offset(streamed_sound_open_function));
 
 			const char* alias_name = "<null>";
-			const char* source_name = "<null>";
 			if (request && *request)
 			{
 				if ((*request)[0] && *(*request)[0])
 				{
 					alias_name = (*request)[0];
 				}
-
-				const auto* const file_info = reinterpret_cast<const streamed_sound_file_view*>((*request)[4]);
-				if (file_info && file_info->name && *file_info->name)
-				{
-					source_name = file_info->name;
-				}
 			}
 
 			current_override_path = find_music_override(request);
-			game::Com_Printf(
-				0,
-				"sounds: music stream alias='%s' source='%s' override='%s'\n",
-				alias_name,
-				source_name,
-				current_override_path.empty() ? "<none>" : current_override_path.c_str()
-			);
-
-			show_override_notice(alias_name, current_override_path);
+			if (!current_override_path.empty())
+			{
+				show_override_notice(alias_name, current_override_path);
+			}
 
 			const auto clear_override = gsl::finally([]()
 			{
@@ -223,11 +198,6 @@ namespace sounds
 			utils::hook::call(game::game_offset(music_stream_callsite_3), open_music_stream_stub);
 			utils::hook::call(game::game_offset(ail_open_stream_callsite_1), ail_open_stream_stub);
 			utils::hook::call(game::game_offset(ail_open_stream_callsite_2), ail_open_stream_stub);
-
-			if (const auto proc = utils::nt::library("mss32.dll").get_proc<void*>("_AIL_set_stream_loop_block@12"))
-			{
-				ail_set_stream_loop_block_hook.create(proc, ail_set_stream_loop_block_stub);
-			}
 		}
 
 		void pre_destroy() override
@@ -238,4 +208,4 @@ namespace sounds
 }
 
 
-// REGISTER_COMPONENT(sounds::component)
+REGISTER_COMPONENT(sounds::component)
