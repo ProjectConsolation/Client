@@ -2,6 +2,14 @@
 
 This page documents how Consolation writes crash and hang dumps, where logs land, and which launch flags affect behavior.
 
+## Build Output Note
+
+By default, the generated `d3d9.dll` is written to:
+
+- `C:\Program Files (x86)\Activision\Quantum of Solace(TM)\`
+
+That means local builds usually need administrator rights, because the output path is inside `Program Files`.
+
 ## Crash Dumps
 
 Consolation writes `.dmp` files into a `minidumps` folder under the game working directory.
