@@ -2,7 +2,7 @@
 
 #include "loader/component_loader.hpp"
 
-#include "filesystem.hpp"
+#include "component/engine/scripting/filesystem.hpp"
 
 #include "game/game.hpp"
 

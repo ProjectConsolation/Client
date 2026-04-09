@@ -3,12 +3,12 @@
 
 #include "command.hpp"
 #include "console.hpp"
-#include "scheduler.hpp"
+#include "component/utils/scheduler.hpp"
 
 #include <utils/memory.hpp>
 #include <utils/string.hpp>
 #include <utils/io.hpp>
-#include "fastfiles.hpp"
+#include "component/engine/zones/fastfiles.hpp"
 #include <game/dvars.hpp>
 
 namespace command

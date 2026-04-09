@@ -2,9 +2,9 @@
 
 #include "loader/component_loader.hpp"
 
-#include "scheduler.hpp"
+#include "component/utils/scheduler.hpp"
 #include "gamepad.hpp"
-#include "game_console.hpp"
+#include "component/engine/console/game_console.hpp"
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"
@@ -19,7 +19,7 @@
 
 #pragma comment(lib, "xinput9_1_0.lib")
 
-namespace gamepad
+namespace xinput
 {
 	namespace
 	{
@@ -811,4 +811,4 @@ namespace gamepad
 	};
 }
 
-REGISTER_COMPONENT(gamepad::component)
+REGISTER_COMPONENT(xinput::component)
