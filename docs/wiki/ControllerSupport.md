@@ -5,7 +5,7 @@ This page describes current controller support and how it behaves in-game.
 ## Current Status (WIP)
 
 - **XInput** is implemented and active, but still basic.
-- **SDL2** backend now exists as an optional runtime-loaded path and is still very basic / WIP.
+- **SDL2** backend now exists as a statically linked backend and is still very basic / WIP.
 - **DirectInput** is not supported.
 - **DualShock/DualSense** are planned as native SDL devices first, not via a full custom HID path yet.
 
@@ -24,8 +24,8 @@ If a gamepad key has no binding in the engine, fallback commands are used.
 
 `sdl_input` is no longer just a placeholder.
 
-- It now uses **runtime loading** for `SDL2.dll` / `SDL2-2.0.dll`
-- If no SDL2 runtime is present, the backend stays inactive and the game falls back to the existing XInput-only behavior
+- It now builds against **SDL2 as a static library** from the vendored source tree
+- You do **not** need to ship a separate `SDL2.dll` for this backend
 - The current SDL path is intended for **PlayStation-style controllers first**
 - This backend is still **very basic** and should be treated as work-in-progress
 
@@ -42,7 +42,7 @@ Because that path is under `Program Files`, compiling or copying the output ther
 - No rumble / vibration yet
 - No native DualShock / DualSense extras yet (touchpad, gyro, lightbar)
 - Only the first controller is used
-- SDL support currently depends on a compatible SDL2 runtime being present next to the game or otherwise loadable by Windows
+- SDL support is still early and currently focused on basic PlayStation-style controller detection/polling
 
 ## Planned Work
 
