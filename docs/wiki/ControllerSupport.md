@@ -8,6 +8,7 @@ This page describes current controller support and how it behaves in-game.
 - **SDL2** backend now exists as a statically linked backend and is still very basic / WIP.
 - **DirectInput** is not supported.
 - **DualShock/DualSense** are planned as native SDL devices first, not via a full custom HID path yet.
+- **Controller glyph/icon support** is planned later for Xbox and PlayStation button images in UI text.
 
 ## XInput Behavior
 
@@ -41,6 +42,7 @@ Because that path is under `Program Files`, compiling or copying the output ther
 
 - No rumble / vibration yet
 - No native DualShock / DualSense extras yet (touchpad, gyro, lightbar)
+- No button glyph/icon material replacement yet
 - Only the first controller is used
 - SDL support is still early and currently focused on basic PlayStation-style controller detection/polling
 
@@ -49,4 +51,5 @@ Because that path is under `Program Files`, compiling or copying the output ther
 - Finish stabilizing the XInput implementation
 - Finish stabilizing the SDL polling path
 - Allow choosing backend (`XInput` vs `SDL`)
+- Add proper Xbox / PlayStation button glyphs and localized icon text support
 - Add fuller native PlayStation controller support through SDL, with HID-only work only if SDL proves too limited
