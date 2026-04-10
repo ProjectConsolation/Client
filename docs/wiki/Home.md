@@ -1,6 +1,25 @@
 # Project: Consolation Wiki
 
+Project: Consolation is an experimental enhancement project for the PC version of *007: Quantum of Solace* multiplayer.
+
+Its goal is to improve, extend, and modernize the stock PC experience while keeping the original game intact at its core. This includes engine patches, gameplay fixes, unlocked and adjusted dvars, custom scripting support, console work, UI improvements, and quality-of-life features for both players and modders.
+
 Use this wiki for installation help, launch setup, controller notes, patched systems, and troubleshooting.
+
+## Important
+
+This project is still experimental.
+
+Some features are unfinished, unstable, or actively being reworked. Nightly builds and in-progress features should be treated as testing material, not polished releases.
+
+## What It Adds
+
+- engine and gameplay patches
+- unlocked and adjusted dvars
+- custom GSC script loading and overrides
+- borderless fullscreen and other quality-of-life fixes
+- a custom external console and in-game console
+- modding-oriented infrastructure for future expansion
 
 ## How Do I Obtain The Game?
 
@@ -14,6 +33,24 @@ Unsupported setups currently include:
 - other regional releases
 - unpatched `1.0`
 - other game versions
+
+## Quantum of Solace On PC
+
+*007: Quantum of Solace* on PC has effectively been unavailable through normal first-hand digital storefronts for a long time.
+
+That means people usually end up getting the game through second-hand copies, key resellers, or abandonware archives rather than through an official current storefront.
+
+Availability and legality can vary by region, so use your own judgment and follow local rules.
+
+## Games for Windows - LIVE
+
+You should install Games for Windows - LIVE separately using an up-to-date package.
+
+The recommended source is:
+
+- [PCGamingWiki Community: Microsoft Games for Windows - LIVE](https://community.pcgamingwiki.com/files/file/1012-microsoft-games-for-windows-live/)
+
+Keep in mind that newer Games for Windows - LIVE packages may behave differently over time depending on compatibility changes.
 
 ## How Do I Install And Launch?
 
