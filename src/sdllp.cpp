@@ -2,12 +2,51 @@
 
 #include "sdllp.hpp"
 
+#include <utils/flags.hpp>
 #include <utils/string.hpp>
 #include <utils/nt.hpp>
 
 #define EXPORT(_export) extern "C" __declspec(naked) __declspec(dllexport) void _export() { static FARPROC function = 0; if (!function) function = sdllp::get_export(__FUNCTION__, LIBRARY); __asm { jmp function } }  
 
 std::map<std::string, HINSTANCE> sdllp::libraries;
+
+namespace
+{
+	bool singleplayer_warning_shown = false;
+
+	bool is_multiplayer_host()
+	{
+		const auto host_name = utils::nt::get_host_module().get_name();
+		return !_stricmp(host_name.c_str(), "JB_Launcher_s.exe")
+			|| utils::flags::has_flag("multiplayer");
+	}
+
+	bool should_load_proxy_library(const char* library)
+	{
+		if (!_stricmp(library, "d3d9.dll"))
+		{
+			return is_multiplayer_host();
+		}
+
+		return true;
+	}
+
+	void show_singleplayer_passthrough_warning(const char* library)
+	{
+		if (singleplayer_warning_shown || _stricmp(library, "d3d9.dll") != 0)
+		{
+			return;
+		}
+
+		singleplayer_warning_shown = true;
+		MessageBoxA(
+			nullptr,
+			"Project: Consolation does not support singleplayer.\n\nLaunching without modifications using the default system d3d9.dll.",
+			"Project: Consolation",
+			MB_OK | MB_ICONWARNING
+		);
+	}
+}
 
 void sdllp::load_library(const char* library)
 {
@@ -22,6 +61,11 @@ void sdllp::load_library(const char* library)
 	if (!is_loaded(library))
 	{
 		MessageBoxA(nullptr, utils::string::va("failed to load '%s'", library), "export", MB_ICONERROR);
+	}
+	else if (!should_load_proxy_library(library))
+	{
+		show_singleplayer_passthrough_warning(library);
+		printf("export proxy for %s is running in passthrough mode (singleplayer)\n", library);
 	}
 }
 
