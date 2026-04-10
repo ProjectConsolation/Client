@@ -1,0 +1,12 @@
+- [[Home]]
+- Extended Features
+  - [[Extended Features]]
+  - [[Bots]]
+  - [[Console]]
+  - [[Commands]]
+  - [[Patched Dvars]]
+  - [[Patched Raw Input]]
+  - [[Profile Config Tools]]
+  - [[Ultrawide Support]]
+- GSC
+  - [[GSC Loading And Overrides]]

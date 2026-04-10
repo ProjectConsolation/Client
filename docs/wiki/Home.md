@@ -1,6 +1,6 @@
 # Project: Consolation Wiki
 
-Use this wiki for installation help, launch setup, controller notes, and troubleshooting.
+Use this wiki for installation help, launch setup, controller notes, patched systems, and troubleshooting.
 
 ## How Do I Obtain The Game?
 
@@ -47,7 +47,22 @@ If your game is not installed in the default directory, edit the shortcut target
 
 Advanced users can still make a non-default install work by manually copying the patch `1.1` files into the game root and then editing `Launch Consolation.lnk` so it points at the correct `JB_Launcher_s.exe` path.
 
-## More Wiki Pages
+## Extended Features
+
+- [Extended Features](Extended-Features.md)
+- [Bots](Bots.md)
+- [Console](Console.md)
+- [Commands](Commands.md)
+- [Patched Dvars](Patched-Dvars.md)
+- [Patched Raw Input](Patched-Raw-Input.md)
+- [Profile Config Tools](Profile-Config-Tools.md)
+- [Ultrawide Support](Ultrawide-Support.md)
+
+## GSC
+
+- [GSC Loading And Overrides](GSC-Loading-And-Overrides.md)
+
+## Troubleshooting
 
 - [Controller Support](ControllerSupport.md)
 - [Crash Debugging](CrashDebugging.md)
