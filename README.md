@@ -11,6 +11,47 @@ These builds are **experimental and primarily intended for testing**. They are v
 
 Nightly builds are provided **strictly for testing purposes** and should not be considered stable releases. **No support will be provided for nightly builds.**
 
+## How Do I Obtain The Game?
+
+Obtain the game from **MyAbandonware**.
+
+Only the **English/French 1.1** release is supported right now.
+
+Unsupported setups currently include:
+
+- repacks
+- other regional releases
+- unpatched `1.0`
+- other game versions
+
+## How Do I Install And Patch It?
+
+Install the game normally.
+
+The recommended install path is the default path:
+
+- `C:\Program Files (x86)\Activision\Quantum of Solace(TM)\`
+
+Then install the official **1.1 patch**.
+
+Patch `1.1` may not install correctly if the game is not installed in the default `C:\` location. To avoid path issues, the recommended setup is the default install path plus the official `1.1` patch.
+
+If you are using a nightly build or a release build:
+
+- extract or copy the build into the game root
+- overwrite everything when prompted
+- launch with the `-multiplayer` argument
+
+Example target:
+
+- `"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer`
+
+Nightly builds should ship with `Launch Consolation.lnk` for this.
+
+If your game is not installed in the default directory, edit the shortcut target so it points at your real install path.
+
+Advanced users can still make a non-default install work by manually copying the patch `1.1` files into the game root and then editing `Launch Consolation.lnk` so it points at the correct `JB_Launcher_s.exe` path.
+
  ## Current features
  - Fully working External Console
  - Various DVARs have been unlocked & edited from their defaults. (e.g [changes to movement to match IW3 movement closer](https://youtu.be/5LNlgfV1z-k), in-game fonts are HD now, etc)
