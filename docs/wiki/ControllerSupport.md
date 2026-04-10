@@ -38,6 +38,35 @@ By default, `d3d9.dll` builds straight into the game install folder:
 
 Because that path is under `Program Files`, compiling or copying the output there usually requires Visual Studio to run with administrator rights.
 
+## Launch Shortcut
+
+The multiplayer launcher shortcut should point at `JB_Launcher_s.exe` with the `-multiplayer` argument.
+
+Example target:
+
+- `"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer`
+
+Nightly builds should ship with a `Launch Consolation.lnk` shortcut for this.
+
+If your game is **not** installed in the default directory, edit the shortcut target so it points at your real install path.
+
+## Patch 1.1 Install Note
+
+Patch `1.1` may not install correctly if the game is not installed in the default `C:\` location.
+
+To avoid path issues, the recommended setup is:
+
+- install the game to the default directory
+- install patch `1.1` there
+
+Advanced users can still make a non-default install work by manually copying the patch `1.1` files into the game root and then editing `Launch Consolation.lnk` so it points at the correct `JB_Launcher_s.exe` path.
+
+## Console Key
+
+On a US keyboard layout, the console key is often the backtick key:
+
+- `` ` ``
+
 ## Known Limitations
 
 - No rumble / vibration yet
