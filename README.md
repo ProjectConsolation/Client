@@ -40,13 +40,17 @@ If you are using a nightly build or a release build:
 
 - extract or copy the build into the game root
 - overwrite everything when prompted
-- launch with the `-multiplayer` argument
+- launch using `Launch Consolation.lnk`
 
-Example target:
+The included shortcut already uses the required `-multiplayer` launch argument.
+
+Example target behind the shortcut:
 
 - `"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer`
 
 Nightly builds should ship with `Launch Consolation.lnk` for this.
+
+If your game is installed in the default directory, you should be able to use the included shortcut as-is.
 
 If your game is not installed in the default directory, edit the shortcut target so it points at your real install path.
 

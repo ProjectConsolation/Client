@@ -149,3 +149,9 @@ user*.bat
 # Premake binary
 #premake5.exe
 wiki/
+
+# Local SDL download / extraction scratch space
+deps/SDL2-2.32.10-source.zip
+deps/SDL2-devel-2.32.10-VC.zip
+deps/SDL2/
+deps/SDL2-src/

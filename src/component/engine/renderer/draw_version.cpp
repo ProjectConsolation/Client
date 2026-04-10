@@ -196,4 +196,4 @@ namespace draw_version
 	};
 }
 
-REGISTER_COMPONENT(draw_version::component)
+//REGISTER_COMPONENT(draw_version::component)

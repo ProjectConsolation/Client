@@ -76,14 +76,17 @@ jobs:
           "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
-      - name: Get build timestamp
-        id: timestamp
+      - name: Get build metadata
+        id: metadata
         run: |
-          $time = Get-Date -Format "dd MMMM yyyy - HH:mm:ss"
+          $utcNow = (Get-Date).ToUniversalTime()
+          $time = $utcNow.ToString("dd MMMM yyyy - HH:mm:ss 'UTC'")
+          $tag = "nightly-" + $utcNow.ToString("yyyyMMdd-HHmmss") + "-${{ steps.shortsha.outputs.short_sha }}"
           "build_time=$time" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+          "release_tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
-      - name: Cleanup old nightly releases (keep 5)
+      - name: Cleanup old nightly releases (keep 10)
         uses: actions/github-script@v7
         with:
           script: |
@@ -93,10 +96,10 @@ jobs:
             });
 
             const nightly = releases.data
-              .filter(r => r.prerelease)
+              .filter(r => r.prerelease && r.tag_name.startsWith("nightly-"))
               .sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
 
-            const toDelete = nightly.slice(5);
+            const toDelete = nightly.slice(10);
 
             for (const rel of toDelete) {
               console.log(`Deleting old nightly: ${rel.name}`);
@@ -119,13 +122,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: nightly
-          name: Nightly Build
+          tag_name: ${{ steps.metadata.outputs.release_tag }}
+          name: Nightly Build ${{ steps.shortsha.outputs.short_sha }}
           body: |
-            Nightly build from commit ${{ steps.shortsha.outputs.short_sha }} (${{ steps.timestamp.outputs.build_time }})
+            Nightly build from commit ${{ steps.shortsha.outputs.short_sha }} (${{ steps.metadata.outputs.build_time }})
 
             Nightly builds are experimental and unstable. They may crash frequently or fail to run at all.
-            Use at your own risk. No support will be given.
+            Use at your own risk. Support is limited and no support will be given for nightly builds.
           draft: false
           prerelease: true
           overwrite_files: true
