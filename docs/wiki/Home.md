@@ -23,7 +23,9 @@ Some features are unfinished, unstable, or actively being reworked. Nightly buil
 
 ## How Do I Obtain The Game?
 
-Obtain the game from **MyAbandonware**.
+Obtain **007: Quantum of Solace** from **MyAbandonware**.
+
+This is currently the recommended source because it hosts the **English/French build** that works with Project: Consolation and also hosts the **1.1 patch** you need to install.
 
 Only the **English/French 1.1** release is supported right now.
 
@@ -33,6 +35,12 @@ Unsupported setups currently include:
 - other regional releases
 - unpatched `1.0`
 - other game versions
+
+Games for Windows - LIVE keys are also often given away in our Discord:
+
+- [Project: Consolation Discord](https://discord.gg/XSrTvXJcsw)
+
+Work is also being done to remove the long-term need for keys entirely, but that is not ready yet.
 
 ## Quantum of Solace On PC
 
