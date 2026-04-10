@@ -57,6 +57,11 @@ namespace patches
 			return std::string(__DATE__) + " " + __TIME__;
 		}
 
+		std::string build_game_date_string()
+		{
+			return __DATE__;
+		}
+
 		std::string build_version_string()
 		{
 			return "Project: Consolation "
@@ -143,14 +148,47 @@ namespace patches
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
 		}
 
+		void set_bool_dvar(const char* name, const bool value)
+		{
+			auto* const dvar = game::Dvar_FindVar(name);
+			if (!dvar)
+			{
+				return;
+			}
+
+			dvar->current.enabled = value;
+			dvar->latched.enabled = value;
+			dvar->reset.enabled = value;
+		}
+
+		bool should_force_windowed_fallback(const bool fullscreen, const int width, const int height)
+		{
+			if (!fullscreen || width <= 0 || height <= 0)
+			{
+				return false;
+			}
+
+			const auto desktop_width = GetSystemMetrics(SM_CXSCREEN);
+			const auto desktop_height = GetSystemMetrics(SM_CYSCREEN);
+			return desktop_width > 0
+				&& desktop_height > 0
+				&& (width != desktop_width || height != desktop_height);
+		}
+
 		HWND __stdcall create_window_ex_stub(DWORD ex_style, LPCSTR class_name, LPCSTR window_name, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE inst, LPVOID param)
 		{
 			if (!strcmp(class_name, "JB_MP"))
 			{
 				window_name = "Project: Consolation - Multiplayer";
 
-				const bool fullscreen = dvar_enabled("r_fullscreen");
+				auto fullscreen = dvar_enabled("r_fullscreen");
 				const bool borderless = dvar_enabled("r_borderless");
+
+				if (should_force_windowed_fallback(fullscreen, width, height))
+				{
+					set_bool_dvar("r_fullscreen", false);
+					fullscreen = false;
+				}
 
 				if (!fullscreen)
 				{
@@ -379,7 +417,6 @@ namespace patches
 #endif
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
-			dvars::overrides::register_bool("r_fullscreen", 1, game::dvar_flags::saved);
 			dvars::overrides::register_int("com_maxfps", 60, 0, 1000, game::dvar_flags::saved);
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved); //cod4
 			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
@@ -391,6 +428,10 @@ namespace patches
 				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
 			dvars::overrides::register_string("shortversion", build_shortversion_string(),
 				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
+			dvars::overrides::register_string("gamename", "James Bond",
+				static_cast<unsigned int>(game::dvar_flags::read_only));
+			dvars::overrides::register_string("gamedate", build_game_date_string(),
+				static_cast<unsigned int>(game::dvar_flags::read_only));
 			//dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
 			//dvars::overrides::register_float("jump_height", 39.0, 0, 1000, game::dvar_flags::saved); //adjusted to 39 to allow cod4-like jump onto ledges
 
