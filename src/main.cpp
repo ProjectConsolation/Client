@@ -28,6 +28,13 @@ namespace
 		return marker.has_value() && _stricmp(marker->c_str(), "multiplayer") == 0;
 	}
 
+	std::string read_multiplayer_marker_for_log(const std::filesystem::path& game_root)
+	{
+		const auto module_path = game_root / "jb_mp_s.dll";
+		const auto marker = utils::io::read_pe_string_rva(module_path.generic_string(), multiplayer_marker_rva);
+		return marker.value_or("<missing>");
+	}
+
 	DECLSPEC_NORETURN void show_unsupported_version_and_exit()
 	{
 		const auto result = MessageBoxA(nullptr,
@@ -50,10 +57,16 @@ namespace
 	void validate_supported_install()
 	{
 		const auto game_root = std::filesystem::path(utils::nt::get_host_module().get_folder());
+		const auto marker = read_multiplayer_marker_for_log(game_root);
+		printf("consolation: jb_mp_s.dll marker @ 0x%08X = '%s'\n", multiplayer_marker_rva, marker.c_str());
+
 		if (!has_supported_multiplayer_marker(game_root))
 		{
+			printf("consolation: unsupported install detected, aborting startup\n");
 			show_unsupported_version_and_exit();
 		}
+
+		printf("consolation: supported multiplayer marker detected, continuing startup\n");
 	}
 
 	DECLSPEC_NORETURN void WINAPI exit_hook(const int code)

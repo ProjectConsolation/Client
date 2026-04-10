@@ -14,10 +14,17 @@ namespace
 {
 	bool singleplayer_warning_shown = false;
 
+	bool has_multiplayer_module_loaded()
+	{
+		return GetModuleHandleA("jb_mp_s.dll") != nullptr;
+	}
+
 	bool is_multiplayer_host()
 	{
 		const auto host_name = utils::nt::get_host_module().get_name();
 		return !_stricmp(host_name.c_str(), "JB_Launcher_s.exe")
+			|| !_stricmp(host_name.c_str(), "JB_LiveEngine_s.exe")
+			|| has_multiplayer_module_loaded()
 			|| utils::flags::has_flag("multiplayer");
 	}
 
@@ -62,10 +69,27 @@ void sdllp::load_library(const char* library)
 	{
 		MessageBoxA(nullptr, utils::string::va("failed to load '%s'", library), "export", MB_ICONERROR);
 	}
-	else if (!should_load_proxy_library(library))
+	else
 	{
-		show_singleplayer_passthrough_warning(library);
-		printf("export proxy for %s is running in passthrough mode (singleplayer)\n", library);
+		const auto host_name = utils::nt::get_host_module().get_name();
+		const auto multiplayer_flag = utils::flags::has_flag("multiplayer") ? 1 : 0;
+		const auto multiplayer_module = has_multiplayer_module_loaded() ? 1 : 0;
+		const auto multiplayer_host = should_load_proxy_library(library) ? 1 : 0;
+
+		printf(
+			"consolation: proxy decision library=%s host=%s flag=%d mp_dll=%d use_custom=%d\n",
+			library,
+			host_name.c_str(),
+			multiplayer_flag,
+			multiplayer_module,
+			multiplayer_host
+		);
+
+		if (!multiplayer_host)
+		{
+			show_singleplayer_passthrough_warning(library);
+			printf("export proxy for %s is running in passthrough mode (singleplayer)\n", library);
+		}
 	}
 }
 
