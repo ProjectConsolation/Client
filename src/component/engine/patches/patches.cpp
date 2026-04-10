@@ -428,7 +428,7 @@ namespace patches
 				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
 			dvars::overrides::register_string("shortversion", build_shortversion_string(),
 				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
-			dvars::overrides::register_string("gamename", "James Bond",
+			dvars::overrides::register_string("gamename", "Project: Consolation",
 				static_cast<unsigned int>(game::dvar_flags::read_only));
 			dvars::overrides::register_string("gamedate", build_game_date_string(),
 				static_cast<unsigned int>(game::dvar_flags::read_only));
