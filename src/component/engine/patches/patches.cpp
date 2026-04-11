@@ -19,6 +19,19 @@
 
 namespace patches
 {
+	void enforce_ads_sprint_interrupt(game::usercmd_t* cmd)
+	{
+		if (!cmd)
+		{
+			return;
+		}
+
+		if ((cmd->buttons & game::BUTTON_ADS) != 0)
+		{
+			cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons & ~game::BUTTON_SPRINT);
+		}
+	}
+
 	namespace
 	{
 		std::string build_shortversion_string()

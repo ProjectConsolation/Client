@@ -3,6 +3,7 @@
 #include "loader/component_loader.hpp"
 
 #include "component/utils/scheduler.hpp"
+#include "component/engine/patches/patches.hpp"
 #include "gamepad.hpp"
 #include "component/engine/console/game_console.hpp"
 
@@ -572,6 +573,7 @@ namespace xinput
 			}
 
 			apply_native_gamepad_to_cmd(result);
+			patches::enforce_ads_sprint_interrupt(result);
 			return result;
 		}
 
