@@ -148,47 +148,14 @@ namespace patches
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
 		}
 
-		void set_bool_dvar(const char* name, const bool value)
-		{
-			auto* const dvar = game::Dvar_FindVar(name);
-			if (!dvar)
-			{
-				return;
-			}
-
-			dvar->current.enabled = value;
-			dvar->latched.enabled = value;
-			dvar->reset.enabled = value;
-		}
-
-		bool should_force_windowed_fallback(const bool fullscreen, const int width, const int height)
-		{
-			if (!fullscreen || width <= 0 || height <= 0)
-			{
-				return false;
-			}
-
-			const auto desktop_width = GetSystemMetrics(SM_CXSCREEN);
-			const auto desktop_height = GetSystemMetrics(SM_CYSCREEN);
-			return desktop_width > 0
-				&& desktop_height > 0
-				&& (width != desktop_width || height != desktop_height);
-		}
-
 		HWND __stdcall create_window_ex_stub(DWORD ex_style, LPCSTR class_name, LPCSTR window_name, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE inst, LPVOID param)
 		{
 			if (!strcmp(class_name, "JB_MP"))
 			{
 				window_name = "Project: Consolation - Multiplayer";
 
-				auto fullscreen = dvar_enabled("r_fullscreen");
+				const auto fullscreen = dvar_enabled("r_fullscreen");
 				const bool borderless = dvar_enabled("r_borderless");
-
-				if (should_force_windowed_fallback(fullscreen, width, height))
-				{
-					set_bool_dvar("r_fullscreen", false);
-					fullscreen = false;
-				}
 
 				if (!fullscreen)
 				{

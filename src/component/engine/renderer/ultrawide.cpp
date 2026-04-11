@@ -101,24 +101,19 @@ namespace ultrawide
 			const auto ratio = static_cast<float>(width) / static_cast<float>(height);
 			sticky_custom_resolution_enabled = true;
 			sticky_custom_ratio = ratio;
-			command::execute("seta r_fullscreen 0\n");
-			command::execute("seta r_borderless 0\n");
-			command::execute("seta vid_xpos 0\n");
-			command::execute("seta vid_ypos 0\n");
 			command::execute(std::format("seta r_customMode \"{}\"\n", resolution));
 			command::execute(std::format("seta r_ultrawideCustomMode \"{}\"\n", resolution));
 			command::execute("seta r_aspectRatioCustomEnable 1\n");
 			command::execute(std::format("seta r_aspectRatioCustom {:.6f}\n", ratio));
 			command::execute("vid_restart\n");
 
-			console::info("setcustomres: queued %s in windowed mode (aspect %.6f)\n", resolution.c_str(), ratio);
+			console::info("setcustomres: queued %s using current window mode dvars (aspect %.6f)\n", resolution.c_str(), ratio);
 		}
 
 		void clear_custom_resolution()
 		{
 			sticky_custom_resolution_enabled = false;
 			sticky_custom_ratio = 16.0f / 9.0f;
-			command::execute("seta r_borderless 0\n");
 			command::execute("seta r_customMode disabled\n");
 			command::execute("seta r_ultrawideCustomMode disabled\n");
 			command::execute("seta r_aspectRatioCustomEnable 0\n");
