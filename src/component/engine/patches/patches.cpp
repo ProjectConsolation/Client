@@ -34,6 +34,8 @@ namespace patches
 
 	namespace
 	{
+		constexpr double cod4_weapon_landing_bob_scale = 0.1;
+
 		std::string build_shortversion_string()
 		{
 			std::string version = VERSION_PRODUCT;
@@ -159,6 +161,14 @@ namespace patches
 				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
 
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
+		}
+
+		void replace_float_register_call(const size_t callsite, const size_t target_global, const char* name, const char* description,
+			const float value, const float min_value, const float max_value, const std::uint16_t flags = game::dvar_flags::saved)
+		{
+			utils::hook::nop(game::game_offset(callsite), 5);
+			*reinterpret_cast<game::dvar_s**>(game::game_offset(target_global)) =
+				dvars::Dvar_RegisterFloat(name, description, value, min_value, max_value, flags);
 		}
 
 		HWND __stdcall create_window_ex_stub(DWORD ex_style, LPCSTR class_name, LPCSTR window_name, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE inst, LPVOID param)
@@ -439,6 +449,21 @@ namespace patches
 
 				utils::hook::nop(game::game_offset(0x103B2260), 5);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054944)) = dvars::Dvar_RegisterInt("developer", "Enable development environment", 0, 0, 2, game::dvar_flags::none);
+
+				replace_float_register_call(0x102BF69A, 0x1148C590, "cg_gun_move_f", "Weapon movement forward due to player movement", 0.0f, 0.0f, 50.0f);
+				replace_float_register_call(0x102BF6CF, 0x1148C574, "cg_gun_move_r", "Weapon movement right due to player movement", 0.0f, 0.0f, 50.0f);
+				replace_float_register_call(0x102BF704, 0x1148F6D0, "cg_gun_move_u", "Weapon movement up due to player movement", 0.0f, 0.0f, 50.0f);
+				replace_float_register_call(0x102BF877, 0x113F5F74, "cg_gun_move_rate", "The base weapon movement rate", 0.0f, 0.0f, 50.0f);
+				replace_float_register_call(0x102BF8AC, 0x113F5EC0, "cg_gun_move_minspeed", "The minimum weapon movement rate", 0.0f, 0.0f, 1000.0f);
+				replace_float_register_call(0x102BF8E1, 0x113F5E4C, "cg_gun_rot_rate", "The base weapon rotation rate", 0.0f, 0.0f, 50.0f);
+				replace_float_register_call(0x102BF916, 0x1148C674, "cg_gun_rot_minspeed", "The minimum weapon rotation speed", 0.0f, 0.0f, 1000.0f);
+				replace_float_register_call(0x102BF976, 0x1148C584, "cg_bobWeaponAmplitude", "The weapon bob amplitude", 0.16f, 0.0f, 10.0f);
+				replace_float_register_call(0x102BF9A9, 0x113F5F80, "cg_bobWeaponRollAmplitude", "The amplitude of roll for weapon bobbing", 1.5f, 0.0f, 10.0f);
+				replace_float_register_call(0x102BF9DC, 0x1148C5F8, "cg_bobWeaponMax", "The maximum weapon bob", 10.0f, 0.0f, 50.0f);
+				replace_float_register_call(0x102BFA0F, 0x1148C638, "cg_bobWeaponLag", "The lag on the weapon bob", 0.25f, 0.0f, 10.0f);
+
+				utils::hook::set<std::uint32_t>(game::game_offset(0x10297C44), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&cod4_weapon_landing_bob_scale)));
+				utils::hook::set<std::uint32_t>(game::game_offset(0x10297C79), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&cod4_weapon_landing_bob_scale)));
 
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("com_maxfps");
