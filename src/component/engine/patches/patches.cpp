@@ -10,10 +10,6 @@
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
 #include <unordered_set>
-#include <mmsystem.h>
-
-#pragma comment(lib, "winmm.lib")
-
 #ifndef VERSION_BUILD
 #define VERSION_BUILD "0"
 #endif
@@ -112,6 +108,62 @@ namespace patches
 			return 1;
 		}
 
+		bool dvar_enabled(const char* name)
+		{
+			const auto* const dvar = game::Dvar_FindVar(name);
+			if (!dvar)
+			{
+				return false;
+			}
+
+			switch (dvar->type)
+			{
+			case game::dvar_type::boolean:
+				return dvar->current.enabled;
+			case game::dvar_type::integer:
+				return dvar->current.integer != 0;
+			case game::dvar_type::value:
+				return dvar->current.value != 0.0f;
+			case game::dvar_type::string:
+			case game::dvar_type::enumeration:
+				if (!dvar->current.string)
+				{
+					return false;
+				}
+
+				return dvar->current.string[0] != '\0'
+					&& strcmp(dvar->current.string, "0") != 0
+					&& _stricmp(dvar->current.string, "false") != 0
+					&& _stricmp(dvar->current.string, "off") != 0;
+			default:
+				return dvar->current.integer != 0;
+			}
+		}
+
+		int dvar_int_value(const char* name, const int fallback = 0)
+		{
+			const auto* const dvar = game::Dvar_FindVar(name);
+			if (!dvar)
+			{
+				return fallback;
+			}
+
+			switch (dvar->type)
+			{
+			case game::dvar_type::boolean:
+				return dvar->current.enabled ? 1 : 0;
+			case game::dvar_type::integer:
+				return dvar->current.integer;
+			case game::dvar_type::value:
+				return static_cast<int>(dvar->current.value);
+			case game::dvar_type::string:
+			case game::dvar_type::enumeration:
+				return dvar->current.string ? std::atoi(dvar->current.string) : fallback;
+			default:
+				return dvar->current.integer;
+			}
+		}
+
 		void make_dvar_saved_and_writable(const char* name)
 		{
 			auto* const dvar = game::Dvar_FindVar(name);
@@ -124,47 +176,6 @@ namespace patches
 				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
 
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
-		}
-
-		bool is_windowed_borderless_requested()
-		{
-			const auto* const fullscreen = game::Dvar_FindVar("r_fullscreen");
-			if (!fullscreen || fullscreen->current.enabled)
-			{
-				return false;
-			}
-
-			const auto* const borderless = dvars::r_borderless ? dvars::r_borderless : game::Dvar_FindVar("r_borderless");
-			return borderless && borderless->current.enabled;
-		}
-
-		void apply_borderless_window_mode(const HWND hwnd)
-		{
-			if (!hwnd || !IsWindow(hwnd) || !is_windowed_borderless_requested())
-			{
-				return;
-			}
-
-			RECT client_rect{};
-			if (!GetClientRect(hwnd, &client_rect))
-			{
-				return;
-			}
-
-			const auto client_width = client_rect.right - client_rect.left;
-			const auto client_height = client_rect.bottom - client_rect.top;
-
-			auto style = GetWindowLongPtrA(hwnd, GWL_STYLE);
-			auto ex_style = GetWindowLongPtrA(hwnd, GWL_EXSTYLE);
-
-			style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-			style |= WS_POPUP | WS_VISIBLE;
-			ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
-
-			SetWindowLongPtrA(hwnd, GWL_STYLE, style);
-			SetWindowLongPtrA(hwnd, GWL_EXSTYLE, ex_style);
-			SetWindowPos(hwnd, nullptr, 0, 0, client_width, client_height,
-				SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED);
 		}
 
 		void replace_float_register_call(const size_t callsite, const size_t target_global, const char* name, const char* description,
@@ -180,11 +191,25 @@ namespace patches
 			if (!strcmp(class_name, "JB_MP"))
 			{
 				window_name = "Project: Consolation - Multiplayer";
-			}
 
-			const auto hwnd = CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
-			apply_borderless_window_mode(hwnd);
-			return hwnd;
+				const bool fullscreen = dvar_enabled("r_fullscreen");
+				const bool borderless = dvar_enabled("r_borderless");
+
+				if (!fullscreen)
+				{
+					x = dvar_int_value("vid_xpos", x);
+					y = dvar_int_value("vid_ypos", y);
+				}
+
+				if (!fullscreen && borderless)
+				{
+					style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+					style |= WS_POPUP;
+					ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+					ex_style |= WS_EX_APPWINDOW;
+				}
+			}
+			return CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
 		}
 
 		template <typename T>
@@ -223,12 +248,6 @@ namespace patches
 					flags = var->flags;
 				}
 
-				if (!_stricmp(dvarName, "r_fullscreen"))
-				{
-					const auto writable_flags = flags
-						& ~static_cast<unsigned short>(game::dvar_flags::read_only | game::dvar_flags::write_protected);
-					flags = static_cast<unsigned short>(writable_flags | static_cast<unsigned short>(game::dvar_flags::saved));
-				}
 			}
 
 			if (type == game::DVAR_TYPE_INT)
@@ -387,8 +406,6 @@ namespace patches
 	public:
 		void post_load() override
 		{
-			timeBeginPeriod(1);
-
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
@@ -405,6 +422,9 @@ namespace patches
 
 			// Allow the stock FPS/debug draw block to run in frontend menus too.
 			utils::hook::nop(game::game_offset(0x1031211D), 0x06);
+
+			// stop the video restart path from forcibly setting r_fullscreen back to 1
+			utils::hook::nop(game::game_offset(0x103BE16D), 0x05);
 
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
@@ -423,6 +443,7 @@ namespace patches
 #endif
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
+			dvars::overrides::register_bool("r_fullscreen", 1, game::dvar_flags::saved);
 			dvars::overrides::register_int("com_maxfps", 60, 0, 1000, game::dvar_flags::saved);
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved); //cod4
 			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
@@ -506,11 +527,6 @@ namespace patches
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
 			}, scheduler::main, 250ms);
-
-			scheduler::on_shutdown([]()
-			{
-				timeEndPeriod(1);
-			});
 		}
 	};
 }

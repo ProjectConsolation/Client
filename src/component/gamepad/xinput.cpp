@@ -39,6 +39,8 @@ namespace xinput
 			DWORD last_activity_time = 0;
 			float left_stick_x = 0.0f;
 			float left_stick_y = 0.0f;
+			float move_stick_x = 0.0f;
+			float move_stick_y = 0.0f;
 			float right_stick_x = 0.0f;
 			float right_stick_y = 0.0f;
 			float left_trigger = 0.0f;
@@ -397,6 +399,20 @@ namespace xinput
 			out_y = normalized_y * scaled_length;
 		}
 
+		float normalize_movement_axis(const SHORT value)
+		{
+			const auto normalized = std::clamp(static_cast<float>(value) / static_cast<float>(std::numeric_limits<SHORT>::max()), -1.0f, 1.0f);
+			const auto deadzone = get_stick_deadzone_min();
+			const auto magnitude = std::fabs(normalized);
+			if (magnitude <= deadzone)
+			{
+				return 0.0f;
+			}
+
+			const auto scaled = (magnitude - deadzone) / std::max(0.001f, 1.0f - deadzone);
+			return std::copysign(std::clamp(scaled, 0.0f, 1.0f), normalized);
+		}
+
 		float normalize_trigger(const BYTE value)
 		{
 			const auto normalized = static_cast<float>(value) / 255.0f;
@@ -570,6 +586,8 @@ namespace xinput
 
 			pad.left_stick_x = left_stick_x;
 			pad.left_stick_y = left_stick_y;
+			pad.move_stick_x = normalize_movement_axis(state.sThumbLX);
+			pad.move_stick_y = normalize_movement_axis(state.sThumbLY);
 			pad.right_stick_x = right_stick_x;
 			pad.right_stick_y = right_stick_y;
 			pad.left_trigger = normalize_trigger(state.bLeftTrigger);
@@ -758,8 +776,8 @@ namespace xinput
 				return;
 			}
 
-			const auto forward = pad.left_stick_y;
-			const auto side = pad.left_stick_x;
+			const auto forward = pad.move_stick_y;
+			const auto side = pad.move_stick_x;
 			const auto analog_magnitude = std::sqrt((forward * forward) + (side * side));
 			const auto analog_active = analog_magnitude >= 0.02f;
 
