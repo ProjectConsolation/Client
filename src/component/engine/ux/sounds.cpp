@@ -140,6 +140,9 @@ namespace sounds
 
 		void show_override_notice(const char* alias_name, const std::string& override_path)
 		{
+#ifndef DEBUG
+			return;
+#else
 			if (override_path.empty())
 			{
 				return;
@@ -156,6 +159,7 @@ namespace sounds
 			last_notified_override = key;
 
 			game::Com_Printf(0, "sounds: overriding %s with %s\n", alias, override_path.c_str());
+#endif
 		}
 
 		int __cdecl open_music_stream_stub(const char*** request, int index)
