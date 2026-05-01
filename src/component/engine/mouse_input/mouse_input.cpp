@@ -234,6 +234,11 @@ namespace mouse_input
 			pending_event.dx = dx;
 			pending_event.dy = dy;
 
+			if ((dx != 0 || dy != 0) && (*game::keyCatchers & 0x10) == 0)
+			{
+				gamepad::note_mouse_activity();
+			}
+
 			if (gamepad::should_hide_cursor() && (*game::keyCatchers & 0x10) == 0)
 			{
 				return 0;

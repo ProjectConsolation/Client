@@ -389,6 +389,11 @@ namespace patches
 	public:
 		void post_load() override
 		{
+			if (!game::Dvar_FindVar("r_borderless"))
+			{
+				dvars::r_borderless = dvars::Dvar_RegisterBool("r_borderless", 0, "Do not use a border in windowed mode", game::dvar_flags::saved);
+			}
+
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
