@@ -26,7 +26,6 @@ namespace dvars
 	extern game::dvar_s* con_inputCmdMatchColor;
 	extern game::dvar_s* g_debugVelocity;
 	extern game::dvar_s* g_debugLocalization;
-	extern game::dvar_s* bg_compassShowEnemies;
 	extern game::dvar_s* r_borderless;
 	extern game::dvar_s* bot_maxHealth;
 	extern game::dvar_s* m_rawInput;

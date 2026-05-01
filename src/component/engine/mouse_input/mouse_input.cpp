@@ -234,11 +234,6 @@ namespace mouse_input
 			pending_event.dx = dx;
 			pending_event.dy = dy;
 
-			if (gamepad::should_hide_cursor() && (*game::keyCatchers & 0x10) == 0)
-			{
-				return 0;
-			}
-
 			if (!dvars::m_rawInput || !dvars::m_rawInput->current.enabled || !wnd_proc_hooked || !raw_input_registered)
 			{
 				return call_original_mouse_event(pending_event);

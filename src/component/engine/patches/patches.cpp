@@ -123,33 +123,6 @@ namespace patches
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
 		}
 
-#ifdef DEBUG
-		void sync_debug_compass_show_enemies()
-		{
-			auto* const debug_alias = dvars::bg_compassShowEnemies;
-			auto* const stock_dvar = game::Dvar_FindVar("g_compassShowEnemies");
-			if (!debug_alias || !stock_dvar)
-			{
-				return;
-			}
-
-			make_dvar_saved_and_writable("g_compassShowEnemies");
-
-			const auto enabled = debug_alias->current.enabled;
-			if (stock_dvar->current.enabled == enabled
-				&& stock_dvar->latched.enabled == enabled
-				&& stock_dvar->reset.enabled == enabled)
-			{
-				return;
-			}
-
-			stock_dvar->current.enabled = enabled;
-			stock_dvar->latched.enabled = enabled;
-			stock_dvar->reset.enabled = enabled;
-			stock_dvar->modified = true;
-		}
-#endif
-
 		bool is_windowed_borderless_requested()
 		{
 			const auto* const fullscreen = game::Dvar_FindVar("r_fullscreen");
@@ -390,9 +363,6 @@ namespace patches
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
-			// Respect the actual r_fullscreen dvar instead of letting stock renderer setup force it back to 1.
-			utils::hook::nop(game::game_offset(0x103BE16D), 5);
-
 			// nop call to Com_Printf for "SCALEFORM: %s" messages
 			utils::hook::nop(game::game_offset(0x1000230F), 0x05); // TODO: Dvar toggle? Could be useful info
 			utils::hook::nop(game::game_offset(0x102E1284), 0x05);
@@ -481,9 +451,6 @@ namespace patches
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
-#ifdef DEBUG
-				sync_debug_compass_show_enemies();
-#endif
 
 				//debug block sv_cheats
 #ifdef DEBUG
@@ -506,9 +473,6 @@ namespace patches
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
-#ifdef DEBUG
-				sync_debug_compass_show_enemies();
-#endif
 			}, scheduler::main, 250ms);
 		}
 	};

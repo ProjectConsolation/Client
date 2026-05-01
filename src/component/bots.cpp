@@ -76,10 +76,9 @@ namespace bots
 			return *reinterpret_cast<game::dvar_s**>(game::game_offset(0x112EBEFC));
 		}
 
-		bool bots_should_press_attack_button()
+		inline game::dvar_s* sv_bots_press_attack_dvar()
 		{
-			const auto* const dvar = game::Dvar_FindVar("sv_botsPressAttackBtn");
-			return !dvar || dvar->current.enabled;
+			return *reinterpret_cast<game::dvar_s**>(game::game_offset(0x1130BF80));
 		}
 
 		inline game::entity_t* entity_at(int idx)
@@ -678,9 +677,12 @@ namespace bots
 				return;
 			}
 
-			for (int i = 0; i < MAX_CLIENTS; ++i)
+			const auto* const maxcl_dvar = sv_maxclients_dvar();
+			const int maxcl = maxcl_dvar ? maxcl_dvar->current.integer : MAX_CLIENTS;
+
+			for (int i = 0; i < maxcl; ++i)
 			{
-				if (client_is_real_player(i))
+				if (client_state(i) < game::CS_CONNECTED || client_is_real_player(i))
 				{
 					continue;
 				}
@@ -1004,20 +1006,16 @@ namespace bots
 							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ADS);
 						}
 
-						if (bots_should_press_attack_button()
+						const auto* const atk = sv_bots_press_attack_dvar();
+						if (atk
+							&& atk->current.enabled
 							&& target_visible
 							&& best_visibility > 0.0f
 							&& dist <= FIRE_RANGE
 							&& (aim_settled
-								|| yaw_delta <= (FIRE_ALIGNMENT_THRESHOLD * 3)
-								|| pitch_delta <= (FIRE_ALIGNMENT_THRESHOLD * 3)
-								|| dist <= 512.0f))
+								|| yaw_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)
+								|| pitch_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)))
 						{
-							if (state_idx >= 0)
-							{
-								s_attack_phase[state_idx] = true;
-							}
-
 							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
 
 							if (dist > 224.0f)
