@@ -331,6 +331,7 @@ namespace patches
 #endif
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
+			dvars::overrides::register_int("com_maxfps", 60, 0, 1000, game::dvar_flags::saved);
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved); //cod4
 			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
 			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
@@ -364,9 +365,6 @@ namespace patches
 				
 				utils::hook::nop(game::game_offset(0x101DB65A), 5);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x118EE1C0)) = dvars::Dvar_RegisterFloat("jump_height", "The maximum height of a player's jump", 41.f, 0, 1000.f, game::dvar_flags::saved);
-
-				utils::hook::nop(game::game_offset(0x10321221), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11260BD0)) = dvars::Dvar_RegisterFloat("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved);
 
 				//dvars::Dvar_RegisterFloat("cg_fovScale", "Scale applied to the field of view", 1.0, 0, 2.0, game::dvar_flags::saved); //doesnt save
 

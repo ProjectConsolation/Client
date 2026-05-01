@@ -305,7 +305,7 @@ namespace dvars
 					dvars::Dvar_RegisterBool("g_debugLocalization", 0, "[DEBUG] Print information to console about unlocalized strings", game::dvar_flags::none);
 					bot_maxHealth = dvars::Dvar_RegisterInt("bot_maxHealth", "Maximum health for bots on spawn", 100, 1, 1000, game::dvar_flags::none);
 					m_rawInput = dvars::Dvar_RegisterBool("m_rawInput", 1, "Use raw mouse input.", game::dvar_flags::saved);
-					gpad_enabled = dvars::Dvar_RegisterBool("gpad_enabled", 0, "Enable XInput gamepad input.", game::dvar_flags::saved);
+					gpad_enabled = dvars::Dvar_RegisterBool("gpad_enabled", 1, "Enable XInput gamepad input.", game::dvar_flags::saved);
 					gpad_present = dvars::Dvar_RegisterBool("gpad_present", 0, "True when a supported gamepad is connected.", game::dvar_flags::none);
 					gpad_in_use = dvars::Dvar_RegisterBool("gpad_in_use", 0, "True when a gamepad is currently being used.", game::dvar_flags::none);
 					gpad_debug = dvars::Dvar_RegisterBool("gpad_debug", 0, "Print gamepad debug information.", game::dvar_flags::none);
