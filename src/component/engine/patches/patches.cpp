@@ -51,6 +51,22 @@ namespace patches
 			return version;
 		}
 
+		std::string normalize_build_date(const char* raw_date)
+		{
+			if (!raw_date)
+			{
+				return {};
+			}
+
+			std::string date = raw_date;
+			while (date.find("  ") != std::string::npos)
+			{
+				date.replace(date.find("  "), 2, " ");
+			}
+
+			return date;
+		}
+
 		std::string build_build_label()
 		{
 			std::string short_hash = GIT_HASH;
@@ -69,12 +85,12 @@ namespace patches
 
 		std::string build_timestamp_label()
 		{
-			return std::string(__DATE__) + " " + __TIME__;
+			return normalize_build_date(__DATE__) + " " + __TIME__;
 		}
 
 		std::string build_game_date_string()
 		{
-			return __DATE__;
+			return normalize_build_date(__DATE__);
 		}
 
 		std::string build_version_string()
@@ -102,9 +118,50 @@ namespace patches
 			}
 
 			const auto writable_flags = static_cast<std::uint16_t>(dvar->flags)
-				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
+				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected);
 
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
+		}
+
+		bool is_windowed_borderless_requested()
+		{
+			const auto* const fullscreen = game::Dvar_FindVar("r_fullscreen");
+			if (!fullscreen || fullscreen->current.enabled)
+			{
+				return false;
+			}
+
+			const auto* const borderless = dvars::r_borderless ? dvars::r_borderless : game::Dvar_FindVar("r_borderless");
+			return borderless && borderless->current.enabled;
+		}
+
+		void apply_borderless_window_mode(const HWND hwnd)
+		{
+			if (!hwnd || !IsWindow(hwnd) || !is_windowed_borderless_requested())
+			{
+				return;
+			}
+
+			RECT client_rect{};
+			if (!GetClientRect(hwnd, &client_rect))
+			{
+				return;
+			}
+
+			const auto client_width = client_rect.right - client_rect.left;
+			const auto client_height = client_rect.bottom - client_rect.top;
+
+			auto style = GetWindowLongPtrA(hwnd, GWL_STYLE);
+			auto ex_style = GetWindowLongPtrA(hwnd, GWL_EXSTYLE);
+
+			style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+			style |= WS_POPUP | WS_VISIBLE;
+			ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+
+			SetWindowLongPtrA(hwnd, GWL_STYLE, style);
+			SetWindowLongPtrA(hwnd, GWL_EXSTYLE, ex_style);
+			SetWindowPos(hwnd, nullptr, 0, 0, client_width, client_height,
+				SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED);
 		}
 
 		void replace_float_register_call(const size_t callsite, const size_t target_global, const char* name, const char* description,
@@ -121,7 +178,10 @@ namespace patches
 			{
 				window_name = "Project: Consolation - Multiplayer";
 			}
-			return CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
+
+			const auto hwnd = CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
+			apply_borderless_window_mode(hwnd);
+			return hwnd;
 		}
 
 		template <typename T>
@@ -388,6 +448,9 @@ namespace patches
 
 				make_dvar_saved_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("sv_cheats");
+				make_dvar_saved_and_writable("r_fullscreen");
+				make_dvar_saved_and_writable("vid_xpos");
+				make_dvar_saved_and_writable("vid_ypos");
 
 				//debug block sv_cheats
 #ifdef DEBUG
@@ -407,6 +470,9 @@ namespace patches
 			{
 				make_dvar_saved_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("sv_cheats");
+				make_dvar_saved_and_writable("r_fullscreen");
+				make_dvar_saved_and_writable("vid_xpos");
+				make_dvar_saved_and_writable("vid_ypos");
 			}, scheduler::main, 250ms);
 		}
 	};

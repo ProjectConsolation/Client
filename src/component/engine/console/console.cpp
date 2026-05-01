@@ -52,6 +52,22 @@ namespace console
 			return version;
 		}
 
+		std::string normalize_build_date(const char* raw_date)
+		{
+			if (!raw_date)
+			{
+				return {};
+			}
+
+			std::string date = raw_date;
+			while (date.find("  ") != std::string::npos)
+			{
+				date.replace(date.find("  "), 2, " ");
+			}
+
+			return date;
+		}
+
 		struct
 		{
 			bool kill;
@@ -600,7 +616,7 @@ namespace console
 			std::string title = std::string("Project: Consolation [")
 				+ build_display_version()
 				+ " | "
-				+ __DATE__
+				+ normalize_build_date(__DATE__)
 				+ " "
 				+ __TIME__
 				+ "] - Console";

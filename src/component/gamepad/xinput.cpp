@@ -23,6 +23,8 @@
 
 namespace xinput
 {
+	bool should_hide_cursor_now();
+
 	namespace
 	{
 		struct controller_state
@@ -50,6 +52,8 @@ namespace xinput
 		std::array<std::uint8_t, 5> original_native_look_call{};
 		std::atomic<DWORD> last_mouse_activity_time{ 0 };
 		bool cursor_hidden_for_gamepad = false;
+		DWORD last_analog_update_time = 0;
+		float analog_frame_seconds = 1.0f / 60.0f;
 
 		enum direction
 		{
@@ -357,6 +361,23 @@ namespace xinput
 			return std::clamp((normalized - deadzone) / std::max(0.001f, 1.0f - deadzone), 0.0f, 1.0f);
 		}
 
+		float apply_squared_response(const float value)
+		{
+			const auto magnitude = std::fabs(value);
+			if (magnitude <= 0.0f)
+			{
+				return 0.0f;
+			}
+
+			return std::copysign(magnitude * magnitude, value);
+		}
+
+		float smooth_axis(const float current, const float target)
+		{
+			const auto blend = std::clamp(analog_frame_seconds * 20.0f, 0.2f, 1.0f);
+			return current + ((target - current) * blend);
+		}
+
 		void release_all_inputs(const DWORD time)
 		{
 			for (const auto& mapping : digital_buttons)
@@ -430,7 +451,6 @@ namespace xinput
 
 			const auto controller_active = is_gamepad_enabled()
 				&& pad.connected
-				&& !pad.menu_mode
 				&& ((time - pad.last_activity_time) <= 2000u);
 			const auto recent_mouse_activity = (time - last_mouse_activity_time.load()) <= 500u;
 
@@ -488,8 +508,23 @@ namespace xinput
 
 		void update_analog_state(const XINPUT_GAMEPAD& state)
 		{
-			normalize_stick_pair(state.sThumbLX, state.sThumbLY, pad.left_stick_x, pad.left_stick_y);
-			normalize_stick_pair(state.sThumbRX, state.sThumbRY, pad.right_stick_x, pad.right_stick_y);
+			float left_stick_x = 0.0f;
+			float left_stick_y = 0.0f;
+			float right_stick_x = 0.0f;
+			float right_stick_y = 0.0f;
+
+			normalize_stick_pair(state.sThumbLX, state.sThumbLY, left_stick_x, left_stick_y);
+			normalize_stick_pair(state.sThumbRX, state.sThumbRY, right_stick_x, right_stick_y);
+
+			left_stick_x = apply_squared_response(left_stick_x);
+			left_stick_y = apply_squared_response(left_stick_y);
+			right_stick_x = apply_squared_response(right_stick_x);
+			right_stick_y = apply_squared_response(right_stick_y);
+
+			pad.left_stick_x = smooth_axis(pad.left_stick_x, left_stick_x);
+			pad.left_stick_y = smooth_axis(pad.left_stick_y, left_stick_y);
+			pad.right_stick_x = smooth_axis(pad.right_stick_x, right_stick_x);
+			pad.right_stick_y = smooth_axis(pad.right_stick_y, right_stick_y);
 			pad.left_trigger = normalize_trigger(state.bLeftTrigger);
 			pad.right_trigger = normalize_trigger(state.bRightTrigger);
 		}
@@ -568,6 +603,17 @@ namespace xinput
 			return dvar ? std::clamp(dvar->current.value, 0.01f, 30.0f) : 1.0f;
 		}
 
+		float get_turn_rate(const char* normal_name, const char* ads_name, const float normal_default, const float ads_default, const bool ads_active)
+		{
+			const auto* const dvar = game::Dvar_FindVar(ads_active ? ads_name : normal_name);
+			if (!dvar)
+			{
+				return ads_active ? ads_default : normal_default;
+			}
+
+			return std::clamp(dvar->current.value, 1.0f, 2000.0f);
+		}
+
 		float* get_native_pitch_offset()
 		{
 			return reinterpret_cast<float*>(game::game_offset(0x11A9FEC0));
@@ -598,8 +644,10 @@ namespace xinput
 				return;
 			}
 
-			constexpr float angle_units_per_degree = 65536.0f / 360.0f;
-			const auto look_rate_degrees = (1200.0f * get_view_sensitivity()) / angle_units_per_degree;
+			const auto ads_active = pad.left_trigger > 0.0f;
+			const auto sensitivity = get_view_sensitivity();
+			const auto yaw_rate = get_turn_rate("cl_yawspeed", "cl_yawspeed_ads", 140.0f, 90.0f, ads_active) * sensitivity;
+			const auto pitch_rate = get_turn_rate("cl_pitchspeed", "cl_pitchspeed_ads", 140.0f, 90.0f, ads_active) * sensitivity;
 
 			auto* const pitch = get_native_pitch_offset();
 			auto* const yaw = get_native_yaw_offset();
@@ -608,8 +656,8 @@ namespace xinput
 				return;
 			}
 
-			*pitch = std::clamp(*pitch + (pitch_axis * look_rate_degrees), -85.0f, 85.0f);
-			*yaw += yaw_axis * look_rate_degrees;
+			*pitch = std::clamp(*pitch + (pitch_axis * pitch_rate * analog_frame_seconds), -85.0f, 85.0f);
+			*yaw += yaw_axis * yaw_rate * analog_frame_seconds;
 		}
 
 		void apply_native_gamepad_to_cmd(game::usercmd_t* cmd)
@@ -784,9 +832,23 @@ namespace xinput
 				}
 
 				pad = {};
+				last_analog_update_time = 0;
+				analog_frame_seconds = 1.0f / 60.0f;
 				set_bool_dvar(dvars::gpad_in_use, false);
 				return;
 			}
+
+			if (last_analog_update_time != 0)
+			{
+				const auto delta_ms = time - last_analog_update_time;
+				analog_frame_seconds = std::clamp(static_cast<float>(delta_ms) / 1000.0f, 1.0f / 250.0f, 1.0f / 20.0f);
+			}
+			else
+			{
+				analog_frame_seconds = 1.0f / 60.0f;
+			}
+
+			last_analog_update_time = time;
 
 			pad.connected = true;
 			pad.state = state;
@@ -864,6 +926,15 @@ namespace xinput
 	void record_mouse_activity()
 	{
 		last_mouse_activity_time = GetTickCount();
+		if (cursor_hidden_for_gamepad)
+		{
+			set_cursor_visible(true);
+		}
+	}
+
+	bool should_hide_cursor_now()
+	{
+		return cursor_hidden_for_gamepad;
 	}
 
 	class component final : public component_interface
@@ -917,10 +988,7 @@ namespace gamepad
 
 	bool should_hide_cursor()
 	{
-		const auto* const cl_ingame = game::Dvar_FindVar("cl_ingame");
-		return is_controller_active()
-			&& cl_ingame
-			&& cl_ingame->current.enabled;
+		return xinput::should_hide_cursor_now();
 	}
 
 	void note_mouse_activity()

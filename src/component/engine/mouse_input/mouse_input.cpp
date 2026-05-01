@@ -98,6 +98,17 @@ namespace mouse_input
 				raw_mouse_y = 0;
 			}
 
+			if (msg == WM_MOUSEMOVE)
+			{
+				gamepad::note_mouse_activity();
+			}
+
+			if (msg == WM_SETCURSOR && gamepad::should_hide_cursor())
+			{
+				SetCursor(nullptr);
+				return TRUE;
+			}
+
 			if (msg == WM_INPUT && raw_input_registered)
 			{
 				UINT size = sizeof(RAWINPUT);
