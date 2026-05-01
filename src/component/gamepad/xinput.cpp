@@ -673,16 +673,13 @@ namespace xinput
 
 			const auto forward = pad.left_stick_y;
 			const auto side = pad.left_stick_x;
+			constexpr auto move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
 
-			float move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
-			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
-			{
-				const auto length = std::fabs(side) <= std::fabs(forward)
-					? (forward != 0.0f ? side / forward : 0.0f)
-					: (side != 0.0f ? forward / side : 0.0f);
-				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
-			}
-
+			// We already apply a radial deadzone and return a circularly normalized stick vector
+			// in normalize_stick_pair(). Re-applying the square-mapping style move scaling used by
+			// IW engines on raw axis values turns diagonals into full 127/127 movement and makes
+			// circular motion feel jagged at slanted angles. At this stage, direct analog scaling
+			// is the correct mapping.
 			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + static_cast<int>(std::lround(forward * move_scale)));
 			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + static_cast<int>(std::lround(side * move_scale)));
 
