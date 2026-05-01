@@ -40,6 +40,8 @@ namespace dvars
 	game::dvar_s* gpad_button_deadzone = nullptr;
 	game::dvar_s* gpad_menu_scroll_delay_first = nullptr;
 	game::dvar_s* gpad_menu_scroll_delay_rest = nullptr;
+	game::dvar_s* gpad_menu_scroll_delay_min = nullptr;
+	game::dvar_s* gpad_menu_scroll_accel_time = nullptr;
 	game::dvar_s* input_invertPitch = nullptr;
 	game::dvar_s* cg_drawWatermark = nullptr;
 	game::dvar_s* cg_drawVersion = nullptr;
@@ -317,6 +319,8 @@ namespace dvars
 					gpad_button_deadzone = dvars::Dvar_RegisterFloat("gpad_button_deadzone", "Trigger deadzone for native gamepad buttons.", 0.13f, 0.0f, 1.0f, game::dvar_flags::saved);
 					gpad_menu_scroll_delay_first = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_first", "Initial menu repeat delay for gamepad input in milliseconds.", 420, 0, 1000, game::dvar_flags::saved);
 					gpad_menu_scroll_delay_rest = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_rest", "Subsequent menu repeat delay for gamepad input in milliseconds.", 210, 0, 1000, game::dvar_flags::saved);
+					gpad_menu_scroll_delay_min = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_min", "Minimum accelerated menu repeat delay for gamepad input in milliseconds.", 50, 0, 1000, game::dvar_flags::saved);
+					gpad_menu_scroll_accel_time = dvars::Dvar_RegisterInt("gpad_menu_scroll_accel_time", "Time in milliseconds for accelerated gamepad menu repeat to reach full speed.", 1500, 0, 5000, game::dvar_flags::saved);
 					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
 					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
@@ -340,6 +344,8 @@ namespace dvars
 					gpad_button_deadzone = nullptr;
 					gpad_menu_scroll_delay_first = nullptr;
 					gpad_menu_scroll_delay_rest = nullptr;
+					gpad_menu_scroll_delay_min = nullptr;
+					gpad_menu_scroll_accel_time = nullptr;
 					input_invertPitch = nullptr;
 					cg_drawWatermark = nullptr;
 					cg_drawVersion = nullptr;

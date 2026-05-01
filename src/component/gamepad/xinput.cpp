@@ -35,6 +35,7 @@ namespace xinput
 			XINPUT_STATE previous_state{};
 			std::array<bool, 4> menu_direction_down{};
 			std::array<DWORD, 4> menu_next_repeat_time{};
+			std::array<DWORD, 4> menu_hold_start_time{};
 			DWORD last_activity_time = 0;
 			float left_stick_x = 0.0f;
 			float left_stick_y = 0.0f;
@@ -154,6 +155,20 @@ namespace xinput
 			return dvars::gpad_menu_scroll_delay_rest
 				? static_cast<DWORD>(std::max(0, dvars::gpad_menu_scroll_delay_rest->current.integer))
 				: 210u;
+		}
+
+		DWORD get_min_repeat_delay()
+		{
+			return dvars::gpad_menu_scroll_delay_min
+				? static_cast<DWORD>(std::max(0, dvars::gpad_menu_scroll_delay_min->current.integer))
+				: 50u;
+		}
+
+		DWORD get_repeat_accel_time()
+		{
+			return dvars::gpad_menu_scroll_accel_time
+				? static_cast<DWORD>(std::max(0, dvars::gpad_menu_scroll_accel_time->current.integer))
+				: 1500u;
 		}
 
 		void set_bool_dvar(game::dvar_s* dvar, const bool value)
@@ -373,6 +388,7 @@ namespace xinput
 
 			pad.menu_direction_down.fill(false);
 			pad.menu_next_repeat_time.fill(0);
+			pad.menu_hold_start_time.fill(0);
 		}
 
 		void update_activity(const DWORD time)
@@ -456,6 +472,7 @@ namespace xinput
 		{
 			auto& is_down = pad.menu_direction_down[dir];
 			auto& next_repeat = pad.menu_next_repeat_time[dir];
+			auto& hold_start = pad.menu_hold_start_time[dir];
 
 			if (active)
 			{
@@ -463,6 +480,7 @@ namespace xinput
 				{
 					pulse_key(key, time);
 					is_down = true;
+					hold_start = time;
 					next_repeat = time + get_first_repeat_delay();
 					update_activity(time);
 					return;
@@ -470,8 +488,19 @@ namespace xinput
 
 				if (time >= next_repeat)
 				{
+					// Credit: accelerated menu repeat tuning adapted from controller work by GitHub user not-czar.
+					auto repeat_delay = get_rest_repeat_delay();
+					const auto min_delay = get_min_repeat_delay();
+					const auto accel_time = get_repeat_accel_time();
+					if (accel_time > 0 && repeat_delay > min_delay)
+					{
+						const auto held_for = time - hold_start;
+						const auto accel_progress = std::min(held_for, accel_time);
+						repeat_delay -= (repeat_delay - min_delay) * accel_progress / accel_time;
+					}
+
 					pulse_key(key, time);
-					next_repeat = time + get_rest_repeat_delay();
+					next_repeat = time + repeat_delay;
 					update_activity(time);
 				}
 
@@ -480,6 +509,7 @@ namespace xinput
 
 			is_down = false;
 			next_repeat = 0;
+			hold_start = 0;
 		}
 
 		void handle_left_stick_menu_input(const DWORD time)
@@ -674,15 +704,20 @@ namespace xinput
 			const auto forward = pad.left_stick_y;
 			const auto side = pad.left_stick_x;
 			constexpr auto move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
+			const auto analog_active = std::fabs(forward) > 0.0f || std::fabs(side) > 0.0f;
+
+			if (!analog_active)
+			{
+				return;
+			}
 
 			// We already apply a radial deadzone and return a circularly normalized stick vector
-			// in normalize_stick_pair(). Re-applying the square-mapping style move scaling used by
-			// IW engines on raw axis values turns diagonals into full 127/127 movement and makes
-			// circular motion feel jagged at slanted angles. At this stage, direct analog scaling
-			// is the correct mapping.
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + static_cast<int>(std::lround(forward * move_scale)));
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + static_cast<int>(std::lround(side * move_scale)));
-
+			// in normalize_stick_pair(). Let the stick own the movement bytes while it is deflected:
+			// layering analog input on top of the stock cmd can make small controller movement feel
+			// effectively digital. IW3SP/IW4x solve this deeper with a dedicated gamepad movement path;
+			// this lighter hook keeps keyboard fallback intact when the stick is at rest.
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(forward * move_scale)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(side * move_scale)));
 		}
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
