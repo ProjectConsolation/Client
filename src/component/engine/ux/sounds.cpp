@@ -197,6 +197,12 @@ namespace sounds
 	public:
 		void post_load() override
 		{
+			using ail_set_stream_loop_block_t = void(__stdcall*)(int, int, int);
+			if (const auto original = utils::nt::library("mss32.dll").get_proc<ail_set_stream_loop_block_t>("_AIL_set_stream_loop_block@12"))
+			{
+				ail_set_stream_loop_block_hook.create(original, ail_set_stream_loop_block_stub);
+			}
+
 			utils::hook::call(game::game_offset(music_stream_callsite_1), open_music_stream_stub);
 			utils::hook::call(game::game_offset(music_stream_callsite_2), open_music_stream_stub);
 			utils::hook::call(game::game_offset(music_stream_callsite_3), open_music_stream_stub);

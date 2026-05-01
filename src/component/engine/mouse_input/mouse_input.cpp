@@ -1,6 +1,7 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 
+#include "component/gamepad/gamepad.hpp"
 #include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"
@@ -108,6 +109,10 @@ namespace mouse_input
 					{
 						raw_mouse_x += raw->data.mouse.lLastX;
 						raw_mouse_y += raw->data.mouse.lLastY;
+						if (raw->data.mouse.lLastX != 0 || raw->data.mouse.lLastY != 0)
+						{
+							gamepad::note_mouse_activity();
+						}
 					}
 				}
 			}
@@ -247,6 +252,7 @@ namespace mouse_input
 				return call_original_mouse_event(pending_event);
 			}
 
+			gamepad::note_mouse_activity();
 			pending_event.dx = static_cast<int>(raw_dx);
 			pending_event.dy = static_cast<int>(raw_dy);
 			return call_original_mouse_event(pending_event);

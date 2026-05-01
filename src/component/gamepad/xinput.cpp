@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <Xinput.h>
@@ -47,6 +48,8 @@ namespace xinput
 		bool native_look_callsite_patched = false;
 		std::array<std::uint8_t, 5> original_create_cmd_call{};
 		std::array<std::uint8_t, 5> original_native_look_call{};
+		std::atomic<DWORD> last_mouse_activity_time{ 0 };
+		bool cursor_hidden_for_gamepad = false;
 
 		enum direction
 		{
@@ -88,7 +91,11 @@ namespace xinput
 
 		bool is_menu_mode()
 		{
-			return game_console::is_active() || (game::keyCatchers && *game::keyCatchers != 0);
+			const auto* const cl_ingame = game::Dvar_FindVar("cl_ingame");
+			const auto in_game = cl_ingame && cl_ingame->current.enabled;
+			return game_console::is_active()
+				|| !in_game
+				|| (game::keyCatchers && *game::keyCatchers != 0);
 		}
 
 		bool should_drive_native_cmd()
@@ -365,6 +372,79 @@ namespace xinput
 		void update_activity(const DWORD time)
 		{
 			pad.last_activity_time = time;
+		}
+
+		void set_cursor_visible(const bool visible)
+		{
+			if (!game::main_window)
+			{
+				return;
+			}
+
+			const auto hwnd = *game::main_window;
+			if (!hwnd || !IsWindow(hwnd))
+			{
+				return;
+			}
+
+			if (visible)
+			{
+				while (ShowCursor(TRUE) < 0)
+				{
+				}
+
+				cursor_hidden_for_gamepad = false;
+				return;
+			}
+
+			while (ShowCursor(FALSE) >= 0)
+			{
+			}
+
+			SetCursor(nullptr);
+			cursor_hidden_for_gamepad = true;
+		}
+
+		void update_cursor_visibility(const DWORD time)
+		{
+			const auto hwnd = game::main_window ? *game::main_window : nullptr;
+			if (!hwnd || !IsWindow(hwnd))
+			{
+				if (cursor_hidden_for_gamepad)
+				{
+					set_cursor_visible(true);
+				}
+
+				return;
+			}
+
+			if (GetForegroundWindow() != hwnd)
+			{
+				if (cursor_hidden_for_gamepad)
+				{
+					set_cursor_visible(true);
+				}
+
+				return;
+			}
+
+			const auto controller_active = is_gamepad_enabled()
+				&& pad.connected
+				&& !pad.menu_mode
+				&& ((time - pad.last_activity_time) <= 2000u);
+			const auto recent_mouse_activity = (time - last_mouse_activity_time.load()) <= 500u;
+
+			if (controller_active && !recent_mouse_activity)
+			{
+				if (!cursor_hidden_for_gamepad)
+				{
+					set_cursor_visible(false);
+				}
+			}
+			else if (cursor_hidden_for_gamepad)
+			{
+				set_cursor_visible(true);
+			}
 		}
 
 		void handle_menu_direction(const direction dir, const int key, const bool active, const DWORD time)
@@ -764,6 +844,7 @@ namespace xinput
 
 			const auto in_use = (time - pad.last_activity_time) <= 2000u;
 			set_bool_dvar(dvars::gpad_in_use, in_use);
+			update_cursor_visibility(time);
 
 			debug_print("gpad: buttons=0x%04X lx=%.3f ly=%.3f rx=%.3f ry=%.3f lt=%.3f rt=%.3f menu=%d in_use=%d\n",
 				pad.state.Gamepad.wButtons,
@@ -778,6 +859,11 @@ namespace xinput
 
 			pad.previous_state = pad.state;
 		}
+	}
+
+	void record_mouse_activity()
+	{
+		last_mouse_activity_time = GetTickCount();
 	}
 
 	class component final : public component_interface
@@ -797,6 +883,10 @@ namespace xinput
 			{
 				shutdown_requested = true;
 				release_all_inputs(GetTickCount());
+				if (cursor_hidden_for_gamepad)
+				{
+					set_cursor_visible(true);
+				}
 				restore_native_cmd_hook();
 				restore_native_look_hook();
 				set_bool_dvar(dvars::gpad_present, false);
@@ -811,6 +901,32 @@ namespace xinput
 			restore_native_look_hook();
 		}
 	};
+}
+
+namespace gamepad
+{
+	bool is_controller_active()
+	{
+		if (!dvars::gpad_in_use)
+		{
+			return false;
+		}
+
+		return dvars::gpad_in_use->current.enabled;
+	}
+
+	bool should_hide_cursor()
+	{
+		const auto* const cl_ingame = game::Dvar_FindVar("cl_ingame");
+		return is_controller_active()
+			&& cl_ingame
+			&& cl_ingame->current.enabled;
+	}
+
+	void note_mouse_activity()
+	{
+		xinput::record_mouse_activity();
+	}
 }
 
 REGISTER_COMPONENT(xinput::component)
