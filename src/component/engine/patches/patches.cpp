@@ -108,62 +108,6 @@ namespace patches
 			return 1;
 		}
 
-		bool dvar_enabled(const char* name)
-		{
-			const auto* const dvar = game::Dvar_FindVar(name);
-			if (!dvar)
-			{
-				return false;
-			}
-
-			switch (dvar->type)
-			{
-			case game::dvar_type::boolean:
-				return dvar->current.enabled;
-			case game::dvar_type::integer:
-				return dvar->current.integer != 0;
-			case game::dvar_type::value:
-				return dvar->current.value != 0.0f;
-			case game::dvar_type::string:
-			case game::dvar_type::enumeration:
-				if (!dvar->current.string)
-				{
-					return false;
-				}
-
-				return dvar->current.string[0] != '\0'
-					&& strcmp(dvar->current.string, "0") != 0
-					&& _stricmp(dvar->current.string, "false") != 0
-					&& _stricmp(dvar->current.string, "off") != 0;
-			default:
-				return dvar->current.integer != 0;
-			}
-		}
-
-		int dvar_int_value(const char* name, const int fallback = 0)
-		{
-			const auto* const dvar = game::Dvar_FindVar(name);
-			if (!dvar)
-			{
-				return fallback;
-			}
-
-			switch (dvar->type)
-			{
-			case game::dvar_type::boolean:
-				return dvar->current.enabled ? 1 : 0;
-			case game::dvar_type::integer:
-				return dvar->current.integer;
-			case game::dvar_type::value:
-				return static_cast<int>(dvar->current.value);
-			case game::dvar_type::string:
-			case game::dvar_type::enumeration:
-				return dvar->current.string ? std::atoi(dvar->current.string) : fallback;
-			default:
-				return dvar->current.integer;
-			}
-		}
-
 		void make_dvar_saved_and_writable(const char* name)
 		{
 			auto* const dvar = game::Dvar_FindVar(name);
@@ -191,25 +135,11 @@ namespace patches
 			if (!strcmp(class_name, "JB_MP"))
 			{
 				window_name = "Project: Consolation - Multiplayer";
-
-				const bool fullscreen = dvar_enabled("r_fullscreen");
-				const bool borderless = dvar_enabled("r_borderless");
-
-				if (!fullscreen)
-				{
-					x = dvar_int_value("vid_xpos", x);
-					y = dvar_int_value("vid_ypos", y);
-				}
-
-				if (!fullscreen && borderless)
-				{
-					style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
-					style |= WS_POPUP;
-					ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
-					ex_style |= WS_EX_APPWINDOW;
-				}
 			}
-			return CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
+
+			const auto hwnd = CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
+			apply_borderless_window_mode(hwnd);
+			return hwnd;
 		}
 
 		template <typename T>
@@ -423,9 +353,6 @@ namespace patches
 			// Allow the stock FPS/debug draw block to run in frontend menus too.
 			utils::hook::nop(game::game_offset(0x1031211D), 0x06);
 
-			// stop the video restart path from forcibly setting r_fullscreen back to 1
-			utils::hook::nop(game::game_offset(0x103BE16D), 0x05);
-
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
 			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
@@ -443,7 +370,6 @@ namespace patches
 #endif
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
-			dvars::overrides::register_bool("r_fullscreen", 1, game::dvar_flags::saved);
 			dvars::overrides::register_int("com_maxfps", 60, 0, 1000, game::dvar_flags::saved);
 			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved); //cod4
 			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
