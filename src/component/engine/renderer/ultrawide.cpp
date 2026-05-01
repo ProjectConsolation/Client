@@ -208,8 +208,6 @@ namespace ultrawide
 		{
 			scheduler::once([]()
 			{
-				utils::hook::nop(game::game_offset(custom_mode_fullscreen_gate), 2);
-
 				dvars::r_aspectRatioCustomEnable = dvars::Dvar_RegisterBool(
 					"r_aspectRatioCustomEnable", 0,
 					"Enable custom ultrawide aspect ratio overrides.",
@@ -274,16 +272,6 @@ namespace ultrawide
 						is_widescreen ? static_cast<int>(is_widescreen->current.enabled) : -1);
 				});
 			}, scheduler::main);
-
-			scheduler::once([]()
-			{
-				apply_custom_aspect_ratio();
-			}, scheduler::main, 3000ms);
-
-			scheduler::loop([]()
-			{
-				apply_custom_aspect_ratio();
-			}, scheduler::main, 250ms);
 		}
 
 		void pre_destroy() override
