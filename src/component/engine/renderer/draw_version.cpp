@@ -20,7 +20,6 @@ namespace draw_version
 		float shadow_color[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
 		float text_color[4] = { 0.86f, 0.82f, 0.72f, 0.60f };
 		const char* watermark_text = "Project: Consolation";
-
 		float resolve_layout_width(const game::ScreenPlacement& scr_place)
 		{
 			const auto real_a = scr_place.realViewportSize[0];

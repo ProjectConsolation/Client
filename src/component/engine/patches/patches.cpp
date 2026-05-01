@@ -10,6 +10,9 @@
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
 #include <unordered_set>
+#include <mmsystem.h>
+
+#pragma comment(lib, "winmm.lib")
 
 #ifndef VERSION_BUILD
 #define VERSION_BUILD "0"
@@ -110,20 +113,6 @@ namespace patches
 		}
 
 		void make_dvar_saved_and_writable(const char* name)
-		{
-			auto* const dvar = game::Dvar_FindVar(name);
-			if (!dvar)
-			{
-				return;
-			}
-
-			const auto writable_flags = static_cast<std::uint16_t>(dvar->flags)
-				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected);
-
-			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
-		}
-
-		void make_dvar_saved_live_and_writable(const char* name)
 		{
 			auto* const dvar = game::Dvar_FindVar(name);
 			if (!dvar)
@@ -261,6 +250,16 @@ namespace patches
 				}
 			}
 
+			if (type == game::DVAR_TYPE_ENUM)
+			{
+				if (!_stricmp(dvarName, "cg_drawFPS"))
+				{
+					const auto writable_flags = flags
+						& ~static_cast<unsigned short>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
+					flags = static_cast<unsigned short>(writable_flags | static_cast<unsigned short>(game::dvar_flags::saved));
+				}
+			}
+
 			if (type == game::DVAR_TYPE_FLOAT)
 			{
 				auto* var = find_dvar(dvars::overrides::register_float_overrides, dvarName);
@@ -388,6 +387,8 @@ namespace patches
 	public:
 		void post_load() override
 		{
+			timeBeginPeriod(1);
+
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
@@ -401,6 +402,9 @@ namespace patches
 
 			// stop an engine UI path from intentionally breaking into the debugger
 			utils::hook::nop(game::game_offset(0x1027D3C4), 0x05);
+
+			// Allow the stock FPS/debug draw block to run in frontend menus too.
+			utils::hook::nop(game::game_offset(0x1031211D), 0x06);
 
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
@@ -474,7 +478,7 @@ namespace patches
 				utils::hook::set<std::uint32_t>(game::game_offset(0x10297C44), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&cod4_weapon_landing_bob_scale)));
 				utils::hook::set<std::uint32_t>(game::game_offset(0x10297C79), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&cod4_weapon_landing_bob_scale)));
 
-				make_dvar_saved_live_and_writable("com_maxfps");
+				make_dvar_saved_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
@@ -496,12 +500,17 @@ namespace patches
 
 			scheduler::loop([]
 			{
-				make_dvar_saved_live_and_writable("com_maxfps");
+				make_dvar_saved_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
 			}, scheduler::main, 250ms);
+
+			scheduler::on_shutdown([]()
+			{
+				timeEndPeriod(1);
+			});
 		}
 	};
 }

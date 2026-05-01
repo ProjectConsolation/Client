@@ -121,6 +121,11 @@ namespace xinput
 			return dvars::gpad_enabled && dvars::gpad_enabled->current.enabled;
 		}
 
+		bool is_gamepad_in_use()
+		{
+			return dvars::gpad_in_use && dvars::gpad_in_use->current.enabled;
+		}
+
 		bool is_menu_mode()
 		{
 			const auto* const cl_ingame = game::Dvar_FindVar("cl_ingame");
@@ -134,6 +139,7 @@ namespace xinput
 		{
 			return is_gamepad_enabled()
 				&& pad.connected
+				&& is_gamepad_in_use()
 				&& !shutdown_requested
 				&& !is_menu_mode();
 		}
@@ -643,6 +649,22 @@ namespace xinput
 			return static_cast<std::int8_t>(std::clamp(value, -127, 127));
 		}
 
+		void apply_analog_movement_to_cmd(game::usercmd_t* cmd, const float forward, const float side)
+		{
+			auto move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
+
+			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
+			{
+				const auto length = std::fabs(side) <= std::fabs(forward)
+					? (std::fabs(forward) > 0.0f ? side / forward : 0.0f)
+					: (std::fabs(side) > 0.0f ? forward / side : 0.0f);
+				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+			}
+
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::floor(forward * move_scale)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::floor(side * move_scale)));
+		}
+
 		float get_view_sensitivity()
 		{
 			const auto* const dvar = game::Dvar_FindVar("input_viewSensitivity");
@@ -738,15 +760,23 @@ namespace xinput
 
 			const auto forward = pad.left_stick_y;
 			const auto side = pad.left_stick_x;
-			const auto analog_active = std::fabs(forward) > 0.0f || std::fabs(side) > 0.0f;
+			const auto analog_magnitude = std::sqrt((forward * forward) + (side * side));
+			const auto analog_active = analog_magnitude >= 0.02f;
 
 			if (!analog_active)
 			{
 				return;
 			}
 
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(forward * 127.0f)));
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(side * 127.0f)));
+			// Never trample an already-built keyboard move command.
+			if (cmd->forwardmove != 0 || cmd->rightmove != 0)
+			{
+				return;
+			}
+
+			// Match the IW movement shaping more closely for left-stick locomotion
+			// without touching the risky shared usercmd serializer path yet.
+			apply_analog_movement_to_cmd(cmd, forward, side);
 		}
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
@@ -1184,7 +1214,6 @@ namespace xinput
 			install_native_cmd_hook();
 			install_native_look_hook();
 			install_draw_crosshair_hook();
-			install_usercmd_movement_patch();
 
 			scheduler::loop([]()
 			{
@@ -1202,7 +1231,6 @@ namespace xinput
 				restore_native_cmd_hook();
 				restore_native_look_hook();
 				restore_draw_crosshair_hook();
-				restore_usercmd_movement_patch();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
 			});
@@ -1214,7 +1242,6 @@ namespace xinput
 			restore_native_cmd_hook();
 			restore_native_look_hook();
 			restore_draw_crosshair_hook();
-			restore_usercmd_movement_patch();
 		}
 	};
 }
