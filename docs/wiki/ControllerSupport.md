@@ -18,8 +18,14 @@ The XInput layer currently handles:
 - Analog movement into `usercmd`
 - Analog look into native view input
 - APAD direction keys from left stick
+- Accelerated held-menu repeat for stick and dpad navigation
 
 If a gamepad key has no binding in the engine, fallback commands are used.
+
+## Credits
+
+- Menu repeat acceleration tuning in the gamepad work includes an implementation credit to GitHub user `not-czar`.
+- Controller movement and input behavior continue to be informed by IW3SP and IW4x controller research and code structure.
 
 ## SDL Backend (Experimental)
 

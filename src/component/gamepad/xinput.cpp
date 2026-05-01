@@ -91,6 +91,14 @@ namespace xinput
 			{XINPUT_GAMEPAD_DPAD_RIGHT, game::K_DPAD_RIGHT, game::K_RIGHTARROW},
 		};
 
+		bool is_dpad_mapping(const WORD mask)
+		{
+			return mask == XINPUT_GAMEPAD_DPAD_UP
+				|| mask == XINPUT_GAMEPAD_DPAD_DOWN
+				|| mask == XINPUT_GAMEPAD_DPAD_LEFT
+				|| mask == XINPUT_GAMEPAD_DPAD_RIGHT;
+		}
+
 		bool is_gamepad_enabled()
 		{
 			return dvars::gpad_enabled && dvars::gpad_enabled->current.enabled;
@@ -521,6 +529,14 @@ namespace xinput
 			handle_menu_direction(dir_right, game::K_RIGHTARROW, pad.left_stick_x >= threshold, time);
 		}
 
+		void handle_dpad_menu_input(const XINPUT_GAMEPAD& state, const DWORD time)
+		{
+			handle_menu_direction(dir_up, game::K_UPARROW, (state.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0, time);
+			handle_menu_direction(dir_down, game::K_DOWNARROW, (state.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0, time);
+			handle_menu_direction(dir_left, game::K_LEFTARROW, (state.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0, time);
+			handle_menu_direction(dir_right, game::K_RIGHTARROW, (state.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0, time);
+		}
+
 		void update_analog_state(const XINPUT_GAMEPAD& state)
 		{
 			float left_stick_x = 0.0f;
@@ -553,6 +569,11 @@ namespace xinput
 
 				if (pad.menu_mode)
 				{
+					if (is_dpad_mapping(mapping.xinput_mask))
+					{
+						continue;
+					}
+
 					fire_key_event(mapping.menu_key, is_down, time);
 				}
 				else
@@ -634,15 +655,14 @@ namespace xinput
 			return reinterpret_cast<float*>(game::game_offset(0x11A9FEC4));
 		}
 
-		bool should_hide_ingame_cursor()
+		bool should_hide_ui_cursor()
 		{
 			if (!should_hide_cursor_now())
 			{
 				return false;
 			}
 
-			const auto* const cl_ingame = game::Dvar_FindVar("cl_ingame");
-			return cl_ingame && cl_ingame->current.enabled && !game_console::is_active();
+			return !game_console::is_active();
 		}
 
 		bool __cdecl draw_crosshair_body()
@@ -650,7 +670,7 @@ namespace xinput
 			const auto func = reinterpret_cast<bool(__cdecl*)()>(game::game_offset(0x102DA010));
 			const auto drew_crosshair = func();
 
-			if (!drew_crosshair && should_hide_ingame_cursor())
+			if (!drew_crosshair && should_hide_ui_cursor())
 			{
 				return true;
 			}
@@ -694,6 +714,11 @@ namespace xinput
 			*yaw += yaw_axis * yaw_rate * analog_frame_seconds;
 		}
 
+		float map_squared_movement_axis(const float axis, const float other_axis)
+		{
+			return std::sqrt((axis * axis) + (other_axis * other_axis)) * axis;
+		}
+
 		void apply_native_gamepad_to_cmd(game::usercmd_t* cmd)
 		{
 			if (!cmd || !should_drive_native_cmd())
@@ -701,9 +726,9 @@ namespace xinput
 				return;
 			}
 
-			const auto forward = pad.left_stick_y;
-			const auto side = pad.left_stick_x;
-			constexpr auto move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
+			auto forward = map_squared_movement_axis(pad.left_stick_y, pad.left_stick_x);
+			auto side = map_squared_movement_axis(pad.left_stick_x, pad.left_stick_y);
+			auto move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
 			const auto analog_active = std::fabs(forward) > 0.0f || std::fabs(side) > 0.0f;
 
 			if (!analog_active)
@@ -711,13 +736,19 @@ namespace xinput
 				return;
 			}
 
-			// We already apply a radial deadzone and return a circularly normalized stick vector
-			// in normalize_stick_pair(). Let the stick own the movement bytes while it is deflected:
-			// layering analog input on top of the stock cmd can make small controller movement feel
-			// effectively digital. IW3SP/IW4x solve this deeper with a dedicated gamepad movement path;
-			// this lighter hook keeps keyboard fallback intact when the stick is at rest.
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(forward * move_scale)));
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(side * move_scale)));
+			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
+			{
+				const auto length = std::fabs(side) <= std::fabs(forward)
+					? side / forward
+					: forward / side;
+				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+			}
+
+			// Movement shaping follows the IW3SP/IW4x controller path more closely than our
+			// previous direct scaling. The squared virtual-axis mapping keeps shallow diagonals
+			// from jumping too aggressively while still allowing full-speed travel at high deflection.
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::floor(forward * move_scale)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::floor(side * move_scale)));
 		}
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
@@ -955,6 +986,7 @@ namespace xinput
 
 			if (pad.menu_mode)
 			{
+				handle_dpad_menu_input(pad.state.Gamepad, time);
 				handle_left_stick_menu_input(time);
 			}
 

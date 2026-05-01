@@ -69,6 +69,7 @@ Advanced users can still make a non-default install work by manually copying the
 - [xoxor4d](https://github.com/xoxor4d) for another big lot of code snippets from [iw3xo](https://github.com/xoxor4d/iw3xo-dev)
 - [JerryALT](https://gitea.com/JerryALT/) for IW3SP code snippets and research, raw mouse input
 - [Rackover](https://github.com/Rackover) for IW3/IW4 research & [iw3x-port](https://github.com/iw4x/iw3x-port)
+- [not-czar](https://github.com/not-czar) for the controller menu repeat acceleration fix direction used in the gamepad work
 - [MrReeko](https://github.com/MrReekoFTWxD) for initial GSC injection
 - [ujicos](https://github.com/ujicos) for initially starting the project, with additions & general upkeep
 

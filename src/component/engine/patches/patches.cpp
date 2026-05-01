@@ -219,6 +219,13 @@ namespace patches
 					value.enabled = var->value;
 					flags = var->flags;
 				}
+
+				if (!_stricmp(dvarName, "r_fullscreen"))
+				{
+					const auto writable_flags = flags
+						& ~static_cast<unsigned short>(game::dvar_flags::read_only | game::dvar_flags::write_protected);
+					flags = static_cast<unsigned short>(writable_flags | static_cast<unsigned short>(game::dvar_flags::saved));
+				}
 			}
 
 			if (type == game::DVAR_TYPE_INT)
