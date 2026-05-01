@@ -123,6 +123,20 @@ namespace patches
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
 		}
 
+		void make_dvar_saved_live_and_writable(const char* name)
+		{
+			auto* const dvar = game::Dvar_FindVar(name);
+			if (!dvar)
+			{
+				return;
+			}
+
+			const auto writable_flags = static_cast<std::uint16_t>(dvar->flags)
+				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
+
+			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
+		}
+
 		bool is_windowed_borderless_requested()
 		{
 			const auto* const fullscreen = game::Dvar_FindVar("r_fullscreen");
@@ -237,6 +251,13 @@ namespace patches
 					domain.integer.max = var->max;
 					domain.integer.min = var->min;
 					flags = var->flags;
+				}
+
+				if (!_stricmp(dvarName, "com_maxfps"))
+				{
+					const auto writable_flags = flags
+						& ~static_cast<unsigned short>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
+					flags = static_cast<unsigned short>(writable_flags | static_cast<unsigned short>(game::dvar_flags::saved));
 				}
 			}
 
@@ -453,7 +474,7 @@ namespace patches
 				utils::hook::set<std::uint32_t>(game::game_offset(0x10297C44), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&cod4_weapon_landing_bob_scale)));
 				utils::hook::set<std::uint32_t>(game::game_offset(0x10297C79), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&cod4_weapon_landing_bob_scale)));
 
-				make_dvar_saved_and_writable("com_maxfps");
+				make_dvar_saved_live_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
@@ -475,7 +496,7 @@ namespace patches
 
 			scheduler::loop([]
 			{
-				make_dvar_saved_and_writable("com_maxfps");
+				make_dvar_saved_live_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");

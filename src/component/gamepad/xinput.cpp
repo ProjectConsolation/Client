@@ -50,13 +50,30 @@ namespace xinput
 		bool create_cmd_callsite_patched = false;
 		bool native_look_callsite_patched = false;
 		bool draw_crosshair_callsite_patched = false;
+		bool usercmd_movement_patched = false;
 		std::array<std::uint8_t, 5> original_create_cmd_call{};
 		std::array<std::uint8_t, 5> original_native_look_call{};
 		std::array<std::uint8_t, 5> original_draw_crosshair_call{};
+		std::array<std::uint8_t, 5> original_pack_current_move_jump{};
+		std::array<std::uint8_t, 5> original_pack_previous_move_jump{};
+		std::array<std::uint8_t, 5> original_unpack_base_move_a_jump{};
+		std::array<std::uint8_t, 5> original_unpack_base_move_b_jump{};
+		std::array<std::uint8_t, 5> original_unpack_exact_move_a_jump{};
+		std::array<std::uint8_t, 5> original_unpack_exact_move_b_jump{};
+		std::uint16_t original_write_move_bits_a = 0;
+		std::uint16_t original_write_move_bits_b = 0;
+		std::uint16_t original_read_move_bits_a = 0;
+		std::uint16_t original_read_move_bits_b = 0;
 		std::atomic<DWORD> last_mouse_activity_time{ 0 };
 		bool cursor_hidden_for_gamepad = false;
 		DWORD last_analog_update_time = 0;
 		float analog_frame_seconds = 1.0f / 60.0f;
+		std::uint32_t pack_current_move_rejoin = 0;
+		std::uint32_t pack_previous_move_rejoin = 0;
+		std::uint32_t unpack_base_move_a_rejoin = 0;
+		std::uint32_t unpack_base_move_b_rejoin = 0;
+		std::uint32_t unpack_exact_move_a_rejoin = 0;
+		std::uint32_t unpack_exact_move_b_rejoin = 0;
 
 		enum direction
 		{
@@ -199,6 +216,12 @@ namespace xinput
 			}
 
 			game::CL_KeyEvent(0, key, down ? 1 : 0, time);
+		}
+
+		void pulse_key_event(const int key, const DWORD time)
+		{
+			fire_key_event(key, true, time);
+			fire_key_event(key, false, time);
 		}
 
 		const char* get_fallback_gameplay_command(const int key)
@@ -455,7 +478,7 @@ namespace xinput
 			const auto controller_active = is_gamepad_enabled()
 				&& pad.connected
 				&& ((time - pad.last_activity_time) <= 2000u);
-			const auto recent_mouse_activity = (time - last_mouse_activity_time.load()) <= 100u;
+			const auto recent_mouse_activity = (time - last_mouse_activity_time.load()) <= 16u;
 
 			if (controller_active && !recent_mouse_activity)
 			{
@@ -480,7 +503,7 @@ namespace xinput
 			{
 				if (!is_down)
 				{
-					fire_key_event(key, true, time);
+					pulse_key_event(key, time);
 					is_down = true;
 					hold_start = time;
 					next_repeat = time + get_first_repeat_delay();
@@ -501,7 +524,8 @@ namespace xinput
 						repeat_delay -= (repeat_delay - min_delay) * accel_progress / accel_time;
 					}
 
-					fire_key_event(key, true, time);
+					// Credit: accelerated menu repeat tuning adapted from controller work by GitHub user not-czar.
+					pulse_key_event(key, time);
 					next_repeat = time + repeat_delay;
 					update_activity(time);
 				}
@@ -509,31 +533,23 @@ namespace xinput
 				return;
 			}
 
-			if (is_down)
-			{
-				fire_key_event(key, false, time);
-			}
-
 			is_down = false;
 			next_repeat = 0;
 			hold_start = 0;
 		}
 
-		void handle_left_stick_menu_input(const DWORD time)
+		void handle_menu_navigation(const XINPUT_GAMEPAD& state, const DWORD time)
 		{
 			const auto threshold = std::max(0.05f, get_stick_deadzone_min() + 0.05f);
-			handle_menu_direction(dir_up, game::K_UPARROW, pad.left_stick_y >= threshold, time);
-			handle_menu_direction(dir_down, game::K_DOWNARROW, pad.left_stick_y <= -threshold, time);
-			handle_menu_direction(dir_left, game::K_LEFTARROW, pad.left_stick_x <= -threshold, time);
-			handle_menu_direction(dir_right, game::K_RIGHTARROW, pad.left_stick_x >= threshold, time);
-		}
+			const auto up = (state.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0 || pad.left_stick_y >= threshold;
+			const auto down = (state.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0 || pad.left_stick_y <= -threshold;
+			const auto left = (state.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0 || pad.left_stick_x <= -threshold;
+			const auto right = (state.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0 || pad.left_stick_x >= threshold;
 
-		void handle_dpad_menu_input(const XINPUT_GAMEPAD& state, const DWORD time)
-		{
-			handle_menu_direction(dir_up, game::K_UPARROW, (state.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0, time);
-			handle_menu_direction(dir_down, game::K_DOWNARROW, (state.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0, time);
-			handle_menu_direction(dir_left, game::K_LEFTARROW, (state.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0, time);
-			handle_menu_direction(dir_right, game::K_RIGHTARROW, (state.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0, time);
+			handle_menu_direction(dir_up, game::K_UPARROW, up, time);
+			handle_menu_direction(dir_down, game::K_DOWNARROW, down, time);
+			handle_menu_direction(dir_left, game::K_LEFTARROW, left, time);
+			handle_menu_direction(dir_right, game::K_RIGHTARROW, right, time);
 		}
 
 		void update_analog_state(const XINPUT_GAMEPAD& state)
@@ -713,11 +729,6 @@ namespace xinput
 			*yaw += yaw_axis * yaw_rate * analog_frame_seconds;
 		}
 
-		float map_squared_movement_axis(const float axis, const float other_axis)
-		{
-			return std::sqrt((axis * axis) + (other_axis * other_axis)) * axis;
-		}
-
 		void apply_native_gamepad_to_cmd(game::usercmd_t* cmd)
 		{
 			if (!cmd || !should_drive_native_cmd())
@@ -725,9 +736,8 @@ namespace xinput
 				return;
 			}
 
-			auto forward = map_squared_movement_axis(pad.left_stick_y, pad.left_stick_x);
-			auto side = map_squared_movement_axis(pad.left_stick_x, pad.left_stick_y);
-			auto move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
+			const auto forward = pad.left_stick_y;
+			const auto side = pad.left_stick_x;
 			const auto analog_active = std::fabs(forward) > 0.0f || std::fabs(side) > 0.0f;
 
 			if (!analog_active)
@@ -735,19 +745,8 @@ namespace xinput
 				return;
 			}
 
-			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
-			{
-				const auto length = std::fabs(side) <= std::fabs(forward)
-					? side / forward
-					: forward / side;
-				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
-			}
-
-			// Movement shaping follows the IW3SP/IW4x controller path more closely than our
-			// previous direct scaling. The squared virtual-axis mapping keeps shallow diagonals
-			// from jumping too aggressively while still allowing full-speed travel at high deflection.
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::floor(forward * move_scale)));
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::floor(side * move_scale)));
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(forward * 127.0f)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(side * 127.0f)));
 		}
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
@@ -814,6 +813,80 @@ namespace xinput
 			}
 		}
 
+		__declspec(naked) void pack_current_move_stub()
+		{
+			__asm
+			{
+				mov al, byte ptr [ebp + 1Ch]
+				mov ah, byte ptr [ebp + 1Eh]
+				movzx ecx, ax
+				mov dword ptr [esp + 0Ch], ecx
+				mov eax, pack_current_move_rejoin
+				jmp eax
+			}
+		}
+
+		__declspec(naked) void pack_previous_move_stub()
+		{
+			__asm
+			{
+				mov al, byte ptr [edi + 1Ch]
+				mov ah, byte ptr [edi + 1Eh]
+				movzx ecx, ax
+				mov dword ptr [esp + 1Ch], ecx
+				mov eax, pack_previous_move_rejoin
+				jmp eax
+			}
+		}
+
+		__declspec(naked) void unpack_base_move_a_stub()
+		{
+			__asm
+			{
+				mov al, byte ptr [ebx + 1Ch]
+				mov ah, byte ptr [ebx + 1Eh]
+				movzx ecx, ax
+				mov dword ptr [esp + 10h], ecx
+				mov eax, unpack_base_move_a_rejoin
+				jmp eax
+			}
+		}
+
+		__declspec(naked) void unpack_base_move_b_stub()
+		{
+			__asm
+			{
+				mov al, byte ptr [ebx + 1Ch]
+				mov ah, byte ptr [ebx + 1Eh]
+				movzx ecx, ax
+				mov dword ptr [esp + 10h], ecx
+				mov eax, unpack_base_move_b_rejoin
+				jmp eax
+			}
+		}
+
+		__declspec(naked) void unpack_exact_move_a_stub()
+		{
+			__asm
+			{
+				mov byte ptr [edi + 1Ch], al
+				mov byte ptr [edi + 1Eh], ah
+				mov eax, unpack_exact_move_a_rejoin
+				jmp eax
+			}
+		}
+
+		__declspec(naked) void unpack_exact_move_b_stub()
+		{
+			__asm
+			{
+				mov byte ptr [edi + 1Ch], al
+				mov byte ptr [edi + 1Eh], ah
+				mov eax, unpack_exact_move_b_rejoin
+				jmp eax
+			}
+		}
+
 		void install_native_cmd_hook()
 		{
 			if (create_cmd_callsite_patched)
@@ -862,6 +935,50 @@ namespace xinput
 			draw_crosshair_callsite_patched = true;
 		}
 
+		void install_usercmd_movement_patch()
+		{
+			if (usercmd_movement_patched)
+			{
+				return;
+			}
+
+			pack_current_move_rejoin = game::game_offset(0x103EF8A7);
+			pack_previous_move_rejoin = game::game_offset(0x103EF8E9);
+			unpack_base_move_a_rejoin = game::game_offset(0x103F02BD);
+			unpack_base_move_b_rejoin = game::game_offset(0x103F03EB);
+			unpack_exact_move_a_rejoin = game::game_offset(0x103F0310);
+			unpack_exact_move_b_rejoin = game::game_offset(0x103F043E);
+
+			for (auto i = 0u; i < 5; ++i)
+			{
+				original_pack_current_move_jump[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x103EF865 + static_cast<int>(i)));
+				original_pack_previous_move_jump[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x103EF8A7 + static_cast<int>(i)));
+				original_unpack_base_move_a_jump[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x103F027B + static_cast<int>(i)));
+				original_unpack_base_move_b_jump[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x103F03A9 + static_cast<int>(i)));
+				original_unpack_exact_move_a_jump[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x103F02E2 + static_cast<int>(i)));
+				original_unpack_exact_move_b_jump[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x103F0410 + static_cast<int>(i)));
+			}
+
+			original_write_move_bits_a = utils::hook::get<std::uint16_t>(game::game_offset(0x103EF9CE));
+			original_write_move_bits_b = utils::hook::get<std::uint16_t>(game::game_offset(0x103EFA44));
+			original_read_move_bits_a = utils::hook::get<std::uint16_t>(game::game_offset(0x103F02C8));
+			original_read_move_bits_b = utils::hook::get<std::uint16_t>(game::game_offset(0x103F03F6));
+
+			utils::hook::jump(game::game_offset(0x103EF865), pack_current_move_stub);
+			utils::hook::jump(game::game_offset(0x103EF8A7), pack_previous_move_stub);
+			utils::hook::jump(game::game_offset(0x103F027B), unpack_base_move_a_stub);
+			utils::hook::jump(game::game_offset(0x103F03A9), unpack_base_move_b_stub);
+			utils::hook::jump(game::game_offset(0x103F02E2), unpack_exact_move_a_stub);
+			utils::hook::jump(game::game_offset(0x103F0410), unpack_exact_move_b_stub);
+
+			utils::hook::set<std::uint16_t>(game::game_offset(0x103EF9CE), 0x106A);
+			utils::hook::set<std::uint16_t>(game::game_offset(0x103EFA44), 0x106A);
+			utils::hook::set<std::uint16_t>(game::game_offset(0x103F02C8), 0x106A);
+			utils::hook::set<std::uint16_t>(game::game_offset(0x103F03F6), 0x106A);
+
+			usercmd_movement_patched = true;
+		}
+
 		void restore_native_cmd_hook()
 		{
 			if (!create_cmd_callsite_patched)
@@ -905,6 +1022,31 @@ namespace xinput
 			}
 
 			draw_crosshair_callsite_patched = false;
+		}
+
+		void restore_usercmd_movement_patch()
+		{
+			if (!usercmd_movement_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < 5; ++i)
+			{
+				utils::hook::set<std::uint8_t>(game::game_offset(0x103EF865 + static_cast<int>(i)), original_pack_current_move_jump[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x103EF8A7 + static_cast<int>(i)), original_pack_previous_move_jump[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x103F027B + static_cast<int>(i)), original_unpack_base_move_a_jump[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x103F03A9 + static_cast<int>(i)), original_unpack_base_move_b_jump[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x103F02E2 + static_cast<int>(i)), original_unpack_exact_move_a_jump[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x103F0410 + static_cast<int>(i)), original_unpack_exact_move_b_jump[i]);
+			}
+
+			utils::hook::set<std::uint16_t>(game::game_offset(0x103EF9CE), original_write_move_bits_a);
+			utils::hook::set<std::uint16_t>(game::game_offset(0x103EFA44), original_write_move_bits_b);
+			utils::hook::set<std::uint16_t>(game::game_offset(0x103F02C8), original_read_move_bits_a);
+			utils::hook::set<std::uint16_t>(game::game_offset(0x103F03F6), original_read_move_bits_b);
+
+			usercmd_movement_patched = false;
 		}
 
 		void poll_controller()
@@ -985,8 +1127,7 @@ namespace xinput
 
 			if (pad.menu_mode)
 			{
-				handle_dpad_menu_input(pad.state.Gamepad, time);
-				handle_left_stick_menu_input(time);
+				handle_menu_navigation(pad.state.Gamepad, time);
 			}
 
 			const auto has_analog_activity =
@@ -1043,6 +1184,7 @@ namespace xinput
 			install_native_cmd_hook();
 			install_native_look_hook();
 			install_draw_crosshair_hook();
+			install_usercmd_movement_patch();
 
 			scheduler::loop([]()
 			{
@@ -1060,6 +1202,7 @@ namespace xinput
 				restore_native_cmd_hook();
 				restore_native_look_hook();
 				restore_draw_crosshair_hook();
+				restore_usercmd_movement_patch();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
 			});
@@ -1071,6 +1214,7 @@ namespace xinput
 			restore_native_cmd_hook();
 			restore_native_look_hook();
 			restore_draw_crosshair_hook();
+			restore_usercmd_movement_patch();
 		}
 	};
 }
