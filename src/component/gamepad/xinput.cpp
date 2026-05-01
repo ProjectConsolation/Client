@@ -201,12 +201,6 @@ namespace xinput
 			game::CL_KeyEvent(0, key, down ? 1 : 0, time);
 		}
 
-		void pulse_key(const int key, const DWORD time)
-		{
-			fire_key_event(key, true, time);
-			fire_key_event(key, false, time);
-		}
-
 		const char* get_fallback_gameplay_command(const int key)
 		{
 			switch (key)
@@ -461,7 +455,7 @@ namespace xinput
 			const auto controller_active = is_gamepad_enabled()
 				&& pad.connected
 				&& ((time - pad.last_activity_time) <= 2000u);
-			const auto recent_mouse_activity = (time - last_mouse_activity_time.load()) <= 500u;
+			const auto recent_mouse_activity = (time - last_mouse_activity_time.load()) <= 100u;
 
 			if (controller_active && !recent_mouse_activity)
 			{
@@ -486,7 +480,7 @@ namespace xinput
 			{
 				if (!is_down)
 				{
-					pulse_key(key, time);
+					fire_key_event(key, true, time);
 					is_down = true;
 					hold_start = time;
 					next_repeat = time + get_first_repeat_delay();
@@ -507,12 +501,17 @@ namespace xinput
 						repeat_delay -= (repeat_delay - min_delay) * accel_progress / accel_time;
 					}
 
-					pulse_key(key, time);
+					fire_key_event(key, true, time);
 					next_repeat = time + repeat_delay;
 					update_activity(time);
 				}
 
 				return;
+			}
+
+			if (is_down)
+			{
+				fire_key_event(key, false, time);
 			}
 
 			is_down = false;
