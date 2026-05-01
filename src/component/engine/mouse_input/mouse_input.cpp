@@ -98,7 +98,7 @@ namespace mouse_input
 				raw_mouse_y = 0;
 			}
 
-			if (msg == WM_MOUSEMOVE)
+			if (msg == WM_MOUSEMOVE && !raw_input_registered)
 			{
 				gamepad::note_mouse_activity();
 			}
@@ -233,6 +233,11 @@ namespace mouse_input
 			pending_event.y = y;
 			pending_event.dx = dx;
 			pending_event.dy = dy;
+
+			if (gamepad::should_hide_cursor() && (*game::keyCatchers & 0x10) == 0)
+			{
+				return 0;
+			}
 
 			if (!dvars::m_rawInput || !dvars::m_rawInput->current.enabled || !wnd_proc_hooked || !raw_input_registered)
 			{

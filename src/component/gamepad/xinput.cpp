@@ -48,8 +48,10 @@ namespace xinput
 		bool shutdown_requested = false;
 		bool create_cmd_callsite_patched = false;
 		bool native_look_callsite_patched = false;
+		bool draw_crosshair_callsite_patched = false;
 		std::array<std::uint8_t, 5> original_create_cmd_call{};
 		std::array<std::uint8_t, 5> original_native_look_call{};
+		std::array<std::uint8_t, 5> original_draw_crosshair_call{};
 		std::atomic<DWORD> last_mouse_activity_time{ 0 };
 		bool cursor_hidden_for_gamepad = false;
 		DWORD last_analog_update_time = 0;
@@ -361,23 +363,6 @@ namespace xinput
 			return std::clamp((normalized - deadzone) / std::max(0.001f, 1.0f - deadzone), 0.0f, 1.0f);
 		}
 
-		float apply_squared_response(const float value)
-		{
-			const auto magnitude = std::fabs(value);
-			if (magnitude <= 0.0f)
-			{
-				return 0.0f;
-			}
-
-			return std::copysign(magnitude * magnitude, value);
-		}
-
-		float smooth_axis(const float current, const float target)
-		{
-			const auto blend = std::clamp(analog_frame_seconds * 20.0f, 0.2f, 1.0f);
-			return current + ((target - current) * blend);
-		}
-
 		void release_all_inputs(const DWORD time)
 		{
 			for (const auto& mapping : digital_buttons)
@@ -516,15 +501,10 @@ namespace xinput
 			normalize_stick_pair(state.sThumbLX, state.sThumbLY, left_stick_x, left_stick_y);
 			normalize_stick_pair(state.sThumbRX, state.sThumbRY, right_stick_x, right_stick_y);
 
-			left_stick_x = apply_squared_response(left_stick_x);
-			left_stick_y = apply_squared_response(left_stick_y);
-			right_stick_x = apply_squared_response(right_stick_x);
-			right_stick_y = apply_squared_response(right_stick_y);
-
-			pad.left_stick_x = smooth_axis(pad.left_stick_x, left_stick_x);
-			pad.left_stick_y = smooth_axis(pad.left_stick_y, left_stick_y);
-			pad.right_stick_x = smooth_axis(pad.right_stick_x, right_stick_x);
-			pad.right_stick_y = smooth_axis(pad.right_stick_y, right_stick_y);
+			pad.left_stick_x = left_stick_x;
+			pad.left_stick_y = left_stick_y;
+			pad.right_stick_x = right_stick_x;
+			pad.right_stick_y = right_stick_y;
 			pad.left_trigger = normalize_trigger(state.bLeftTrigger);
 			pad.right_trigger = normalize_trigger(state.bRightTrigger);
 		}
@@ -624,6 +604,30 @@ namespace xinput
 			return reinterpret_cast<float*>(game::game_offset(0x11A9FEC4));
 		}
 
+		bool should_hide_ingame_cursor()
+		{
+			if (!should_hide_cursor_now())
+			{
+				return false;
+			}
+
+			const auto* const cl_ingame = game::Dvar_FindVar("cl_ingame");
+			return cl_ingame && cl_ingame->current.enabled && !game_console::is_active();
+		}
+
+		bool __cdecl draw_crosshair_body()
+		{
+			const auto func = reinterpret_cast<bool(__cdecl*)()>(game::game_offset(0x102DA010));
+			const auto drew_crosshair = func();
+
+			if (!drew_crosshair && should_hide_ingame_cursor())
+			{
+				return true;
+			}
+
+			return drew_crosshair;
+		}
+
 		void apply_native_view_input()
 		{
 			if (!should_drive_native_cmd())
@@ -679,8 +683,8 @@ namespace xinput
 				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
 			}
 
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + static_cast<int>(std::floor(forward * move_scale)));
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + static_cast<int>(std::floor(side * move_scale)));
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + static_cast<int>(std::lround(forward * move_scale)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + static_cast<int>(std::lround(side * move_scale)));
 
 		}
 
@@ -780,6 +784,22 @@ namespace xinput
 			native_look_callsite_patched = true;
 		}
 
+		void install_draw_crosshair_hook()
+		{
+			if (draw_crosshair_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_draw_crosshair_call.size(); ++i)
+			{
+				original_draw_crosshair_call[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102DFBAB + i));
+			}
+
+			utils::hook::call(game::game_offset(0x102DFBAB), draw_crosshair_body);
+			draw_crosshair_callsite_patched = true;
+		}
+
 		void restore_native_cmd_hook()
 		{
 			if (!create_cmd_callsite_patched)
@@ -808,6 +828,21 @@ namespace xinput
 			}
 
 			native_look_callsite_patched = false;
+		}
+
+		void restore_draw_crosshair_hook()
+		{
+			if (!draw_crosshair_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_draw_crosshair_call.size(); ++i)
+			{
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102DFBAB + static_cast<int>(i)), original_draw_crosshair_call[i]);
+			}
+
+			draw_crosshair_callsite_patched = false;
 		}
 
 		void poll_controller()
@@ -944,6 +979,7 @@ namespace xinput
 		{
 			install_native_cmd_hook();
 			install_native_look_hook();
+			install_draw_crosshair_hook();
 
 			scheduler::loop([]()
 			{
@@ -960,6 +996,7 @@ namespace xinput
 				}
 				restore_native_cmd_hook();
 				restore_native_look_hook();
+				restore_draw_crosshair_hook();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
 			});
@@ -970,6 +1007,7 @@ namespace xinput
 			shutdown_requested = true;
 			restore_native_cmd_hook();
 			restore_native_look_hook();
+			restore_draw_crosshair_hook();
 		}
 	};
 }

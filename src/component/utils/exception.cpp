@@ -89,8 +89,8 @@ namespace exception
         {
             const std::string crash_name = utils::string::va("minidumps/consolation-crash-%s.dmp",
                                                              utils::string::get_timestamp().data());
-            create_minidump(exceptioninfo);
-            utils::io::write_file(crash_name, create_minidump(exceptioninfo), false);
+            const auto dump = create_minidump(exceptioninfo);
+            utils::io::write_file(crash_name, dump, false);
         }
 
         bool is_harmless_error(const LPEXCEPTION_POINTERS exceptioninfo)
@@ -115,11 +115,6 @@ namespace exception
             return EXCEPTION_CONTINUE_EXECUTION;
         }
 
-        LPTOP_LEVEL_EXCEPTION_FILTER WINAPI set_unhandled_exception_filter_stub(LPTOP_LEVEL_EXCEPTION_FILTER)
-        {
-            // Don't register anything here...
-            return &exception_filter;
-        }
     }
 
     class component final : public component_interface
@@ -128,9 +123,8 @@ namespace exception
         void post_load() override
         {
             SetUnhandledExceptionFilter(exception_filter);
-            utils::hook::jump(reinterpret_cast<uintptr_t>(&SetUnhandledExceptionFilter), set_unhandled_exception_filter_stub);
         }
     };
 }
 
-//REGISTER_COMPONENT(exception::component)
+REGISTER_COMPONENT(exception::component)
