@@ -33,6 +33,9 @@ namespace dvars
 	extern game::dvar_s* gpad_present;
 	extern game::dvar_s* gpad_in_use;
 	extern game::dvar_s* gpad_debug;
+	extern game::dvar_s* gpad_buttonsConfig;
+	extern game::dvar_s* gpad_sticksConfig;
+	extern game::dvar_s* gpad_rumble;
 	extern game::dvar_s* gpad_stick_deadzone_min;
 	extern game::dvar_s* gpad_stick_deadzone_max;
 	extern game::dvar_s* gpad_button_deadzone;
@@ -115,10 +118,12 @@ namespace dvars
 		extern std::unordered_map<std::string, dvar_bool> register_bool_overrides;
 		extern std::unordered_map<std::string, dvar_int> register_int_overrides;
 		extern std::unordered_map<std::string, dvar_float> register_float_overrides;
+		extern std::unordered_map<std::string, dvar_enum> register_enum_overrides;
 		extern std::unordered_map<std::string, dvar_string> register_string_overrides;
 		void register_bool(const std::string& name, const bool value, const unsigned int flags);
 		void register_int(const std::string& name, const int value, const int min, const int max, const unsigned int flags);
 		void register_float(const std::string& name, const float value, const float min, const float max, const unsigned int flags);
+		void register_enum(const std::string& name, const char* const* value_list, const int default_index, const unsigned int flags);
 		void register_string(const std::string& name, const std::string& value, const unsigned int flags);
 	}
 }

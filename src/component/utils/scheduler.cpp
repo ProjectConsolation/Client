@@ -93,6 +93,33 @@ namespace scheduler
 
 		std::vector<std::function<void()>> shutdown_callbacks;
 
+		bool game_window_closed()
+		{
+			static bool saw_game_window = false;
+			static auto window_missing_since = std::chrono::steady_clock::time_point{};
+
+			const auto hwnd = *game::main_window;
+			if (hwnd && IsWindow(hwnd))
+			{
+				saw_game_window = true;
+				window_missing_since = {};
+				return false;
+			}
+
+			if (!saw_game_window)
+			{
+				return false;
+			}
+
+			if (window_missing_since == std::chrono::steady_clock::time_point{})
+			{
+				window_missing_since = std::chrono::steady_clock::now();
+				return false;
+			}
+
+			return (std::chrono::steady_clock::now() - window_missing_since) > std::chrono::seconds(3);
+		}
+
 		void execute(const pipeline type)
 		{
 			assert(type >= 0 && type < pipeline::count);
@@ -180,6 +207,12 @@ namespace scheduler
 			{
 				while (!kill)
 				{
+					if (game_window_closed())
+					{
+						kill = true;
+						return;
+					}
+
 					execute(pipeline::async);
 					std::this_thread::sleep_for(10ms);
 				}

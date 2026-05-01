@@ -57,11 +57,39 @@ namespace console
 			bool kill;
 			std::thread thread;
 			HANDLE kill_event;
+			DWORD thread_id{};
 			char buffer[512]{};
 			int cursor;
 			std::int32_t history_index = -1;
 			std::deque<std::string> history{};
 		} con{};
+
+		bool game_window_closed()
+		{
+			static bool saw_game_window = false;
+			static auto window_missing_since = std::chrono::steady_clock::time_point{};
+
+			const auto hwnd = *game::main_window;
+			if (hwnd && IsWindow(hwnd))
+			{
+				saw_game_window = true;
+				window_missing_since = {};
+				return false;
+			}
+
+			if (!saw_game_window)
+			{
+				return false;
+			}
+
+			if (window_missing_since == std::chrono::steady_clock::time_point{})
+			{
+				window_missing_since = std::chrono::steady_clock::now();
+				return false;
+			}
+
+			return (std::chrono::steady_clock::now() - window_missing_since) > std::chrono::seconds(3);
+		}
 
 		void set_cursor_pos(int x)
 		{
@@ -583,17 +611,25 @@ namespace console
 
 			con.thread = utils::thread::create_named_thread("Console", []()
 			{
+				con.thread_id = GetCurrentThreadId();
+				MSG msg{};
+				PeekMessageA(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
+
 				const auto handle = GetStdHandle(STD_INPUT_HANDLE);
 				HANDLE handles[2] = {handle, con.kill_event};
-				MSG msg{};
 
 				INPUT_RECORD record{};
 				DWORD num_events{};
 
 				while (!con.kill)
 				{
-					const auto result = MsgWaitForMultipleObjects(2, handles, FALSE, INFINITE, QS_ALLINPUT);
-					if (con.kill)
+					if (game_window_closed())
+					{
+						return;
+					}
+
+					const auto result = MsgWaitForMultipleObjects(2, handles, FALSE, 100, QS_ALLINPUT);
+					if (con.kill || game_window_closed())
 					{
 						return;
 					}
@@ -612,21 +648,26 @@ namespace console
 					}
 					case WAIT_OBJECT_0 + 1:
 					{
-						if (!PeekMessageA(&msg, GetConsoleWindow(), NULL, NULL, PM_REMOVE))
+						return;
+					}
+					case WAIT_OBJECT_0 + 2:
+					{
+						while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE))
 						{
-							break;
-						}
+							if (msg.message == WM_QUIT || msg.message == WM_CLOSE || msg.message == WM_DESTROY)
+							{
+								game::Cbuf_AddText(0, "quit\n");
+								continue;
+							}
 
-						if (msg.message == WM_QUIT)
-						{
-							game::Cbuf_AddText(0, "quit\n");
-							break;
+							TranslateMessage(&msg);
+							DispatchMessage(&msg);
 						}
-
-						TranslateMessage(&msg);
-						DispatchMessage(&msg);
 						break;
 					}
+					case WAIT_TIMEOUT:
+					default:
+						break;
 					}
 				}
 			});
@@ -638,18 +679,32 @@ namespace console
 			com_printf_hook.clear();
 
 			con.kill = true;
-			SetEvent(con.kill_event);
+			if (con.kill_event)
+			{
+				SetEvent(con.kill_event);
+			}
+
+			if (con.thread_id != 0)
+			{
+				PostThreadMessageA(con.thread_id, WM_QUIT, 0, 0);
+			}
 
 			if (con.thread.joinable())
 			{
+				CancelSynchronousIo(static_cast<HANDLE>(con.thread.native_handle()));
 				con.thread.join();
 			}
+
+			ShowWindow(GetConsoleWindow(), SW_HIDE);
+			FreeConsole();
 
 			if (con.kill_event)
 			{
 				CloseHandle(con.kill_event);
 				con.kill_event = nullptr;
 			}
+
+			con.thread_id = 0;
 		}
 	};
 }

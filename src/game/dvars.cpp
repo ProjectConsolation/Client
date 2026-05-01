@@ -32,6 +32,9 @@ namespace dvars
 	game::dvar_s* gpad_present = nullptr;
 	game::dvar_s* gpad_in_use = nullptr;
 	game::dvar_s* gpad_debug = nullptr;
+	game::dvar_s* gpad_buttonsConfig = nullptr;
+	game::dvar_s* gpad_sticksConfig = nullptr;
+	game::dvar_s* gpad_rumble = nullptr;
 	game::dvar_s* gpad_stick_deadzone_min = nullptr;
 	game::dvar_s* gpad_stick_deadzone_max = nullptr;
 	game::dvar_s* gpad_button_deadzone = nullptr;
@@ -160,6 +163,7 @@ namespace dvars
 		std::unordered_map<std::string, dvar_bool> register_bool_overrides;
 		std::unordered_map<std::string, dvar_int> register_int_overrides;
 		std::unordered_map<std::string, dvar_float> register_float_overrides;
+		std::unordered_map<std::string, dvar_enum> register_enum_overrides;
 		std::unordered_map<std::string, dvar_string> register_string_overrides;
 
 		void register_bool(const std::string& name, const bool value, const unsigned int flags)
@@ -188,6 +192,15 @@ namespace dvars
 			values.max = max;
 			values.flags = flags;
 			register_float_overrides[name] = std::move(values);
+		}
+
+		void register_enum(const std::string& name, const char* const* value_list, const int default_index, const unsigned int flags)
+		{
+			dvar_enum values{};
+			values.value_list = value_list;
+			values.default_index = default_index;
+			values.flags = flags;
+			register_enum_overrides[name] = std::move(values);
 		}
 
 		void register_string(const std::string& name, const std::string& value, const unsigned int flags)
@@ -296,6 +309,9 @@ namespace dvars
 					gpad_present = dvars::Dvar_RegisterBool("gpad_present", 0, "True when a supported gamepad is connected.", game::dvar_flags::none);
 					gpad_in_use = dvars::Dvar_RegisterBool("gpad_in_use", 0, "True when a gamepad is currently being used.", game::dvar_flags::none);
 					gpad_debug = dvars::Dvar_RegisterBool("gpad_debug", 0, "Print gamepad debug information.", game::dvar_flags::none);
+					gpad_buttonsConfig = dvars::Dvar_RegisterString("gpad_buttonsConfig", "buttons_default_alt", "Active gamepad button layout preset.", game::dvar_flags::saved);
+					gpad_sticksConfig = dvars::Dvar_RegisterString("gpad_sticksConfig", "thumbstick_default", "Active gamepad stick layout preset.", game::dvar_flags::saved);
+					gpad_rumble = dvars::Dvar_RegisterBool("gpad_rumble", 1, "Enable controller rumble.", game::dvar_flags::saved);
 					gpad_stick_deadzone_min = dvars::Dvar_RegisterFloat("gpad_stick_deadzone_min", "Minimum stick deadzone for menu navigation.", 0.2f, 0.0f, 1.0f, game::dvar_flags::saved);
 					gpad_stick_deadzone_max = dvars::Dvar_RegisterFloat("gpad_stick_deadzone_max", "Maximum stick deadzone for native gamepad movement.", 0.01f, 0.0f, 1.0f, game::dvar_flags::saved);
 					gpad_button_deadzone = dvars::Dvar_RegisterFloat("gpad_button_deadzone", "Trigger deadzone for native gamepad buttons.", 0.13f, 0.0f, 1.0f, game::dvar_flags::saved);
@@ -316,6 +332,9 @@ namespace dvars
 					gpad_present = nullptr;
 					gpad_in_use = nullptr;
 					gpad_debug = nullptr;
+					gpad_buttonsConfig = nullptr;
+					gpad_sticksConfig = nullptr;
+					gpad_rumble = nullptr;
 					gpad_stick_deadzone_min = nullptr;
 					gpad_stick_deadzone_max = nullptr;
 					gpad_button_deadzone = nullptr;
