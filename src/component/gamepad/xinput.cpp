@@ -361,23 +361,6 @@ namespace xinput
 			return std::clamp((normalized - deadzone) / std::max(0.001f, 1.0f - deadzone), 0.0f, 1.0f);
 		}
 
-		float apply_squared_response(const float value)
-		{
-			const auto magnitude = std::fabs(value);
-			if (magnitude <= 0.0f)
-			{
-				return 0.0f;
-			}
-
-			return std::copysign(magnitude * magnitude, value);
-		}
-
-		float smooth_axis(const float current, const float target)
-		{
-			const auto blend = std::clamp(analog_frame_seconds * 20.0f, 0.2f, 1.0f);
-			return current + ((target - current) * blend);
-		}
-
 		void release_all_inputs(const DWORD time)
 		{
 			for (const auto& mapping : digital_buttons)
@@ -516,15 +499,10 @@ namespace xinput
 			normalize_stick_pair(state.sThumbLX, state.sThumbLY, left_stick_x, left_stick_y);
 			normalize_stick_pair(state.sThumbRX, state.sThumbRY, right_stick_x, right_stick_y);
 
-			left_stick_x = apply_squared_response(left_stick_x);
-			left_stick_y = apply_squared_response(left_stick_y);
-			right_stick_x = apply_squared_response(right_stick_x);
-			right_stick_y = apply_squared_response(right_stick_y);
-
-			pad.left_stick_x = smooth_axis(pad.left_stick_x, left_stick_x);
-			pad.left_stick_y = smooth_axis(pad.left_stick_y, left_stick_y);
-			pad.right_stick_x = smooth_axis(pad.right_stick_x, right_stick_x);
-			pad.right_stick_y = smooth_axis(pad.right_stick_y, right_stick_y);
+			pad.left_stick_x = left_stick_x;
+			pad.left_stick_y = left_stick_y;
+			pad.right_stick_x = right_stick_x;
+			pad.right_stick_y = right_stick_y;
 			pad.left_trigger = normalize_trigger(state.bLeftTrigger);
 			pad.right_trigger = normalize_trigger(state.bRightTrigger);
 		}
@@ -679,8 +657,8 @@ namespace xinput
 				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
 			}
 
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + static_cast<int>(std::floor(forward * move_scale)));
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + static_cast<int>(std::floor(side * move_scale)));
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + static_cast<int>(std::lround(forward * move_scale)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + static_cast<int>(std::lround(side * move_scale)));
 
 		}
 
