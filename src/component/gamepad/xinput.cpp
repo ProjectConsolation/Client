@@ -31,6 +31,7 @@ namespace xinput
 		{
 			bool connected = false;
 			bool menu_mode = false;
+			bool controller_interacted = false;
 			XINPUT_STATE state{};
 			XINPUT_STATE previous_state{};
 			std::array<bool, 4> menu_direction_down{};
@@ -425,6 +426,7 @@ namespace xinput
 		void update_activity(const DWORD time)
 		{
 			pad.last_activity_time = time;
+			pad.controller_interacted = true;
 		}
 
 		void set_cursor_visible(const bool visible)
@@ -483,6 +485,7 @@ namespace xinput
 
 			const auto controller_active = is_gamepad_enabled()
 				&& pad.connected
+				&& pad.controller_interacted
 				&& ((time - pad.last_activity_time) <= 2000u);
 			const auto recent_mouse_activity = (time - last_mouse_activity_time.load()) <= 16u;
 
@@ -1170,12 +1173,12 @@ namespace xinput
 			}
 
 			const auto has_analog_activity =
-				std::fabs(pad.left_stick_x) > 0.0f
-				|| std::fabs(pad.left_stick_y) > 0.0f
-				|| std::fabs(pad.right_stick_x) > 0.0f
-				|| std::fabs(pad.right_stick_y) > 0.0f
-				|| pad.left_trigger > 0.0f
-				|| pad.right_trigger > 0.0f;
+				std::fabs(pad.left_stick_x) >= 0.15f
+				|| std::fabs(pad.left_stick_y) >= 0.15f
+				|| std::fabs(pad.right_stick_x) >= 0.15f
+				|| std::fabs(pad.right_stick_y) >= 0.15f
+				|| pad.left_trigger > 0.15f
+				|| pad.right_trigger > 0.15f;
 
 			if (has_analog_activity || pad.state.Gamepad.wButtons != 0)
 			{
