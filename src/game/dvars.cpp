@@ -291,6 +291,27 @@ namespace dvars
 		return result;
 	}
 
+	std::string dvar_value_to_string(const dvar_spec& spec)
+	{
+		switch (spec.type)
+		{
+		case game::DVAR_TYPE_BOOL:
+			return spec.value.enabled ? "true" : "false";
+
+		case game::DVAR_TYPE_INT:
+			return utils::string::va("%d", spec.value.integer);
+
+		case game::DVAR_TYPE_FLOAT:
+			return utils::string::va("%g", spec.value.value);
+
+		case game::DVAR_TYPE_STRING:
+			return utils::string::va("\"%s\"", spec.value.string ? spec.value.string : "");
+
+		default:
+			return "<?>"; 
+		}
+	}
+
 	dvar_spec make_bool(const char* name, const char* description, const bool value, const std::uint16_t flags)
 	{
 		dvar_spec spec{};
@@ -357,8 +378,9 @@ namespace dvars
 		}
 	}
 
-	game::dvar_s* replace_dvar(const dvar_spec& spec)
+	game::dvar_s* replace_dvar(const dvar_spec& spec, const bool log)
 	{
+		const auto value_string = dvar_value_to_string(spec);
 		auto* const existing = game::Dvar_FindVar(spec.name);
 		if (existing)
 		{
@@ -395,21 +417,41 @@ namespace dvars
 			existing->domain = spec.domain;
 			existing->modified = true;
 			set_saved_dvar_flags(existing, spec.flags);
+			if (log)
+			{
+				console::debug("overriding dvar '%s' with %s\n", spec.name, value_string.c_str());
+			}
 			return existing;
 		}
 
 		switch (spec.type)
 		{
 		case game::DVAR_TYPE_BOOL:
+			if (log)
+			{
+				console::debug("registered dvar '%s' = %s\n", spec.name, value_string.c_str());
+			}
 			return Dvar_RegisterBool(spec.name, spec.value.enabled ? 1 : 0, spec.description, spec.flags);
 
 		case game::DVAR_TYPE_INT:
+			if (log)
+			{
+				console::debug("registered dvar '%s' = %s\n", spec.name, value_string.c_str());
+			}
 			return Dvar_RegisterInt(spec.name, spec.description, spec.value.integer, spec.domain.integer.min, spec.domain.integer.max, spec.flags);
 
 		case game::DVAR_TYPE_FLOAT:
+			if (log)
+			{
+				console::debug("registered dvar '%s' = %s\n", spec.name, value_string.c_str());
+			}
 			return Dvar_RegisterFloat(spec.name, spec.description, spec.value.value, spec.domain.value.min, spec.domain.value.max, spec.flags);
 
 		case game::DVAR_TYPE_STRING:
+			if (log)
+			{
+				console::debug("registered dvar '%s' = %s\n", spec.name, value_string.c_str());
+			}
 			return Dvar_RegisterString(spec.name, spec.value.string ? spec.value.string : "", spec.description, spec.flags);
 
 		default:
@@ -417,10 +459,10 @@ namespace dvars
 		}
 	}
 
-	game::dvar_s* replace_dvar_at(const std::uintptr_t nop_address, const std::size_t nop_size, game::dvar_s** target, const dvar_spec& spec)
+	game::dvar_s* replace_dvar_at(const std::uintptr_t nop_address, const std::size_t nop_size, game::dvar_s** target, const dvar_spec& spec, const bool log)
 	{
 		utils::hook::nop(nop_address, nop_size);
-		auto* const dvar = replace_dvar(spec);
+		auto* const dvar = replace_dvar(spec, log);
 		if (target)
 		{
 			*target = dvar;
@@ -471,21 +513,21 @@ namespace dvars
 			cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
 			cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 			cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Y offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
-					replace_dvar(make_int("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved));
-					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
+					replace_dvar(make_int("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved), false);
+					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					replace_dvar(make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved), false);
 				}, scheduler::main);
 
 			scheduler::loop([]
 				{
-					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					replace_dvar(make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved), false);
 				}, scheduler::main, 250ms);
 
 			scheduler::on_shutdown([]
