@@ -664,8 +664,12 @@ namespace xinput
 			const auto forward_move = static_cast<int>(std::floor(forward * move_scale));
 			const auto right_move = static_cast<int>(std::floor(side * move_scale));
 
-			cmd->rightmove = clamp_cmd_axis(cmd->rightmove + right_move);
-			cmd->forwardmove = clamp_cmd_axis(cmd->forwardmove + forward_move);
+			// The stock builder already populated movement from the key path.
+			// When the controller owns locomotion we replace those bytes instead
+			// of blending, otherwise the two paths fight each other and produce
+			// the diagonal/jitter behavior we saw before.
+			cmd->rightmove = clamp_cmd_axis(right_move);
+			cmd->forwardmove = clamp_cmd_axis(forward_move);
 		}
 
 		float get_view_sensitivity()
@@ -792,6 +796,14 @@ namespace xinput
 			}
 
 			patches::enforce_ads_sprint_interrupt(result);
+
+			// Once the stock builder is done, let the controller own the
+			// locomotion bytes directly.
+			if (should_drive_native_cmd())
+			{
+				apply_native_gamepad_to_cmd(result);
+			}
+
 			return result;
 		}
 
@@ -802,12 +814,6 @@ namespace xinput
 			// Feed the engine-owned view offset globals before the stock look path runs,
 			// so QoS encodes the same live camera state into the outgoing usercmd.
 			apply_native_view_input();
-
-			if (should_drive_native_cmd())
-			{
-				apply_native_gamepad_to_cmd(cmd);
-				return;
-			}
 
 			__asm
 			{

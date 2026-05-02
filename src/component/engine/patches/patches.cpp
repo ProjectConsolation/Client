@@ -293,6 +293,21 @@ namespace patches
 			return g_speed->current.integer;
 		}
 
+		utils::hook::detour r_lodScale_hook;
+		void r_lodScale_stub(const float value)
+		{
+			const auto* const dvar = game::Dvar_FindVar("r_lodScale");
+			// The renderer re-applies this from r_lodScaleParam during init and
+			// asset load. If the user has already modified the dvar, keep their
+			// value instead of snapping back to the param-derived default.
+			if (dvar && dvar->modified)
+			{
+				return;
+			}
+
+			r_lodScale_hook.invoke<void>(value);
+		}
+
 
 		float __cdecl Jump_GetLandFactor(DWORD* ps)
 		{
@@ -393,6 +408,7 @@ namespace patches
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
 			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
+			r_lodScale_hook.create(game::game_offset(0x10279010), r_lodScale_stub);
 
 			Jump_Start_hook.create(game::game_offset(0x101DB390), Jump_Start_stub);
 
