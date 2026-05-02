@@ -649,20 +649,27 @@ namespace xinput
 			return static_cast<std::int8_t>(std::clamp(value, -127, 127));
 		}
 
+		float shape_stick_response(const float value, const float exponent)
+		{
+			if (value == 0.0f)
+			{
+				return 0.0f;
+			}
+
+			const auto magnitude = std::pow(std::fabs(value), exponent);
+			return std::copysign(magnitude, value);
+		}
+
 		void apply_analog_movement_to_cmd(game::usercmd_t* cmd, const float forward, const float side)
 		{
-			// Match the stock key-move path: signed float inputs are scaled and
-			// truncated directly into the command bytes. The extra radial scaling
-			// and floor() bias were making small stick motion feel jumpy.
-			const auto forward_move = static_cast<int>(forward * 127.0f);
-			const auto right_move = static_cast<int>(side * 127.0f);
+			// Use a softer response curve so tiny stick deflections stay tiny.
+			// We keep the output direct here and let the engine's own movement
+			// code handle the actual speed scaling.
+			const auto shaped_forward = shape_stick_response(forward, 2.35f);
+			const auto shaped_side = shape_stick_response(side, 2.35f);
 
-			// The stock builder already populated movement from the key path.
-			// When the controller owns locomotion we replace those bytes instead
-			// of blending, otherwise the two paths fight each other and produce
-			// the diagonal/jitter behavior we saw before.
-			cmd->rightmove = clamp_cmd_axis(right_move);
-			cmd->forwardmove = clamp_cmd_axis(forward_move);
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(shaped_forward * 127.0f)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(shaped_side * 127.0f)));
 		}
 
 		float get_view_sensitivity()
@@ -804,9 +811,11 @@ namespace xinput
 		{
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FC4D0));
 
-			// Feed the engine-owned view offset globals before the stock look path runs,
-			// so QoS encodes the same live camera state into the outgoing usercmd.
-			apply_native_view_input();
+			if (should_drive_native_cmd())
+			{
+				apply_native_view_input();
+				return;
+			}
 
 			__asm
 			{
@@ -1213,7 +1222,6 @@ namespace xinput
 		{
 			install_native_cmd_hook();
 			install_native_look_hook();
-			install_usercmd_movement_patch();
 			install_draw_crosshair_hook();
 
 			scheduler::loop([]()
@@ -1231,7 +1239,6 @@ namespace xinput
 				}
 				restore_native_cmd_hook();
 				restore_native_look_hook();
-				restore_usercmd_movement_patch();
 				restore_draw_crosshair_hook();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
@@ -1243,7 +1250,6 @@ namespace xinput
 			shutdown_requested = true;
 			restore_native_cmd_hook();
 			restore_native_look_hook();
-			restore_usercmd_movement_patch();
 			restore_draw_crosshair_hook();
 		}
 	};
