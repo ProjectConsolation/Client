@@ -771,21 +771,14 @@ namespace xinput
 				return;
 			}
 
-			// Never trample an already-built keyboard move command.
-			if (cmd->forwardmove != 0 || cmd->rightmove != 0)
-			{
-				return;
-			}
-
-			// Match the IW movement shaping more closely for left-stick locomotion
-			// without touching the risky shared usercmd serializer path yet.
+			// Apply native left-stick locomotion directly to the active usercmd.
 			apply_analog_movement_to_cmd(cmd, forward, side);
 		}
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
 		{
 			// This is the stock QoS usercmd builder reached from 0x102FFCD4.
-			// We let the game build its normal command first, then layer native pad input on top.
+			// Let the game build its normal command first.
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FFB80));
 			game::usercmd_t* result = nullptr;
 
@@ -798,7 +791,6 @@ namespace xinput
 				mov result, eax
 			}
 
-			apply_native_gamepad_to_cmd(result);
 			patches::enforce_ads_sprint_interrupt(result);
 			return result;
 		}
@@ -810,6 +802,12 @@ namespace xinput
 			// Feed the engine-owned view offset globals before the stock look path runs,
 			// so QoS encodes the same live camera state into the outgoing usercmd.
 			apply_native_view_input();
+
+			if (should_drive_native_cmd())
+			{
+				apply_native_gamepad_to_cmd(cmd);
+				return;
+			}
 
 			__asm
 			{
@@ -1216,7 +1214,6 @@ namespace xinput
 		{
 			install_native_cmd_hook();
 			install_native_look_hook();
-			install_usercmd_movement_patch();
 			install_draw_crosshair_hook();
 
 			scheduler::loop([]()
