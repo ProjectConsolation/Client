@@ -408,6 +408,9 @@ namespace patches
 			// stop an engine UI path from intentionally breaking into the debugger
 			utils::hook::nop(game::game_offset(0x1027D3C4), 0x05);
 
+			// Allow the stock FPS/debug draw block to run in frontend menus too.
+			utils::hook::nop(game::game_offset(0x1031211D), 0x06);
+
 			// stop the video restart path from forcibly setting r_fullscreen back to 1
 			utils::hook::nop(game::game_offset(0x103BE16D), 0x05);
 
