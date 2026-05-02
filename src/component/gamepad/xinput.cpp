@@ -1217,6 +1217,7 @@ namespace xinput
 			install_native_cmd_hook();
 			install_native_look_hook();
 			install_draw_crosshair_hook();
+			install_usercmd_movement_patch();
 
 			scheduler::loop([]()
 			{

@@ -291,6 +291,23 @@ namespace dvars
 		return result;
 	}
 
+	const char* dvar_type_name(const game::DvarType type)
+	{
+		switch (type)
+		{
+		case game::DVAR_TYPE_BOOL:
+			return "bool";
+		case game::DVAR_TYPE_INT:
+			return "int";
+		case game::DVAR_TYPE_FLOAT:
+			return "float";
+		case game::DVAR_TYPE_STRING:
+			return "string";
+		default:
+			return "dvar";
+		}
+	}
+
 	std::string dvar_value_to_string(const dvar_spec& spec)
 	{
 		switch (spec.type)
@@ -419,7 +436,7 @@ namespace dvars
 			set_saved_dvar_flags(existing, spec.flags);
 			if (log)
 			{
-				console::debug("overriding dvar '%s' with %s\n", spec.name, value_string.c_str());
+				console::debug("overriding %s dvar '%s' with %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
 			}
 			return existing;
 		}
@@ -429,28 +446,28 @@ namespace dvars
 		case game::DVAR_TYPE_BOOL:
 			if (log)
 			{
-				console::debug("registered dvar '%s' = %s\n", spec.name, value_string.c_str());
+				console::debug("registered %s dvar '%s' = %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
 			}
 			return Dvar_RegisterBool(spec.name, spec.value.enabled ? 1 : 0, spec.description, spec.flags);
 
 		case game::DVAR_TYPE_INT:
 			if (log)
 			{
-				console::debug("registered dvar '%s' = %s\n", spec.name, value_string.c_str());
+				console::debug("registered %s dvar '%s' = %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
 			}
 			return Dvar_RegisterInt(spec.name, spec.description, spec.value.integer, spec.domain.integer.min, spec.domain.integer.max, spec.flags);
 
 		case game::DVAR_TYPE_FLOAT:
 			if (log)
 			{
-				console::debug("registered dvar '%s' = %s\n", spec.name, value_string.c_str());
+				console::debug("registered %s dvar '%s' = %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
 			}
 			return Dvar_RegisterFloat(spec.name, spec.description, spec.value.value, spec.domain.value.min, spec.domain.value.max, spec.flags);
 
 		case game::DVAR_TYPE_STRING:
 			if (log)
 			{
-				console::debug("registered dvar '%s' = %s\n", spec.name, value_string.c_str());
+				console::debug("registered %s dvar '%s' = %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
 			}
 			return Dvar_RegisterString(spec.name, spec.value.string ? spec.value.string : "", spec.description, spec.flags);
 
@@ -527,7 +544,6 @@ namespace dvars
 					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved), false);
-					replace_dvar(make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved), false);
 				}, scheduler::main, 250ms);
 
 			scheduler::on_shutdown([]
