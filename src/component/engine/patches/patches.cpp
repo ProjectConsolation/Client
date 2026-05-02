@@ -236,6 +236,16 @@ namespace patches
 				}
 			}
 
+			if (type == game::DVAR_TYPE_ENUM)
+			{
+				if (!_stricmp(dvarName, "cg_drawFPS"))
+				{
+					const auto writable_flags = flags
+						& ~static_cast<unsigned short>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
+					flags = static_cast<unsigned short>(writable_flags | static_cast<unsigned short>(game::dvar_flags::saved));
+				}
+			}
+
 			if (type == game::DVAR_TYPE_FLOAT)
 			{
 				auto* var = find_dvar(dvars::overrides::register_float_overrides, dvarName);
@@ -398,12 +408,6 @@ namespace patches
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
 			dvars::overrides::register_int("com_maxfps", 60, 0, 1000, game::dvar_flags::saved);
-			dvars::overrides::register_int("g_speed", 210, 0, 1000, game::dvar_flags::saved); //cod4
-			dvars::overrides::register_float("ui_smallFont", 0.0, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("ui_bigFont", 0.0, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("ui_extraBigFont", 0.0, 0, 1, game::dvar_flags::saved); 
-			dvars::overrides::register_float("cg_overheadNamesSize", 0.5, 0, 1, game::dvar_flags::saved);
-			dvars::overrides::register_float("input_viewSensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved);
 			dvars::overrides::register_string("version", build_version_string(),
 				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
 			dvars::overrides::register_string("shortversion", build_shortversion_string(),

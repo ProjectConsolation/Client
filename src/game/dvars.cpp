@@ -291,6 +291,52 @@ namespace dvars
 		return result;
 	}
 
+	namespace
+	{
+		void set_saved_dvar_flags(game::dvar_s* dvar, const std::uint16_t desired_flags)
+		{
+			if (!dvar)
+			{
+				return;
+			}
+
+			const auto writable_flags = static_cast<std::uint16_t>(dvar->flags)
+				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
+
+			dvar->flags = static_cast<game::dvar_flags>(writable_flags | desired_flags);
+		}
+
+		game::dvar_s* ensure_float_dvar(const char* name, const char* description, const float value, const float min, const float max, const std::uint16_t flags)
+		{
+			if (auto* const dvar = game::Dvar_FindVar(name))
+			{
+				dvar->current.value = value;
+				dvar->latched.value = value;
+				dvar->reset.value = value;
+				dvar->modified = true;
+				set_saved_dvar_flags(dvar, flags);
+				return dvar;
+			}
+
+			return Dvar_RegisterFloat(name, description, value, min, max, flags);
+		}
+
+		game::dvar_s* ensure_int_dvar(const char* name, const char* description, const int value, const int min, const int max, const std::uint16_t flags)
+		{
+			if (auto* const dvar = game::Dvar_FindVar(name))
+			{
+				dvar->current.integer = value;
+				dvar->latched.integer = value;
+				dvar->reset.integer = value;
+				dvar->modified = true;
+				set_saved_dvar_flags(dvar, flags);
+				return dvar;
+			}
+
+			return Dvar_RegisterInt(name, description, value, min, max, flags);
+		}
+	}
+
 
 
 	class component final : public component_interface
@@ -333,6 +379,12 @@ namespace dvars
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
 					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Y offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					ensure_int_dvar("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved);
+					ensure_float_dvar("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved);
+					ensure_float_dvar("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved);
+					ensure_float_dvar("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved);
+					ensure_float_dvar("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved);
+					ensure_float_dvar("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved);
 				}, scheduler::main);
 
 			scheduler::on_shutdown([]
