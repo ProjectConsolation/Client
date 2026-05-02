@@ -651,18 +651,11 @@ namespace xinput
 
 		void apply_analog_movement_to_cmd(game::usercmd_t* cmd, const float forward, const float side)
 		{
-			auto move_scale = 127.0f;
-
-			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
-			{
-				const auto length = std::fabs(side) <= std::fabs(forward)
-					? side / forward
-					: forward / side;
-				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
-			}
-
-			const auto forward_move = static_cast<int>(std::floor(forward * move_scale));
-			const auto right_move = static_cast<int>(std::floor(side * move_scale));
+			// Match the stock key-move path: signed float inputs are scaled and
+			// truncated directly into the command bytes. The extra radial scaling
+			// and floor() bias were making small stick motion feel jumpy.
+			const auto forward_move = static_cast<int>(forward * 127.0f);
+			const auto right_move = static_cast<int>(side * 127.0f);
 
 			// The stock builder already populated movement from the key path.
 			// When the controller owns locomotion we replace those bytes instead
@@ -1220,6 +1213,7 @@ namespace xinput
 		{
 			install_native_cmd_hook();
 			install_native_look_hook();
+			install_usercmd_movement_patch();
 			install_draw_crosshair_hook();
 
 			scheduler::loop([]()
@@ -1237,6 +1231,7 @@ namespace xinput
 				}
 				restore_native_cmd_hook();
 				restore_native_look_hook();
+				restore_usercmd_movement_patch();
 				restore_draw_crosshair_hook();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
@@ -1248,6 +1243,7 @@ namespace xinput
 			shutdown_requested = true;
 			restore_native_cmd_hook();
 			restore_native_look_hook();
+			restore_usercmd_movement_patch();
 			restore_draw_crosshair_hook();
 		}
 	};
