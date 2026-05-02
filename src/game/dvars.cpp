@@ -291,6 +291,56 @@ namespace dvars
 		return result;
 	}
 
+	dvar_spec MakeBoolSpec(const char* name, const char* description, const bool value, const std::uint16_t flags)
+	{
+		dvar_spec spec{};
+		spec.type = game::DVAR_TYPE_BOOL;
+		spec.name = name;
+		spec.description = description;
+		spec.flags = flags;
+		spec.value.enabled = value;
+		spec.domain.integer.min = 0;
+		spec.domain.integer.max = 1;
+		return spec;
+	}
+
+	dvar_spec MakeIntSpec(const char* name, const char* description, const int value, const int min, const int max, const std::uint16_t flags)
+	{
+		dvar_spec spec{};
+		spec.type = game::DVAR_TYPE_INT;
+		spec.name = name;
+		spec.description = description;
+		spec.flags = flags;
+		spec.value.integer = value;
+		spec.domain.integer.min = min;
+		spec.domain.integer.max = max;
+		return spec;
+	}
+
+	dvar_spec MakeFloatSpec(const char* name, const char* description, const float value, const float min, const float max, const std::uint16_t flags)
+	{
+		dvar_spec spec{};
+		spec.type = game::DVAR_TYPE_FLOAT;
+		spec.name = name;
+		spec.description = description;
+		spec.flags = flags;
+		spec.value.value = value;
+		spec.domain.value.min = min;
+		spec.domain.value.max = max;
+		return spec;
+	}
+
+	dvar_spec MakeStringSpec(const char* name, const char* description, const char* value, const std::uint16_t flags)
+	{
+		dvar_spec spec{};
+		spec.type = game::DVAR_TYPE_STRING;
+		spec.name = name;
+		spec.description = description;
+		spec.flags = flags;
+		spec.value.string = value;
+		return spec;
+	}
+
 	namespace
 	{
 		void set_saved_dvar_flags(game::dvar_s* dvar, const std::uint16_t desired_flags)
@@ -305,36 +355,78 @@ namespace dvars
 
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | desired_flags);
 		}
+	}
 
-		game::dvar_s* ensure_float_dvar(const char* name, const char* description, const float value, const float min, const float max, const std::uint16_t flags)
+	game::dvar_s* ReplaceDvar(const dvar_spec& spec)
+	{
+		auto* const existing = game::Dvar_FindVar(spec.name);
+		if (existing)
 		{
-			if (auto* const dvar = game::Dvar_FindVar(name))
+			switch (spec.type)
 			{
-				dvar->current.value = value;
-				dvar->latched.value = value;
-				dvar->reset.value = value;
-				dvar->modified = true;
-				set_saved_dvar_flags(dvar, flags);
-				return dvar;
+			case game::DVAR_TYPE_BOOL:
+				existing->current.enabled = spec.value.enabled;
+				existing->latched.enabled = spec.value.enabled;
+				existing->reset.enabled = spec.value.enabled;
+				break;
+
+			case game::DVAR_TYPE_INT:
+				existing->current.integer = spec.value.integer;
+				existing->latched.integer = spec.value.integer;
+				existing->reset.integer = spec.value.integer;
+				break;
+
+			case game::DVAR_TYPE_FLOAT:
+				existing->current.value = spec.value.value;
+				existing->latched.value = spec.value.value;
+				existing->reset.value = spec.value.value;
+				break;
+
+			case game::DVAR_TYPE_STRING:
+				existing->current.string = spec.value.string;
+				existing->latched.string = spec.value.string;
+				existing->reset.string = spec.value.string;
+				break;
+
+			default:
+				break;
 			}
 
-			return Dvar_RegisterFloat(name, description, value, min, max, flags);
+			existing->domain = spec.domain;
+			existing->modified = true;
+			set_saved_dvar_flags(existing, spec.flags);
+			return existing;
 		}
 
-		game::dvar_s* ensure_int_dvar(const char* name, const char* description, const int value, const int min, const int max, const std::uint16_t flags)
+		switch (spec.type)
 		{
-			if (auto* const dvar = game::Dvar_FindVar(name))
-			{
-				dvar->current.integer = value;
-				dvar->latched.integer = value;
-				dvar->reset.integer = value;
-				dvar->modified = true;
-				set_saved_dvar_flags(dvar, flags);
-				return dvar;
-			}
+		case game::DVAR_TYPE_BOOL:
+			return Dvar_RegisterBool(spec.name, spec.value.enabled ? 1 : 0, spec.description, spec.flags);
 
-			return Dvar_RegisterInt(name, description, value, min, max, flags);
+		case game::DVAR_TYPE_INT:
+			return Dvar_RegisterInt(spec.name, spec.description, spec.value.integer, spec.domain.integer.min, spec.domain.integer.max, spec.flags);
+
+		case game::DVAR_TYPE_FLOAT:
+			return Dvar_RegisterFloat(spec.name, spec.description, spec.value.value, spec.domain.value.min, spec.domain.value.max, spec.flags);
+
+		case game::DVAR_TYPE_STRING:
+			return Dvar_RegisterString(spec.name, spec.value.string ? spec.value.string : "", spec.description, spec.flags);
+
+		default:
+			return nullptr;
 		}
+	}
+
+	game::dvar_s* ReplaceDvarAt(const std::uintptr_t nop_address, const std::size_t nop_size, game::dvar_s** target, const dvar_spec& spec)
+	{
+		utils::hook::nop(nop_address, nop_size);
+		auto* const dvar = ReplaceDvar(spec);
+		if (target)
+		{
+			*target = dvar;
+		}
+
+		return dvar;
 	}
 
 
@@ -376,15 +468,15 @@ namespace dvars
 					gpad_menu_scroll_accel_time = dvars::Dvar_RegisterInt("gpad_menu_scroll_accel_time", "Time in milliseconds for accelerated gamepad menu repeat to reach full speed.", 1500, 0, 5000, game::dvar_flags::saved);
 					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
 					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
-					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
-					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
-					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Y offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
-					ensure_int_dvar("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved);
-					ensure_float_dvar("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved);
-					ensure_float_dvar("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved);
-					ensure_float_dvar("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved);
-					ensure_float_dvar("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved);
-					ensure_float_dvar("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved);
+			cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
+			cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+			cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Y offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					ReplaceDvar(MakeIntSpec("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved));
+					ReplaceDvar(MakeFloatSpec("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					ReplaceDvar(MakeFloatSpec("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					ReplaceDvar(MakeFloatSpec("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					ReplaceDvar(MakeFloatSpec("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved));
+					ReplaceDvar(MakeFloatSpec("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
 				}, scheduler::main);
 
 			scheduler::on_shutdown([]

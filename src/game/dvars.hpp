@@ -61,6 +61,24 @@ namespace dvars
 	game::dvar_s* Dvar_RegisterInt(const char* dvar_name, const char* description, int value_default, int min, int max, std::uint16_t flags);
 	game::dvar_s* Dvar_RegisterString(const char* dvar_name, const char* value_default, const char* description, std::uint16_t flags);
 
+	struct dvar_spec
+	{
+		game::DvarType type{};
+		const char* name{};
+		const char* description{};
+		std::uint16_t flags{};
+		game::DvarValue value{};
+		game::DvarLimits domain{};
+	};
+
+	dvar_spec MakeBoolSpec(const char* name, const char* description, bool value, std::uint16_t flags);
+	dvar_spec MakeIntSpec(const char* name, const char* description, int value, int min, int max, std::uint16_t flags);
+	dvar_spec MakeFloatSpec(const char* name, const char* description, float value, float min, float max, std::uint16_t flags);
+	dvar_spec MakeStringSpec(const char* name, const char* description, const char* value, std::uint16_t flags);
+
+	game::dvar_s* ReplaceDvar(const dvar_spec& spec);
+	game::dvar_s* ReplaceDvarAt(std::uintptr_t nop_address, std::size_t nop_size, game::dvar_s** target, const dvar_spec& spec);
+
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value);
 
 	namespace overrides

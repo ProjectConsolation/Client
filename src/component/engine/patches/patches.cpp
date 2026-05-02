@@ -404,7 +404,7 @@ namespace patches
 
 			// allow map loading
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
-#endif
+			#endif
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
 			dvars::overrides::register_int("com_maxfps", 60, 0, 1000, game::dvar_flags::saved);
@@ -424,25 +424,23 @@ namespace patches
 
 			scheduler::once([]
 			{
-				utils::hook::nop(game::game_offset(0x103AF41F), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054688)) = dvars::Dvar_RegisterFloat("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0, 0, 3, game::dvar_flags::saved);
-				
-				utils::hook::nop(game::game_offset(0x102BE942), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x1148BECC)) = dvars::Dvar_RegisterFloat("cg_fovScale", "Scale applied to the field of view", 1, 0, 2, game::dvar_flags::saved); //resets on server start
-				
-				utils::hook::nop(game::game_offset(0x102BE908), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x1148F6A4)) = dvars::Dvar_RegisterFloat("cg_fov", "The field of view angle in degrees", 65, 0, 160, game::dvar_flags::saved);
-				
-				utils::hook::nop(game::game_offset(0x101DB65A), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x118EE1C0)) = dvars::Dvar_RegisterFloat("jump_height", "The maximum height of a player's jump", 41.f, 0, 1000.f, game::dvar_flags::saved);
+				dvars::ReplaceDvarAt(game::game_offset(0x103AF41F), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054688)),
+					dvars::MakeFloatSpec("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0.0f, 0.0f, 3.0f, game::dvar_flags::saved));
 
-				utils::hook::nop(game::game_offset(0x10321221), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11260BD0)) = dvars::Dvar_RegisterFloat("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved);
+				dvars::ReplaceDvarAt(game::game_offset(0x102BE942), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x1148BECC)),
+					dvars::MakeFloatSpec("cg_fovScale", "Scale applied to the field of view", 1.0f, 0.0f, 2.0f, game::dvar_flags::saved));
 
-				//dvars::Dvar_RegisterFloat("cg_fovScale", "Scale applied to the field of view", 1.0, 0, 2.0, game::dvar_flags::saved); //doesnt save
+				dvars::ReplaceDvarAt(game::game_offset(0x102BE908), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x1148F6A4)),
+					dvars::MakeFloatSpec("cg_fov", "The field of view angle in degrees", 65.0f, 0.0f, 160.0f, game::dvar_flags::saved));
 
-				utils::hook::nop(game::game_offset(0x103B2260), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054944)) = dvars::Dvar_RegisterInt("developer", "Enable development environment", 0, 0, 2, game::dvar_flags::none);
+				dvars::ReplaceDvarAt(game::game_offset(0x101DB65A), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x118EE1C0)),
+					dvars::MakeFloatSpec("jump_height", "The maximum height of a player's jump", 41.0f, 0.0f, 1000.0f, game::dvar_flags::saved));
+
+				dvars::ReplaceDvarAt(game::game_offset(0x10321221), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11260BD0)),
+					dvars::MakeFloatSpec("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
+
+				dvars::ReplaceDvarAt(game::game_offset(0x103B2260), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054944)),
+					dvars::MakeIntSpec("developer", "Enable development environment", 0, 0, 2, game::dvar_flags::none));
 
 				make_dvar_saved_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("sv_cheats");
