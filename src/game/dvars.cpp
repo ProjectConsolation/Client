@@ -291,7 +291,7 @@ namespace dvars
 		return result;
 	}
 
-	dvar_spec make_bool_spec(const char* name, const char* description, const bool value, const std::uint16_t flags)
+	dvar_spec make_bool(const char* name, const char* description, const bool value, const std::uint16_t flags)
 	{
 		dvar_spec spec{};
 		spec.type = game::DVAR_TYPE_BOOL;
@@ -304,7 +304,7 @@ namespace dvars
 		return spec;
 	}
 
-	dvar_spec make_int_spec(const char* name, const char* description, const int value, const int min, const int max, const std::uint16_t flags)
+	dvar_spec make_int(const char* name, const char* description, const int value, const int min, const int max, const std::uint16_t flags)
 	{
 		dvar_spec spec{};
 		spec.type = game::DVAR_TYPE_INT;
@@ -317,7 +317,7 @@ namespace dvars
 		return spec;
 	}
 
-	dvar_spec make_float_spec(const char* name, const char* description, const float value, const float min, const float max, const std::uint16_t flags)
+	dvar_spec make_float(const char* name, const char* description, const float value, const float min, const float max, const std::uint16_t flags)
 	{
 		dvar_spec spec{};
 		spec.type = game::DVAR_TYPE_FLOAT;
@@ -330,7 +330,7 @@ namespace dvars
 		return spec;
 	}
 
-	dvar_spec make_string_spec(const char* name, const char* description, const char* value, const std::uint16_t flags)
+	dvar_spec make_string(const char* name, const char* description, const char* value, const std::uint16_t flags)
 	{
 		dvar_spec spec{};
 		spec.type = game::DVAR_TYPE_STRING;
@@ -471,13 +471,22 @@ namespace dvars
 			cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
 			cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 			cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Y offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
-					replace_dvar(make_int_spec("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved));
-					replace_dvar(make_float_spec("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float_spec("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float_spec("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float_spec("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved));
-					replace_dvar(make_float_spec("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
+					replace_dvar(make_int("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved));
+					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
 				}, scheduler::main);
+
+			scheduler::loop([]
+				{
+					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved));
+					replace_dvar(make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
+				}, scheduler::main, 250ms);
 
 			scheduler::on_shutdown([]
 				{

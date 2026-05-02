@@ -71,10 +71,10 @@ namespace dvars
 		game::DvarLimits domain{};
 	};
 
-	dvar_spec make_bool_spec(const char* name, const char* description, bool value, std::uint16_t flags);
-	dvar_spec make_int_spec(const char* name, const char* description, int value, int min, int max, std::uint16_t flags);
-	dvar_spec make_float_spec(const char* name, const char* description, float value, float min, float max, std::uint16_t flags);
-	dvar_spec make_string_spec(const char* name, const char* description, const char* value, std::uint16_t flags);
+	dvar_spec make_bool(const char* name, const char* description, bool value, std::uint16_t flags);
+	dvar_spec make_int(const char* name, const char* description, int value, int min, int max, std::uint16_t flags);
+	dvar_spec make_float(const char* name, const char* description, float value, float min, float max, std::uint16_t flags);
+	dvar_spec make_string(const char* name, const char* description, const char* value, std::uint16_t flags);
 
 	game::dvar_s* replace_dvar(const dvar_spec& spec);
 	game::dvar_s* replace_dvar_at(std::uintptr_t nop_address, std::size_t nop_size, game::dvar_s** target, const dvar_spec& spec);
