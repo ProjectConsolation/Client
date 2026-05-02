@@ -48,22 +48,6 @@ namespace patches
 			return version;
 		}
 
-		std::string normalize_build_date(const char* raw_date)
-		{
-			if (!raw_date)
-			{
-				return {};
-			}
-
-			std::string date = raw_date;
-			while (date.find("  ") != std::string::npos)
-			{
-				date.replace(date.find("  "), 2, " ");
-			}
-
-			return date;
-		}
-
 		std::string build_build_label()
 		{
 			std::string short_hash = GIT_HASH;
@@ -82,12 +66,12 @@ namespace patches
 
 		std::string build_timestamp_label()
 		{
-			return normalize_build_date(__DATE__) + " " + __TIME__;
+			return std::string(__DATE__) + " " + __TIME__;
 		}
 
 		std::string build_game_date_string()
 		{
-			return normalize_build_date(__DATE__);
+			return __DATE__;
 		}
 
 		std::string build_version_string()
@@ -252,16 +236,6 @@ namespace patches
 				}
 			}
 
-			if (type == game::DVAR_TYPE_ENUM)
-			{
-				if (!_stricmp(dvarName, "cg_drawFPS"))
-				{
-					const auto writable_flags = flags
-						& ~static_cast<unsigned short>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
-					flags = static_cast<unsigned short>(writable_flags | static_cast<unsigned short>(game::dvar_flags::saved));
-				}
-			}
-
 			if (type == game::DVAR_TYPE_FLOAT)
 			{
 				auto* var = find_dvar(dvars::overrides::register_float_overrides, dvarName);
@@ -389,11 +363,6 @@ namespace patches
 	public:
 		void post_load() override
 		{
-			if (!game::Dvar_FindVar("r_borderless"))
-			{
-				dvars::r_borderless = dvars::Dvar_RegisterBool("r_borderless", 0, "Do not use a border in windowed mode", game::dvar_flags::saved);
-			}
-
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
@@ -407,9 +376,6 @@ namespace patches
 
 			// stop an engine UI path from intentionally breaking into the debugger
 			utils::hook::nop(game::game_offset(0x1027D3C4), 0x05);
-
-			// Allow the stock FPS/debug draw block to run in frontend menus too.
-			utils::hook::nop(game::game_offset(0x1031211D), 0x06);
 
 			// stop the video restart path from forcibly setting r_fullscreen back to 1
 			utils::hook::nop(game::game_offset(0x103BE16D), 0x05);
@@ -466,6 +432,9 @@ namespace patches
 				utils::hook::nop(game::game_offset(0x101DB65A), 5);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x118EE1C0)) = dvars::Dvar_RegisterFloat("jump_height", "The maximum height of a player's jump", 41.f, 0, 1000.f, game::dvar_flags::saved);
 
+				utils::hook::nop(game::game_offset(0x10321221), 5);
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11260BD0)) = dvars::Dvar_RegisterFloat("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved);
+
 				//dvars::Dvar_RegisterFloat("cg_fovScale", "Scale applied to the field of view", 1.0, 0, 2.0, game::dvar_flags::saved); //doesnt save
 
 				utils::hook::nop(game::game_offset(0x103B2260), 5);
@@ -486,9 +455,6 @@ namespace patches
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11A343C0)) = sv_cheats;
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x1149FCD8)) = sv_cheats;
 #endif
-
-
-				//dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
 			}, scheduler::main);
 
 			scheduler::loop([]

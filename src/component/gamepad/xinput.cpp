@@ -651,18 +651,10 @@ namespace xinput
 
 		void apply_analog_movement_to_cmd(game::usercmd_t* cmd, const float forward, const float side)
 		{
-			auto move_scale = static_cast<float>(std::numeric_limits<std::int8_t>::max());
-
-			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
-			{
-				const auto length = std::fabs(side) <= std::fabs(forward)
-					? (std::fabs(forward) > 0.0f ? side / forward : 0.0f)
-					: (std::fabs(side) > 0.0f ? forward / side : 0.0f);
-				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
-			}
-
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::floor(forward * move_scale)));
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::floor(side * move_scale)));
+			// Keep this path close to IW3SP/IW4x style command generation:
+			// the usercmd packing hook handles the exact byte transport later.
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(forward * 127.0f)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(side * 127.0f)));
 		}
 
 		float get_view_sensitivity()
@@ -1213,7 +1205,6 @@ namespace xinput
 		{
 			install_native_cmd_hook();
 			install_native_look_hook();
-			install_draw_crosshair_hook();
 
 			scheduler::loop([]()
 			{
