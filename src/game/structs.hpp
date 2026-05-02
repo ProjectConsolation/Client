@@ -1076,28 +1076,36 @@ namespace game
 	};
 
 	// ── usercmd_t ─────────────────────────────────────────────────────────────
-	// 44 bytes. Built per-frame in SV_BotThink (0x102FA590) and SV_ClientThink,
-	// stored at client_t+0x20E9C, applied by SV_ClientThinkReal (0x102F0BD0).
+	// 48 bytes in the Wii layout. Built per-frame in SV_BotThink (0x102FA590)
+	// and SV_ClientThink, stored at client_t+0x20E9C, applied by
+	// SV_ClientThinkReal (0x102F0BD0).
 	//
 	// IW angle units: signed int where 0x8000 (32768) = 360 degrees.
 	// Conversion:  units = radians * (32768.f / M_PI)  =  radians * 10430.378f
 
-	struct usercmd_t // sizeof = 0x2C
+	struct usercmd_t // sizeof = 0x30
 	{
 		int             serverTime;    // +0x00 [CONFIRMED] timestamp in ms
 		usercmd_buttons buttons;       // +0x04 [CONFIRMED] action bitmask
-		std::uint16_t   weapon;        // +0x08 [CONFIRMED] current weapon index
-		std::uint8_t    offhandIndex;  // +0x0A [INFERRED]
-		std::uint8_t    flags;         // +0x0B [INFERRED]
+		std::uint8_t    weapon;        // +0x08 [CONFIRMED] current weapon index
+		std::uint8_t    unk_09;        // +0x09 [OBSERVED]
+		std::uint8_t    unk_0A;        // +0x0A [OBSERVED]
+		std::uint8_t    offhandIndex;  // +0x0B [CONFIRMED]
 		int             unk_0C;        // +0x0C [OBSERVED]
 		int             angles[3];     // +0x10 [CONFIRMED] PITCH, YAW, ROLL in IW units
-		std::int8_t     forwardmove;   // +0x1C [CONFIRMED] -127=full back, 127=full forward
-		std::uint8_t    unk_1D;        // +0x1D
-		std::int8_t     rightmove;     // +0x1E [CONFIRMED] -127=full left, 127=full right
-		std::uint8_t    upmove;        // +0x1F [INFERRED]
-		int             unk_20[3];     // +0x20 [UNOBSERVED]
+		int             unk_1C;        // +0x1C [OBSERVED]
+		std::int8_t     forwardmove;   // +0x20 [CONFIRMED] -127=full back, 127=full forward
+		std::uint8_t    unk_21;        // +0x21 [OBSERVED]
+		std::int8_t     rightmove;     // +0x22 [CONFIRMED] -127=full left, 127=full right
+		std::uint8_t    upmove;        // +0x23 [INFERRED]
+		std::uint8_t    unk_24;        // +0x24 [OBSERVED]
+		std::uint8_t    unk_25[3];     // +0x25 [OBSERVED]
+		float           unk_28;        // +0x28 [OBSERVED]
+		std::uint8_t    unk_2C;        // +0x2C [OBSERVED]
+		std::uint8_t    unk_2D;        // +0x2D [OBSERVED]
+		std::uint8_t    unk_2E[2];     // +0x2E [OBSERVED]
 	};
-	static_assert(sizeof(usercmd_t) == 0x2C, "usercmd_t size mismatch");
+	static_assert(sizeof(usercmd_t) == 0x30, "usercmd_t size mismatch");
 
 	// ── clientState_t ─────────────────────────────────────────────────────────
 	// Stored in client_t::state. Transitions logged in SV_ClientEnterWorld.
@@ -1174,7 +1182,7 @@ namespace game
 	//
 	// Deep confirmed offsets (accessed as byte offsets in code, not struct members
 	// because the gaps are enormous and not yet reversed):
-	//   +0x20E9C  last_usercmd  (usercmd_t, 44 bytes) stored by SV_ClientThinkReal
+	//   +0x20E9C  last_usercmd  (usercmd_t, 48 bytes) stored by SV_ClientThinkReal
 	//   +0x2128C  entity_ptr    (entity_t*) set by SV_ClientEnterWorld, null until then
 	//   +0x213A4  last_svtime   (int)       copy of sv.time on ClientEnterWorld
 

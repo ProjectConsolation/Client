@@ -329,6 +329,45 @@ namespace dvars
 		}
 	}
 
+	game::dvar_s* register_dvar(const dvar_spec& spec, const bool log)
+	{
+		const auto value_string = dvar_value_to_string(spec);
+
+		switch (spec.type)
+		{
+		case game::DVAR_TYPE_BOOL:
+			if (log)
+			{
+				console::debug("overriding %s dvar '%s' with %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
+			}
+			return Dvar_RegisterBool(spec.name, spec.value.enabled ? 1 : 0, spec.description, spec.flags);
+
+		case game::DVAR_TYPE_INT:
+			if (log)
+			{
+				console::debug("overriding %s dvar '%s' with %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
+			}
+			return Dvar_RegisterInt(spec.name, spec.description, spec.value.integer, spec.domain.integer.min, spec.domain.integer.max, spec.flags);
+
+		case game::DVAR_TYPE_FLOAT:
+			if (log)
+			{
+				console::debug("overriding %s dvar '%s' with %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
+			}
+			return Dvar_RegisterFloat(spec.name, spec.description, spec.value.value, spec.domain.value.min, spec.domain.value.max, spec.flags);
+
+		case game::DVAR_TYPE_STRING:
+			if (log)
+			{
+				console::debug("overriding %s dvar '%s' with %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
+			}
+			return Dvar_RegisterString(spec.name, spec.value.string ? spec.value.string : "", spec.description, spec.flags);
+
+		default:
+			return nullptr;
+		}
+	}
+
 	dvar_spec make_bool(const char* name, const char* description, const bool value, const std::uint16_t flags)
 	{
 		dvar_spec spec{};
@@ -479,7 +518,7 @@ namespace dvars
 	game::dvar_s* replace_dvar_at(const std::uintptr_t nop_address, const std::size_t nop_size, game::dvar_s** target, const dvar_spec& spec, const bool log)
 	{
 		utils::hook::nop(nop_address, nop_size);
-		auto* const dvar = replace_dvar(spec, log);
+		auto* const dvar = register_dvar(spec, log);
 		if (target)
 		{
 			*target = dvar;
