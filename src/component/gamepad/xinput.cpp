@@ -727,7 +727,8 @@ namespace xinput
 		{
 			auto* const base = reinterpret_cast<std::uint8_t*>(game::game_offset(0x112825E8))
 				+ (760 * local_client_num);
-			const auto time = GetTickCount();
+			auto* const current_time = reinterpret_cast<std::uint32_t*>(game::game_offset(0x10711AFC));
+			const auto time = current_time ? *current_time : GetTickCount();
 
 			if (!should_drive_native_cmd())
 			{
@@ -895,12 +896,25 @@ namespace xinput
 
 		void __cdecl key_move_body(const int local_client_num)
 		{
+			void* cmd = nullptr;
+
+			__asm
+			{
+				mov cmd, edi
+			}
+
 			// Seed the stock CL_KeyMove hold-state slots so analog magnitude is
 			// consumed by the engine before it builds the final usercmd.
 			apply_controller_move_state(local_client_num);
 
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FF970));
-			utils::hook::invoke<void>(func_loc, local_client_num);
+			__asm
+			{
+				mov edi, cmd
+				push local_client_num
+				call func_loc
+				add esp, 4
+			}
 		}
 
 		void __cdecl native_look_body(game::usercmd_t* cmd, const int local_client_num)
