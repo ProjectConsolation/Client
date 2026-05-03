@@ -50,10 +50,17 @@ namespace xinput
 		bool shutdown_requested = false;
 		bool create_cmd_callsite_patched = false;
 		bool native_look_callsite_patched = false;
+		bool native_move_callsite_patched = false;
 		bool draw_crosshair_callsite_patched = false;
 		bool usercmd_movement_patched = false;
 		std::array<std::uint8_t, 5> original_create_cmd_call{};
 		std::array<std::uint8_t, 5> original_native_look_call{};
+		std::array<std::uint8_t, 5> original_native_move_call_a{};
+		std::array<std::uint8_t, 5> original_native_move_call_b{};
+		std::array<std::uint8_t, 5> original_native_move_call_c{};
+		std::array<std::uint8_t, 5> original_native_move_call_d{};
+		std::array<std::uint8_t, 5> original_native_move_call_e{};
+		std::array<std::uint8_t, 5> original_native_move_call_f{};
 		std::array<std::uint8_t, 5> original_draw_crosshair_call{};
 		std::array<std::uint8_t, 5> original_pack_current_move_jump{};
 		std::array<std::uint8_t, 5> original_pack_previous_move_jump{};
@@ -663,6 +670,65 @@ namespace xinput
 			return std::copysign(magnitude, value);
 		}
 
+		double call_original_move_axis_value(const int axis_ptr)
+		{
+			double result = 0.0;
+			const auto func_loc = static_cast<int>(game::game_offset(0x102FB1F0));
+
+			__asm
+			{
+				mov eax, axis_ptr
+				call func_loc
+				fstp qword ptr[result]
+			}
+
+			return result;
+		}
+
+		double get_native_move_axis_value(const int axis_ptr, const std::uintptr_t return_address)
+		{
+			if (!should_drive_native_cmd())
+			{
+				return call_original_move_axis_value(axis_ptr);
+			}
+
+			const auto forward = static_cast<double>(pad.left_stick_y);
+			const auto side = static_cast<double>(pad.left_stick_x);
+
+			switch (return_address)
+			{
+			case 0x102FFA59:
+			case 0x102FFB15:
+				return side > 0.0 ? side : 0.0;
+
+			case 0x102FFA6E:
+			case 0x102FFB29:
+				return side < 0.0 ? -side : 0.0;
+
+			case 0x102FFA83:
+				return forward > 0.0 ? forward : 0.0;
+
+			case 0x102FFA9A:
+				return forward < 0.0 ? -forward : 0.0;
+
+			default:
+				return call_original_move_axis_value(axis_ptr);
+			}
+		}
+
+		__declspec(naked) void native_move_axis_stub()
+		{
+			__asm
+			{
+				mov ecx, [esp]
+				push ecx
+				push eax
+				call get_native_move_axis_value
+				add esp, 8
+				ret
+			}
+		}
+
 		void apply_analog_movement_to_cmd(game::usercmd_t* cmd, const float forward, const float side)
 		{
 			// Use a softer response curve so tiny stick deflections stay tiny.
@@ -799,13 +865,6 @@ namespace xinput
 			}
 
 			patches::enforce_ads_sprint_interrupt(result);
-
-			// Once the stock builder is done, let the controller own the
-			// locomotion bytes directly.
-			if (should_drive_native_cmd())
-			{
-				apply_native_gamepad_to_cmd(result);
-			}
 
 			return result;
 		}
@@ -961,6 +1020,32 @@ namespace xinput
 			native_look_callsite_patched = true;
 		}
 
+		void install_native_move_hook()
+		{
+			if (native_move_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_native_move_call_a.size(); ++i)
+			{
+				original_native_move_call_a[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA54 + static_cast<int>(i)));
+				original_native_move_call_b[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA69 + static_cast<int>(i)));
+				original_native_move_call_c[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA7E + static_cast<int>(i)));
+				original_native_move_call_d[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA95 + static_cast<int>(i)));
+				original_native_move_call_e[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFB10 + static_cast<int>(i)));
+				original_native_move_call_f[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFB24 + static_cast<int>(i)));
+			}
+
+			utils::hook::call(game::game_offset(0x102FFA54), native_move_axis_stub);
+			utils::hook::call(game::game_offset(0x102FFA69), native_move_axis_stub);
+			utils::hook::call(game::game_offset(0x102FFA7E), native_move_axis_stub);
+			utils::hook::call(game::game_offset(0x102FFA95), native_move_axis_stub);
+			utils::hook::call(game::game_offset(0x102FFB10), native_move_axis_stub);
+			utils::hook::call(game::game_offset(0x102FFB24), native_move_axis_stub);
+			native_move_callsite_patched = true;
+		}
+
 		void install_draw_crosshair_hook()
 		{
 			if (draw_crosshair_callsite_patched)
@@ -1049,6 +1134,26 @@ namespace xinput
 			}
 
 			native_look_callsite_patched = false;
+		}
+
+		void restore_native_move_hook()
+		{
+			if (!native_move_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_native_move_call_a.size(); ++i)
+			{
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA54 + static_cast<int>(i)), original_native_move_call_a[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA69 + static_cast<int>(i)), original_native_move_call_b[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA7E + static_cast<int>(i)), original_native_move_call_c[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA95 + static_cast<int>(i)), original_native_move_call_d[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFB10 + static_cast<int>(i)), original_native_move_call_e[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFB24 + static_cast<int>(i)), original_native_move_call_f[i]);
+			}
+
+			native_move_callsite_patched = false;
 		}
 
 		void restore_draw_crosshair_hook()
@@ -1225,6 +1330,7 @@ namespace xinput
 		{
 			install_native_cmd_hook();
 			install_native_look_hook();
+			install_native_move_hook();
 			install_draw_crosshair_hook();
 
 			scheduler::loop([]()
@@ -1242,6 +1348,7 @@ namespace xinput
 				}
 				restore_native_cmd_hook();
 				restore_native_look_hook();
+				restore_native_move_hook();
 				restore_draw_crosshair_hook();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
@@ -1253,6 +1360,7 @@ namespace xinput
 			shutdown_requested = true;
 			restore_native_cmd_hook();
 			restore_native_look_hook();
+			restore_native_move_hook();
 			restore_draw_crosshair_hook();
 		}
 	};
