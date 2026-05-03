@@ -50,10 +50,15 @@ namespace xinput
 		bool create_cmd_callsite_patched = false;
 		bool native_look_callsite_patched = false;
 		bool draw_crosshair_callsite_patched = false;
+		bool move_axis_callsite_patched = false;
 		bool usercmd_movement_patched = false;
 		std::array<std::uint8_t, 5> original_create_cmd_call{};
 		std::array<std::uint8_t, 5> original_native_look_call{};
 		std::array<std::uint8_t, 5> original_draw_crosshair_call{};
+		std::array<std::uint8_t, 5> original_move_axis_call_1{};
+		std::array<std::uint8_t, 5> original_move_axis_call_2{};
+		std::array<std::uint8_t, 5> original_move_axis_call_3{};
+		std::array<std::uint8_t, 5> original_move_axis_call_4{};
 		std::array<std::uint8_t, 5> original_pack_current_move_jump{};
 		std::array<std::uint8_t, 5> original_pack_previous_move_jump{};
 		std::array<std::uint8_t, 5> original_unpack_base_move_a_jump{};
@@ -644,65 +649,143 @@ namespace xinput
 			}
 		}
 
+		enum gamepad_physical_axis
+		{
+			GPAD_PHYSAXIS_NONE = -1,
+			GPAD_PHYSAXIS_RSTICK_X = 0,
+			GPAD_PHYSAXIS_RSTICK_Y,
+			GPAD_PHYSAXIS_LSTICK_X,
+			GPAD_PHYSAXIS_LSTICK_Y,
+			GPAD_PHYSAXIS_RTRIGGER,
+			GPAD_PHYSAXIS_LTRIGGER,
+			GPAD_PHYSAXIS_COUNT
+		};
+
+		enum gamepad_virtual_axis
+		{
+			GPAD_VIRTAXIS_NONE = -1,
+			GPAD_VIRTAXIS_SIDE = 0,
+			GPAD_VIRTAXIS_FORWARD,
+			GPAD_VIRTAXIS_UP,
+			GPAD_VIRTAXIS_YAW,
+			GPAD_VIRTAXIS_PITCH,
+			GPAD_VIRTAXIS_ATTACK,
+			GPAD_VIRTAXIS_COUNT
+		};
+
+		enum gamepad_mapping
+		{
+			GPAD_MAP_NONE = 0,
+			GPAD_MAP_LINEAR,
+			GPAD_MAP_SQUARED
+		};
+
+		struct gamepad_axis_binding
+		{
+			gamepad_physical_axis physical_axis;
+			gamepad_mapping map_type;
+		};
+
+		constexpr gamepad_physical_axis axis_same_stick[GPAD_PHYSAXIS_COUNT]
+		{
+			GPAD_PHYSAXIS_RSTICK_Y,
+			GPAD_PHYSAXIS_RSTICK_X,
+			GPAD_PHYSAXIS_LSTICK_Y,
+			GPAD_PHYSAXIS_LSTICK_X,
+			GPAD_PHYSAXIS_NONE,
+			GPAD_PHYSAXIS_NONE
+		};
+
+		constexpr gamepad_axis_binding virtual_axis_bindings[GPAD_VIRTAXIS_COUNT]
+		{
+			{ GPAD_PHYSAXIS_LSTICK_X, GPAD_MAP_SQUARED },
+			{ GPAD_PHYSAXIS_LSTICK_Y, GPAD_MAP_SQUARED },
+			{ GPAD_PHYSAXIS_NONE, GPAD_MAP_NONE },
+			{ GPAD_PHYSAXIS_RSTICK_X, GPAD_MAP_LINEAR },
+			{ GPAD_PHYSAXIS_RSTICK_Y, GPAD_MAP_LINEAR },
+			{ GPAD_PHYSAXIS_NONE, GPAD_MAP_NONE }
+		};
+
 		std::int8_t clamp_cmd_axis(const int value)
 		{
 			return static_cast<std::int8_t>(std::clamp(value, -127, 127));
 		}
 
-		void apply_analog_movement_to_cmd(game::usercmd_t* cmd, const float forward, const float side)
+		float get_physical_axis_value(const gamepad_physical_axis axis)
 		{
-			auto move_scale = static_cast<float>(std::numeric_limits<char>::max());
+			switch (axis)
+			{
+			case GPAD_PHYSAXIS_RSTICK_X:
+				return pad.right_stick_x;
+			case GPAD_PHYSAXIS_RSTICK_Y:
+				return pad.right_stick_y;
+			case GPAD_PHYSAXIS_LSTICK_X:
+				return pad.left_stick_x;
+			case GPAD_PHYSAXIS_LSTICK_Y:
+				return pad.left_stick_y;
+			case GPAD_PHYSAXIS_RTRIGGER:
+				return pad.right_trigger;
+			case GPAD_PHYSAXIS_LTRIGGER:
+				return pad.left_trigger;
+			default:
+				return 0.0f;
+			}
+		}
 
+		float CL_GamepadAxisValue(const gamepad_virtual_axis virtual_axis)
+		{
+			assert(virtual_axis > GPAD_VIRTAXIS_NONE && virtual_axis < GPAD_VIRTAXIS_COUNT);
+
+			const auto& [physical_axis, map_type] = virtual_axis_bindings[virtual_axis];
+
+			if (physical_axis <= GPAD_PHYSAXIS_NONE || physical_axis >= GPAD_PHYSAXIS_COUNT)
+			{
+				return 0.0f;
+			}
+
+			auto axis_deflection = get_physical_axis_value(physical_axis);
+
+			if (map_type == GPAD_MAP_SQUARED)
+			{
+				const auto other_axis_same_stick = axis_same_stick[physical_axis];
+
+				float other_axis_deflection;
+				if (other_axis_same_stick <= GPAD_PHYSAXIS_NONE || other_axis_same_stick >= GPAD_PHYSAXIS_COUNT)
+				{
+					other_axis_deflection = 0.0f;
+				}
+				else
+				{
+					other_axis_deflection = get_physical_axis_value(other_axis_same_stick);
+				}
+
+				axis_deflection = std::sqrt(axis_deflection * axis_deflection + other_axis_deflection * other_axis_deflection) * axis_deflection;
+			}
+
+			return axis_deflection;
+		}
+
+		void CL_GamepadMove(game::usercmd_t* cmd)
+		{
+			if (!cmd || !should_drive_native_cmd())
+			{
+				return;
+			}
+			auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
+			auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
+
+			constexpr auto move_scale = static_cast<float>(std::numeric_limits<char>::max());
 			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
 			{
 				const auto length = std::fabs(side) <= std::fabs(forward)
 					? side / forward
 					: forward / side;
-				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+				const auto analog_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+
+				cmd->rightmove = clamp_cmd_axis(cmd->rightmove + static_cast<int>(std::floor(side * analog_scale)));
+				cmd->forwardmove = clamp_cmd_axis(cmd->forwardmove + static_cast<int>(std::floor(forward * analog_scale)));
 			}
 
-			const auto forward_move = static_cast<int>(std::floor(forward * move_scale));
-			const auto right_move = static_cast<int>(std::floor(side * move_scale));
-
-			cmd->forwardmove = clamp_cmd_axis(forward_move);
-			cmd->rightmove = clamp_cmd_axis(right_move);
-		}
-
-		void seed_native_move_state()
-		{
-			if (!pad.connected || !is_gamepad_enabled() || is_menu_mode())
-			{
-				return;
-			}
-
-			auto* const move_state = reinterpret_cast<std::uint8_t*>(game::game_offset(0x112825E8));
-			if (!move_state)
-			{
-				return;
-			}
-
-			const auto max_hold = *reinterpret_cast<int*>(game::game_offset(0x11260BA8));
-			if (max_hold <= 0)
-			{
-				return;
-			}
-
-			const auto write_axis = [&](const std::uint32_t offset, const float value)
-			{
-				auto* const hold_time = reinterpret_cast<int*>(move_state + offset + 12);
-				auto* const active = reinterpret_cast<std::uint8_t*>(move_state + offset + 16);
-				const auto magnitude = std::clamp(std::fabs(value), 0.0f, 1.0f);
-
-				*hold_time = static_cast<int>(magnitude * static_cast<float>(max_hold));
-				*active = 0;
-			};
-
-			write_axis(40u, pad.left_stick_y > 0.0f ? pad.left_stick_y : 0.0f);
-			write_axis(60u, pad.left_stick_y < 0.0f ? -pad.left_stick_y : 0.0f);
-			write_axis(140u, pad.left_stick_x > 0.0f ? pad.left_stick_x : 0.0f);
-			write_axis(120u, pad.left_stick_x < 0.0f ? -pad.left_stick_x : 0.0f);
-			write_axis(20u, 0.0f);
-			write_axis(0u, 0.0f);
 		}
 
 		float get_view_sensitivity()
@@ -798,15 +881,40 @@ namespace xinput
 				return;
 			}
 
-			const auto forward = pad.left_stick_y;
-			const auto side = pad.left_stick_x;
-			if (std::fabs(forward) <= 0.0f && std::fabs(side) <= 0.0f)
+			CL_GamepadMove(cmd);
+		}
+
+		double get_move_axis_value(const gamepad_virtual_axis axis, const bool positive)
+		{
+			if (!should_drive_native_cmd())
 			{
-				return;
+				return 0.0;
 			}
 
-			// Apply native left-stick locomotion directly to the active usercmd.
-			apply_analog_movement_to_cmd(cmd, forward, side);
+			const auto value = CL_GamepadAxisValue(axis);
+			return positive
+				? static_cast<double>(std::max(0.0f, value))
+				: static_cast<double>(std::max(0.0f, -value));
+		}
+
+		double move_right_positive_body()
+		{
+			return get_move_axis_value(GPAD_VIRTAXIS_SIDE, true);
+		}
+
+		double move_right_negative_body()
+		{
+			return get_move_axis_value(GPAD_VIRTAXIS_SIDE, false);
+		}
+
+		double move_forward_positive_body()
+		{
+			return get_move_axis_value(GPAD_VIRTAXIS_FORWARD, true);
+		}
+
+		double move_forward_negative_body()
+		{
+			return get_move_axis_value(GPAD_VIRTAXIS_FORWARD, false);
 		}
 
 		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
@@ -837,7 +945,6 @@ namespace xinput
 			if (should_drive_native_cmd())
 			{
 				apply_native_view_input();
-				apply_native_gamepad_to_cmd(cmd);
 				return;
 			}
 
@@ -998,6 +1105,28 @@ namespace xinput
 			draw_crosshair_callsite_patched = true;
 		}
 
+		void install_move_axis_hooks()
+		{
+			if (move_axis_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_move_axis_call_1.size(); ++i)
+			{
+				original_move_axis_call_1[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA64 + static_cast<int>(i)));
+				original_move_axis_call_2[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA79 + static_cast<int>(i)));
+				original_move_axis_call_3[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA8E + static_cast<int>(i)));
+				original_move_axis_call_4[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFAA9 + static_cast<int>(i)));
+			}
+
+			utils::hook::call(game::game_offset(0x102FFA64), move_right_positive_body);
+			utils::hook::call(game::game_offset(0x102FFA79), move_right_negative_body);
+			utils::hook::call(game::game_offset(0x102FFA8E), move_forward_positive_body);
+			utils::hook::call(game::game_offset(0x102FFAA9), move_forward_negative_body);
+			move_axis_callsite_patched = true;
+		}
+
 		void install_usercmd_movement_patch()
 		{
 			if (usercmd_movement_patched)
@@ -1085,6 +1214,24 @@ namespace xinput
 			}
 
 			draw_crosshair_callsite_patched = false;
+		}
+
+		void restore_move_axis_hooks()
+		{
+			if (!move_axis_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_move_axis_call_1.size(); ++i)
+			{
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA64 + static_cast<int>(i)), original_move_axis_call_1[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA79 + static_cast<int>(i)), original_move_axis_call_2[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA8E + static_cast<int>(i)), original_move_axis_call_3[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFAA9 + static_cast<int>(i)), original_move_axis_call_4[i]);
+			}
+
+			move_axis_callsite_patched = false;
 		}
 
 		void restore_usercmd_movement_patch()
@@ -1208,10 +1355,6 @@ namespace xinput
 
 			const auto in_use = (time - pad.last_activity_time) <= 2000u;
 			set_bool_dvar(dvars::gpad_in_use, in_use);
-			if (in_use && !pad.menu_mode)
-			{
-				seed_native_move_state();
-			}
 			update_cursor_visibility(time);
 
 			debug_print("gpad: buttons=0x%04X lx=%.3f ly=%.3f rx=%.3f ry=%.3f lt=%.3f rt=%.3f menu=%d in_use=%d\n",
@@ -1251,6 +1394,7 @@ namespace xinput
 			install_native_cmd_hook();
 			install_native_look_hook();
 			install_draw_crosshair_hook();
+			install_move_axis_hooks();
 
 			scheduler::loop([]()
 			{
@@ -1268,6 +1412,7 @@ namespace xinput
 				restore_native_cmd_hook();
 				restore_native_look_hook();
 				restore_draw_crosshair_hook();
+				restore_move_axis_hooks();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
 			});
@@ -1279,6 +1424,7 @@ namespace xinput
 			restore_native_cmd_hook();
 			restore_native_look_hook();
 			restore_draw_crosshair_hook();
+			restore_move_axis_hooks();
 		}
 	};
 }
