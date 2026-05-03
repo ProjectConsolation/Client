@@ -664,8 +664,8 @@ namespace xinput
 			const auto forward_move = static_cast<int>(std::floor(forward * move_scale));
 			const auto right_move = static_cast<int>(std::floor(side * move_scale));
 
-			cmd->forwardmove = clamp_cmd_axis(cmd->forwardmove + forward_move);
-			cmd->rightmove = clamp_cmd_axis(cmd->rightmove + right_move);
+			cmd->forwardmove = clamp_cmd_axis(forward_move);
+			cmd->rightmove = clamp_cmd_axis(right_move);
 		}
 
 		void seed_native_move_state()
@@ -837,6 +837,7 @@ namespace xinput
 			if (should_drive_native_cmd())
 			{
 				apply_native_view_input();
+				apply_native_gamepad_to_cmd(cmd);
 				return;
 			}
 
