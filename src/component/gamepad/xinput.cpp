@@ -665,23 +665,27 @@ namespace xinput
 			return static_cast<std::int8_t>(std::clamp(value, -127, 127));
 		}
 
-		void apply_analog_movement_to_cmd(game::usercmd_t* cmd, const float forward, const float side)
+		float shape_stick_response(const float value, const float exponent)
 		{
-			auto move_scale = static_cast<float>(std::numeric_limits<char>::max());
-
-			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
+			if (value == 0.0f)
 			{
-				const auto length = std::fabs(side) <= std::fabs(forward)
-					? side / forward
-					: forward / side;
-				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+				return 0.0f;
 			}
 
-			const auto forward_move = static_cast<int>(std::floor(forward * move_scale));
-			const auto right_move = static_cast<int>(std::floor(side * move_scale));
+			const auto magnitude = std::pow(std::fabs(value), exponent);
+			return std::copysign(magnitude, value);
+		}
 
-			cmd->forwardmove = clamp_cmd_axis(cmd->forwardmove + forward_move);
-			cmd->rightmove = clamp_cmd_axis(cmd->rightmove + right_move);
+		void apply_analog_movement_to_cmd(game::usercmd_t* cmd, const float forward, const float side)
+		{
+			// Use a softer response curve so tiny stick deflections stay tiny.
+			// We keep the output direct here and let the engine's own movement
+			// code handle the actual speed scaling.
+			const auto shaped_forward = shape_stick_response(forward, 2.35f);
+			const auto shaped_side = shape_stick_response(side, 2.35f);
+
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(shaped_forward * 127.0f)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(shaped_side * 127.0f)));
 		}
 
 		void set_key_hold_state(std::uint8_t* slot, const float magnitude, const DWORD time)
@@ -692,23 +696,24 @@ namespace xinput
 			}
 
 			const auto clamped_magnitude = std::clamp(magnitude, 0.0f, 1.0f);
-			auto* const frame_time = reinterpret_cast<std::uint32_t*>(game::game_offset(0x11260BA8));
+			auto* const current_time = reinterpret_cast<std::uint32_t*>(game::game_offset(0x10711AFC));
+			const auto frame_time = reinterpret_cast<std::uint32_t*>(game::game_offset(0x11260BA8));
 			const auto delta_time = frame_time && *frame_time ? *frame_time : 1u;
 			auto* const state = reinterpret_cast<key_hold_state*>(slot);
 
-			state->active = clamped_magnitude > 0.001f ? 1u : 0u;
-
-			if (state->active)
+			if (clamped_magnitude > 0.001f)
 			{
-				const auto hold_time = std::max<std::uint32_t>(
-					1u,
-					static_cast<std::uint32_t>(std::lround(clamped_magnitude * static_cast<float>(delta_time))));
-				state->hold_time = hold_time;
-				state->last_update_time = time;
+				const auto scaled_delta = static_cast<std::uint32_t>(
+					std::lround(clamped_magnitude * static_cast<float>(delta_time)));
+				const auto base_time = current_time && *current_time ? *current_time : time;
+				state->hold_time = 0;
+				state->active = 1u;
+				state->last_update_time = base_time - std::min(scaled_delta, delta_time);
 			}
 			else
 			{
 				state->hold_time = 0;
+				state->active = 0u;
 				state->last_update_time = time;
 			}
 		}
@@ -724,49 +729,6 @@ namespace xinput
 			state->hold_time = 0;
 			state->active = 0;
 			state->last_update_time = time;
-		}
-
-		void apply_controller_move_state(const int local_client_num)
-		{
-			auto* const base = reinterpret_cast<std::uint8_t*>(game::game_offset(0x112825E8))
-				+ (760 * local_client_num);
-			auto* const current_time = reinterpret_cast<std::uint32_t*>(game::game_offset(0x10711AFC));
-			const auto time = current_time ? *current_time : GetTickCount();
-
-			if (!should_drive_native_cmd())
-			{
-				if (pad.move_state_active)
-				{
-					clear_key_hold_state(base + 140, time);
-					clear_key_hold_state(base + 120, time);
-					clear_key_hold_state(base + 40, time);
-					clear_key_hold_state(base + 60, time);
-					pad.move_state_active = false;
-				}
-
-				return;
-			}
-
-			const auto forward = pad.left_stick_y;
-			const auto side = pad.left_stick_x;
-			const auto analog_active = std::fabs(forward) > 0.001f || std::fabs(side) > 0.001f;
-
-			if (analog_active)
-			{
-				set_key_hold_state(base + 140, std::max(forward, 0.0f), time);
-				set_key_hold_state(base + 120, std::max(-forward, 0.0f), time);
-				set_key_hold_state(base + 40, std::max(side, 0.0f), time);
-				set_key_hold_state(base + 60, std::max(-side, 0.0f), time);
-				pad.move_state_active = true;
-			}
-			else if (pad.move_state_active)
-			{
-				clear_key_hold_state(base + 140, time);
-				clear_key_hold_state(base + 120, time);
-				clear_key_hold_state(base + 40, time);
-				clear_key_hold_state(base + 60, time);
-				pad.move_state_active = false;
-			}
 		}
 
 		float get_view_sensitivity()
@@ -895,29 +857,6 @@ namespace xinput
 			patches::enforce_ads_sprint_interrupt(result);
 
 			return result;
-		}
-
-		void __cdecl key_move_body(const int local_client_num)
-		{
-			void* cmd = nullptr;
-
-			__asm
-			{
-				mov cmd, edi
-			}
-
-			// Seed the stock CL_KeyMove hold-state slots so analog magnitude is
-			// consumed by the engine before it builds the final usercmd.
-			apply_controller_move_state(local_client_num);
-
-			const auto func_loc = static_cast<int>(game::game_offset(0x102FF970));
-			__asm
-			{
-				mov edi, cmd
-				push local_client_num
-				call func_loc
-				add esp, 4
-			}
 		}
 
 		void __cdecl native_look_body(game::usercmd_t* cmd, const int local_client_num)
@@ -1055,22 +994,6 @@ namespace xinput
 			create_cmd_callsite_patched = true;
 		}
 
-		void install_key_move_hook()
-		{
-			if (key_move_callsite_patched)
-			{
-				return;
-			}
-
-			for (auto i = 0u; i < original_key_move_call.size(); ++i)
-			{
-				original_key_move_call[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFBF3 + i));
-			}
-
-			utils::hook::call(game::game_offset(0x102FFBF3), key_move_body);
-			key_move_callsite_patched = true;
-		}
-
 		void install_native_look_hook()
 		{
 			if (native_look_callsite_patched)
@@ -1160,21 +1083,6 @@ namespace xinput
 			}
 
 			create_cmd_callsite_patched = false;
-		}
-
-		void restore_key_move_hook()
-		{
-			if (!key_move_callsite_patched)
-			{
-				return;
-			}
-
-			for (auto i = 0u; i < original_key_move_call.size(); ++i)
-			{
-				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFBF3 + static_cast<int>(i)), original_key_move_call[i]);
-			}
-
-			key_move_callsite_patched = false;
 		}
 
 		void restore_native_look_hook()
@@ -1365,7 +1273,6 @@ namespace xinput
 		void post_load() override
 		{
 			install_native_cmd_hook();
-			install_key_move_hook();
 			install_native_look_hook();
 			install_draw_crosshair_hook();
 
@@ -1383,7 +1290,6 @@ namespace xinput
 					set_cursor_visible(true);
 				}
 				restore_native_cmd_hook();
-				restore_key_move_hook();
 				restore_native_look_hook();
 				restore_draw_crosshair_hook();
 				set_bool_dvar(dvars::gpad_present, false);
@@ -1395,7 +1301,6 @@ namespace xinput
 		{
 			shutdown_requested = true;
 			restore_native_cmd_hook();
-			restore_key_move_hook();
 			restore_native_look_hook();
 			restore_draw_crosshair_hook();
 		}
