@@ -574,7 +574,6 @@ namespace dvars
 					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved), false);
-					replace_dvar(make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved), false);
 				}, scheduler::main);
 
 			scheduler::loop([]

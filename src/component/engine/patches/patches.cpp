@@ -423,7 +423,6 @@ namespace patches
 			#endif
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
-			dvars::overrides::register_int("com_maxfps", 60, 0, 1000, game::dvar_flags::saved);
 			dvars::overrides::register_string("version", build_version_string(),
 				static_cast<unsigned int>(game::dvar_flags::server_info | game::dvar_flags::read_only));
 			dvars::overrides::register_string("shortversion", build_shortversion_string(),
@@ -452,13 +451,13 @@ namespace patches
 				dvars::replace_dvar_at(game::game_offset(0x101DB65A), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x118EE1C0)),
 					dvars::make_float("jump_height", "The maximum height of a player's jump", 41.0f, 0.0f, 1000.0f, game::dvar_flags::saved));
 
-				dvars::replace_dvar_at(game::game_offset(0x10321221), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11260BD0)),
-					dvars::make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
-
 				dvars::replace_dvar_at(game::game_offset(0x103B2260), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054944)),
 					dvars::make_int("developer", "Enable development environment", 0, 0, 2, game::dvar_flags::none));
 
-				make_dvar_saved_and_writable("com_maxfps");
+				utils::hook::nop(game::game_offset(0x103F6970), 5);
+				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x10711AF8)) =
+					dvars::Dvar_RegisterInt("com_maxfps", "Cap frames per second", 60, 0, 1000, game::dvar_flags::saved);
+
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
@@ -477,7 +476,6 @@ namespace patches
 
 			scheduler::loop([]
 			{
-				make_dvar_saved_and_writable("com_maxfps");
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
