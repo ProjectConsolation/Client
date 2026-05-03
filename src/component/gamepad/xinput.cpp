@@ -771,20 +771,15 @@ namespace xinput
 			{
 				return;
 			}
-			auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
-			auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
 
-			constexpr auto move_scale = static_cast<float>(std::numeric_limits<char>::max());
-			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
-			{
-				const auto length = std::fabs(side) <= std::fabs(forward)
-					? side / forward
-					: forward / side;
-				const auto analog_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+			const auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
+			const auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
+			constexpr auto move_scale = 127.0f;
 
-				cmd->rightmove = clamp_cmd_axis(cmd->rightmove + static_cast<int>(std::floor(side * analog_scale)));
-				cmd->forwardmove = clamp_cmd_axis(cmd->forwardmove + static_cast<int>(std::floor(forward * analog_scale)));
-			}
+			// Preserve true analog walking by mapping normalized stick deflection
+			// directly into the signed usercmd movement range.
+			cmd->rightmove = clamp_cmd_axis(cmd->rightmove + static_cast<int>(std::lround(side * move_scale)));
+			cmd->forwardmove = clamp_cmd_axis(cmd->forwardmove + static_cast<int>(std::lround(forward * move_scale)));
 
 		}
 
