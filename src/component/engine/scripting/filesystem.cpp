@@ -10,6 +10,7 @@
 #include <utils/io.hpp>
 #include <utils/flags.hpp>
 #include <utils/hook.hpp>
+#include <ShlObj.h>
 
 namespace filesystem
 {
@@ -25,6 +26,17 @@ namespace filesystem
 			return search_paths;
 		}
 
+		std::string get_default_players_directory()
+		{
+			char roaming_path[MAX_PATH]{};
+			if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, roaming_path)))
+			{
+				return std::string(roaming_path) + "\\Activision\\Quantum of Solace\\players";
+			}
+
+			return {};
+		}
+
 		void fs_startup_stub(const char* name)
 		{
 			console::debug("[FS] Startup\n");
@@ -33,6 +45,10 @@ namespace filesystem
 
 			filesystem::register_path(L".");
 			filesystem::register_path(L"consolation");
+			if (const auto players_directory = get_default_players_directory(); !players_directory.empty())
+			{
+				filesystem::register_path(players_directory);
+			}
 			//filesystem::register_path(L"devraw_shared");
 			//filesystem::register_path(L"devraw");
 			//filesystem::register_path(L"raw_shared");
@@ -66,6 +82,20 @@ namespace filesystem
 		{
 			static auto current_path = std::filesystem::current_path().string();
 			return current_path.data();
+		}
+
+		void __cdecl exec_disk_log_stub(const int channel, const char* fmt, const char* requested_path)
+		{
+			(void)fmt;
+
+			std::string real_path{};
+			if (requested_path && requested_path[0] && filesystem::find_file(requested_path, &real_path))
+			{
+				game::Com_Printf(channel, "execing %s from %s\n", requested_path, real_path.c_str());
+				return;
+			}
+
+			game::Com_Printf(channel, "execing %s from disk\n", requested_path ? requested_path : "<null>");
 		}
 	}
 
@@ -208,6 +238,7 @@ namespace filesystem
 			fs_startup_hook.create(game::game_offset(0x10272D80), fs_startup_stub);
 
 			utils::hook::jump(game::game_offset(0x10274AA0), sys_default_install_path_stub);
+			utils::hook::call(game::game_offset(0x103F589B), exec_disk_log_stub);
 		}
 	};
 }
