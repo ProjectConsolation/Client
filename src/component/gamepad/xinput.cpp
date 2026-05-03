@@ -668,6 +668,43 @@ namespace xinput
 			cmd->rightmove = clamp_cmd_axis(cmd->rightmove + right_move);
 		}
 
+		void seed_native_move_state()
+		{
+			if (!pad.connected || !is_gamepad_enabled() || is_menu_mode())
+			{
+				return;
+			}
+
+			auto* const move_state = reinterpret_cast<std::uint8_t*>(game::game_offset(0x112825E8));
+			if (!move_state)
+			{
+				return;
+			}
+
+			const auto max_hold = *reinterpret_cast<int*>(game::game_offset(0x11260BA8));
+			if (max_hold <= 0)
+			{
+				return;
+			}
+
+			const auto write_axis = [&](const std::uint32_t offset, const float value)
+			{
+				auto* const hold_time = reinterpret_cast<int*>(move_state + offset + 12);
+				auto* const active = reinterpret_cast<std::uint8_t*>(move_state + offset + 16);
+				const auto magnitude = std::clamp(std::fabs(value), 0.0f, 1.0f);
+
+				*hold_time = static_cast<int>(magnitude * static_cast<float>(max_hold));
+				*active = 0;
+			};
+
+			write_axis(40u, pad.left_stick_y > 0.0f ? pad.left_stick_y : 0.0f);
+			write_axis(60u, pad.left_stick_y < 0.0f ? -pad.left_stick_y : 0.0f);
+			write_axis(140u, pad.left_stick_x > 0.0f ? pad.left_stick_x : 0.0f);
+			write_axis(120u, pad.left_stick_x < 0.0f ? -pad.left_stick_x : 0.0f);
+			write_axis(20u, 0.0f);
+			write_axis(0u, 0.0f);
+		}
+
 		float get_view_sensitivity()
 		{
 			const auto* const dvar = game::Dvar_FindVar("input_viewSensitivity");
@@ -789,13 +826,6 @@ namespace xinput
 			}
 
 			patches::enforce_ads_sprint_interrupt(result);
-
-			// Once the stock builder is done, let the controller own the
-			// locomotion bytes directly.
-			if (should_drive_native_cmd())
-			{
-				apply_native_gamepad_to_cmd(result);
-			}
 
 			return result;
 		}
@@ -1177,6 +1207,10 @@ namespace xinput
 
 			const auto in_use = (time - pad.last_activity_time) <= 2000u;
 			set_bool_dvar(dvars::gpad_in_use, in_use);
+			if (in_use && !pad.menu_mode)
+			{
+				seed_native_move_state();
+			}
 			update_cursor_visibility(time);
 
 			debug_print("gpad: buttons=0x%04X lx=%.3f ly=%.3f rx=%.3f ry=%.3f lt=%.3f rt=%.3f menu=%d in_use=%d\n",
