@@ -32,6 +32,7 @@ namespace xinput
 			bool connected = false;
 			bool menu_mode = false;
 			bool controller_interacted = false;
+			bool move_state_active = false;
 			XINPUT_STATE state{};
 			XINPUT_STATE previous_state{};
 			std::array<bool, 4> menu_direction_down{};
@@ -49,10 +50,12 @@ namespace xinput
 		controller_state pad{};
 		bool shutdown_requested = false;
 		bool create_cmd_callsite_patched = false;
+		bool key_move_callsite_patched = false;
 		bool native_look_callsite_patched = false;
 		bool draw_crosshair_callsite_patched = false;
 		bool usercmd_movement_patched = false;
 		std::array<std::uint8_t, 5> original_create_cmd_call{};
+		std::array<std::uint8_t, 5> original_key_move_call{};
 		std::array<std::uint8_t, 5> original_native_look_call{};
 		std::array<std::uint8_t, 5> original_draw_crosshair_call{};
 		std::array<std::uint8_t, 5> original_pack_current_move_jump{};
@@ -75,6 +78,16 @@ namespace xinput
 		std::uint32_t unpack_base_move_b_rejoin = 0;
 		std::uint32_t unpack_exact_move_a_rejoin = 0;
 		std::uint32_t unpack_exact_move_b_rejoin = 0;
+
+		struct key_hold_state
+		{
+			std::uint8_t padding0[8]{};
+			std::uint32_t last_update_time = 0;
+			std::uint32_t hold_time = 0;
+			std::uint8_t active = 0;
+			std::uint8_t padding1[3]{};
+		};
+		static_assert(sizeof(key_hold_state) == 0x14);
 
 		enum direction
 		{
@@ -671,6 +684,87 @@ namespace xinput
 			cmd->rightmove = clamp_cmd_axis(cmd->rightmove + right_move);
 		}
 
+		void set_key_hold_state(std::uint8_t* slot, const float magnitude, const DWORD time)
+		{
+			if (!slot)
+			{
+				return;
+			}
+
+			const auto clamped_magnitude = std::clamp(magnitude, 0.0f, 1.0f);
+			auto* const frame_time = reinterpret_cast<std::uint32_t*>(game::game_offset(0x11260BA8));
+			const auto delta_time = frame_time && *frame_time ? *frame_time : 1u;
+			auto* const state = reinterpret_cast<key_hold_state*>(slot);
+
+			state->hold_time = 0;
+			state->active = clamped_magnitude > 0.001f ? 1u : 0u;
+
+			if (state->active)
+			{
+				const auto offset = static_cast<std::uint32_t>(std::lround(clamped_magnitude * static_cast<float>(delta_time)));
+				state->last_update_time = time - std::min(offset, delta_time);
+			}
+			else
+			{
+				state->last_update_time = time;
+			}
+		}
+
+		void clear_key_hold_state(std::uint8_t* slot, const DWORD time)
+		{
+			if (!slot)
+			{
+				return;
+			}
+
+			auto* const state = reinterpret_cast<key_hold_state*>(slot);
+			state->hold_time = 0;
+			state->active = 0;
+			state->last_update_time = time;
+		}
+
+		void apply_controller_move_state(const int local_client_num)
+		{
+			auto* const base = reinterpret_cast<std::uint8_t*>(game::game_offset(0x112825E8))
+				+ (760 * local_client_num);
+			const auto time = GetTickCount();
+
+			if (!should_drive_native_cmd())
+			{
+				if (pad.move_state_active)
+				{
+					clear_key_hold_state(base + 140, time);
+					clear_key_hold_state(base + 120, time);
+					clear_key_hold_state(base + 40, time);
+					clear_key_hold_state(base + 60, time);
+					pad.move_state_active = false;
+				}
+
+				return;
+			}
+
+			const auto forward = pad.left_stick_y;
+			const auto side = pad.left_stick_x;
+			const auto analog_active = std::fabs(forward) > 0.001f || std::fabs(side) > 0.001f;
+
+			if (analog_active)
+			{
+				set_key_hold_state(base + 140, std::max(forward, 0.0f), time);
+				set_key_hold_state(base + 120, std::max(-forward, 0.0f), time);
+				set_key_hold_state(base + 40, std::max(side, 0.0f), time);
+				set_key_hold_state(base + 60, std::max(-side, 0.0f), time);
+				pad.move_state_active = true;
+			}
+			else if (pad.move_state_active)
+			{
+				clear_key_hold_state(base + 140, time);
+				clear_key_hold_state(base + 120, time);
+				clear_key_hold_state(base + 40, time);
+				clear_key_hold_state(base + 60, time);
+				pad.move_state_active = false;
+			}
+		}
+
 		float get_view_sensitivity()
 		{
 			const auto* const dvar = game::Dvar_FindVar("input_viewSensitivity");
@@ -796,14 +890,17 @@ namespace xinput
 
 			patches::enforce_ads_sprint_interrupt(result);
 
-			// Keep the existing controller locomotion writeback for now; the
-			// CL_KeyMove ramp helper is not the analog source we want.
-			if (should_drive_native_cmd())
-			{
-				apply_native_gamepad_to_cmd(result);
-			}
-
 			return result;
+		}
+
+		void __cdecl key_move_body(const int local_client_num)
+		{
+			// Seed the stock CL_KeyMove hold-state slots so analog magnitude is
+			// consumed by the engine before it builds the final usercmd.
+			apply_controller_move_state(local_client_num);
+
+			const auto func_loc = static_cast<int>(game::game_offset(0x102FF970));
+			Utils::Hook::Call<void(int)>(func_loc)(local_client_num);
 		}
 
 		void __cdecl native_look_body(game::usercmd_t* cmd, const int local_client_num)
@@ -941,6 +1038,22 @@ namespace xinput
 			create_cmd_callsite_patched = true;
 		}
 
+		void install_key_move_hook()
+		{
+			if (key_move_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_key_move_call.size(); ++i)
+			{
+				original_key_move_call[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFBF3 + i));
+			}
+
+			utils::hook::call(game::game_offset(0x102FFBF3), key_move_body);
+			key_move_callsite_patched = true;
+		}
+
 		void install_native_look_hook()
 		{
 			if (native_look_callsite_patched)
@@ -1030,6 +1143,21 @@ namespace xinput
 			}
 
 			create_cmd_callsite_patched = false;
+		}
+
+		void restore_key_move_hook()
+		{
+			if (!key_move_callsite_patched)
+			{
+				return;
+			}
+
+			for (auto i = 0u; i < original_key_move_call.size(); ++i)
+			{
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFBF3 + static_cast<int>(i)), original_key_move_call[i]);
+			}
+
+			key_move_callsite_patched = false;
 		}
 
 		void restore_native_look_hook()
@@ -1169,12 +1297,12 @@ namespace xinput
 			}
 
 			const auto has_analog_activity =
-				std::fabs(pad.left_stick_x) >= 0.15f
-				|| std::fabs(pad.left_stick_y) >= 0.15f
-				|| std::fabs(pad.right_stick_x) >= 0.15f
-				|| std::fabs(pad.right_stick_y) >= 0.15f
-				|| pad.left_trigger > 0.15f
-				|| pad.right_trigger > 0.15f;
+				std::fabs(pad.left_stick_x) >= 0.02f
+				|| std::fabs(pad.left_stick_y) >= 0.02f
+				|| std::fabs(pad.right_stick_x) >= 0.02f
+				|| std::fabs(pad.right_stick_y) >= 0.02f
+				|| pad.left_trigger > 0.02f
+				|| pad.right_trigger > 0.02f;
 
 			if (has_analog_activity || pad.state.Gamepad.wButtons != 0)
 			{
@@ -1220,6 +1348,7 @@ namespace xinput
 		void post_load() override
 		{
 			install_native_cmd_hook();
+			install_key_move_hook();
 			install_native_look_hook();
 			install_draw_crosshair_hook();
 
@@ -1237,6 +1366,7 @@ namespace xinput
 					set_cursor_visible(true);
 				}
 				restore_native_cmd_hook();
+				restore_key_move_hook();
 				restore_native_look_hook();
 				restore_draw_crosshair_hook();
 				set_bool_dvar(dvars::gpad_present, false);
@@ -1248,6 +1378,7 @@ namespace xinput
 		{
 			shutdown_requested = true;
 			restore_native_cmd_hook();
+			restore_key_move_hook();
 			restore_native_look_hook();
 			restore_draw_crosshair_hook();
 		}
