@@ -696,16 +696,19 @@ namespace xinput
 			const auto delta_time = frame_time && *frame_time ? *frame_time : 1u;
 			auto* const state = reinterpret_cast<key_hold_state*>(slot);
 
-			state->hold_time = 0;
 			state->active = clamped_magnitude > 0.001f ? 1u : 0u;
 
 			if (state->active)
 			{
-				const auto offset = static_cast<std::uint32_t>(std::lround(clamped_magnitude * static_cast<float>(delta_time)));
-				state->last_update_time = time - std::min(offset, delta_time);
+				const auto hold_time = std::max<std::uint32_t>(
+					1u,
+					static_cast<std::uint32_t>(std::lround(clamped_magnitude * static_cast<float>(delta_time))));
+				state->hold_time = hold_time;
+				state->last_update_time = time;
 			}
 			else
 			{
+				state->hold_time = 0;
 				state->last_update_time = time;
 			}
 		}
