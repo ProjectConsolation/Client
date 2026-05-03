@@ -900,7 +900,7 @@ namespace xinput
 			apply_controller_move_state(local_client_num);
 
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FF970));
-			Utils::Hook::Call<void(int)>(func_loc)(local_client_num);
+			utils::hook::invoke<void>(func_loc, local_client_num);
 		}
 
 		void __cdecl native_look_body(game::usercmd_t* cmd, const int local_client_num)
