@@ -778,8 +778,8 @@ namespace xinput
 
 			// Preserve true analog walking by mapping normalized stick deflection
 			// directly into the signed usercmd movement range.
-			cmd->rightmove = clamp_cmd_axis(cmd->rightmove + static_cast<int>(std::lround(side * move_scale)));
-			cmd->forwardmove = clamp_cmd_axis(cmd->forwardmove + static_cast<int>(std::lround(forward * move_scale)));
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(side * move_scale)));
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(forward * move_scale)));
 
 		}
 
@@ -886,10 +886,11 @@ namespace xinput
 				return 0.0;
 			}
 
-			const auto value = CL_GamepadAxisValue(axis);
-			return positive
-				? static_cast<double>(std::max(0.0f, value))
-				: static_cast<double>(std::max(0.0f, -value));
+			// When native controller movement is active, we write analog movement
+			// straight into usercmd_t and suppress the older split-axis path.
+			(void)axis;
+			(void)positive;
+			return 0.0;
 		}
 
 		double move_right_positive_body()
@@ -928,6 +929,7 @@ namespace xinput
 				mov result, eax
 			}
 
+			apply_native_gamepad_to_cmd(result);
 			patches::enforce_ads_sprint_interrupt(result);
 
 			return result;
