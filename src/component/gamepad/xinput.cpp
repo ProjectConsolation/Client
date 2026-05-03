@@ -1114,16 +1114,16 @@ namespace xinput
 
 			for (auto i = 0u; i < original_move_axis_call_1.size(); ++i)
 			{
-				original_move_axis_call_1[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA64 + static_cast<int>(i)));
-				original_move_axis_call_2[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA79 + static_cast<int>(i)));
-				original_move_axis_call_3[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA8E + static_cast<int>(i)));
-				original_move_axis_call_4[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFAA9 + static_cast<int>(i)));
+				original_move_axis_call_1[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA54 + static_cast<int>(i)));
+				original_move_axis_call_2[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA69 + static_cast<int>(i)));
+				original_move_axis_call_3[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA7E + static_cast<int>(i)));
+				original_move_axis_call_4[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFA95 + static_cast<int>(i)));
 			}
 
-			utils::hook::call(game::game_offset(0x102FFA64), move_right_positive_body);
-			utils::hook::call(game::game_offset(0x102FFA79), move_right_negative_body);
-			utils::hook::call(game::game_offset(0x102FFA8E), move_forward_positive_body);
-			utils::hook::call(game::game_offset(0x102FFAA9), move_forward_negative_body);
+			utils::hook::call(game::game_offset(0x102FFA54), move_right_positive_body);
+			utils::hook::call(game::game_offset(0x102FFA69), move_right_negative_body);
+			utils::hook::call(game::game_offset(0x102FFA7E), move_forward_positive_body);
+			utils::hook::call(game::game_offset(0x102FFA95), move_forward_negative_body);
 			move_axis_callsite_patched = true;
 		}
 
@@ -1225,10 +1225,10 @@ namespace xinput
 
 			for (auto i = 0u; i < original_move_axis_call_1.size(); ++i)
 			{
-				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA64 + static_cast<int>(i)), original_move_axis_call_1[i]);
-				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA79 + static_cast<int>(i)), original_move_axis_call_2[i]);
-				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA8E + static_cast<int>(i)), original_move_axis_call_3[i]);
-				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFAA9 + static_cast<int>(i)), original_move_axis_call_4[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA54 + static_cast<int>(i)), original_move_axis_call_1[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA69 + static_cast<int>(i)), original_move_axis_call_2[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA7E + static_cast<int>(i)), original_move_axis_call_3[i]);
+				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFA95 + static_cast<int>(i)), original_move_axis_call_4[i]);
 			}
 
 			move_axis_callsite_patched = false;
