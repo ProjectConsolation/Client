@@ -70,33 +70,78 @@ namespace sounds
 			}
 		}
 
+		const char* try_get_alias_name(const char*** request)
+		{
+			__try
+			{
+				if (!request || !*request)
+				{
+					return nullptr;
+				}
+
+				const auto* const alias_name = (*request)[0];
+				if (!alias_name || !*alias_name)
+				{
+					return nullptr;
+				}
+
+				return alias_name;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return nullptr;
+			}
+		}
+
+		const streamed_sound_file_view* try_get_file_info(const char*** request)
+		{
+			__try
+			{
+				if (!request || !*request)
+				{
+					return nullptr;
+				}
+
+				const auto* const file_info = reinterpret_cast<const streamed_sound_file_view*>((*request)[4]);
+				if (!file_info || !file_info->name || !*file_info->name)
+				{
+					return nullptr;
+				}
+
+				return file_info;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return nullptr;
+			}
+		}
+
 		std::string find_music_override(const char*** request)
 		{
-			if (!request || !*request)
-			{
-				return {};
-			}
-
 			std::vector<std::string> candidates;
 
-			const auto* const alias_name = (*request)[0];
-			if (alias_name && *alias_name)
+			if (const auto* const alias_name = try_get_alias_name(request); alias_name)
 			{
 				const auto safe_alias = sanitize_name(alias_name);
 				add_candidate(candidates, std::format("sounds/music/{}.mp3", safe_alias));
 				add_candidate(candidates, std::format("sounds/music/{}.wav", safe_alias));
 			}
 
-			const auto* const file_info = reinterpret_cast<const streamed_sound_file_view*>((*request)[4]);
-			if (file_info && file_info->name && *file_info->name)
+			if (const auto* const file_info = try_get_file_info(request); file_info)
 			{
-				const auto file_name = std::filesystem::path(file_info->name);
-				const auto filename = file_name.filename().generic_string();
-				const auto stem = file_name.stem().generic_string();
+				try
+				{
+					const auto file_name = std::filesystem::path(file_info->name);
+					const auto filename = file_name.filename().generic_string();
+					const auto stem = file_name.stem().generic_string();
 
-				add_candidate(candidates, std::format("sounds/music/{}", filename));
-				add_candidate(candidates, std::format("sounds/music/{}.mp3", stem));
-				add_candidate(candidates, std::format("sounds/music/{}.wav", stem));
+					add_candidate(candidates, std::format("sounds/music/{}", filename));
+					add_candidate(candidates, std::format("sounds/music/{}.mp3", stem));
+					add_candidate(candidates, std::format("sounds/music/{}.wav", stem));
+				}
+				catch (...)
+				{
+				}
 			}
 
 			for (const auto& candidate : candidates)
@@ -168,15 +213,20 @@ namespace sounds
 			const auto original = reinterpret_cast<open_stream_t>(game::game_offset(streamed_sound_open_function));
 
 			const char* alias_name = "<null>";
-			if (request && *request)
+			if (const auto* const safe_alias = try_get_alias_name(request); safe_alias)
 			{
-				if ((*request)[0] && *(*request)[0])
-				{
-					alias_name = (*request)[0];
-				}
+				alias_name = safe_alias;
 			}
 
-			current_override_path = find_music_override(request);
+			try
+			{
+				current_override_path = find_music_override(request);
+			}
+			catch (...)
+			{
+				current_override_path.clear();
+			}
+
 			if (!current_override_path.empty())
 			{
 				show_override_notice(alias_name, current_override_path);
@@ -218,4 +268,4 @@ namespace sounds
 }
 
 
-REGISTER_COMPONENT(sounds::component)
+//REGISTER_COMPONENT(sounds::component)
