@@ -7,6 +7,9 @@ namespace filesystem
 	bool find_file(const std::string& path, std::string* real_path);
 	bool exists(const std::string& path);
 
+	void enable_engine_search_paths(bool enable);
+	bool engine_search_paths_enabled();
+
 	void register_path(const std::filesystem::path& path);
 	void unregister_path(const std::filesystem::path& path);
 

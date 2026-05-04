@@ -10,6 +10,7 @@
 #include <utils/io.hpp>
 #include <utils/flags.hpp>
 #include <utils/hook.hpp>
+#include <utils/nt.hpp>
 #include <ShlObj.h>
 
 namespace filesystem
@@ -20,6 +21,8 @@ namespace filesystem
 		utils::hook::detour exec_hook;
 
 		bool initialized = false;
+		bool engine_paths_enabled = false;
+		bool engine_paths_registered = false;
 
 		std::deque<std::filesystem::path>& get_search_paths_internal()
 		{
@@ -53,6 +56,11 @@ namespace filesystem
 
 		void register_engine_search_paths()
 		{
+			if (!engine_paths_enabled || engine_paths_registered)
+			{
+				return;
+			}
+
 			static auto current_path = std::filesystem::current_path().string();
 			if (current_path.empty())
 			{
@@ -62,6 +70,7 @@ namespace filesystem
 			add_engine_search_path("consolation", current_path.c_str());
 			add_engine_search_path("raw", current_path.c_str());
 			add_engine_search_path("userraw", current_path.c_str());
+			engine_paths_registered = true;
 		}
 
 		void fs_startup_stub(const char* name)
@@ -69,6 +78,7 @@ namespace filesystem
 			console::debug("[FS] Startup\n");
 
 			initialized = true;
+			engine_paths_registered = false;
 
 			filesystem::register_path(L".");
 			filesystem::register_path(L"consolation");
@@ -110,8 +120,8 @@ namespace filesystem
 
 		const char* sys_default_install_path_stub()
 		{
-			static auto current_path = std::filesystem::current_path().string();
-			return current_path.data();
+			static const auto host_path = utils::nt::get_host_module().get_folder();
+			return host_path.c_str();
 		}
 
 		std::string normalize_exec_path(std::string path)
@@ -245,6 +255,21 @@ namespace filesystem
 		}
 
 		return false;
+	}
+
+	void enable_engine_search_paths(const bool enable)
+	{
+		engine_paths_enabled = enable;
+
+		if (enable)
+		{
+			register_engine_search_paths();
+		}
+	}
+
+	bool engine_search_paths_enabled()
+	{
+		return engine_paths_enabled;
 	}
 
 	void register_path(const std::filesystem::path& path)
