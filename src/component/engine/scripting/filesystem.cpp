@@ -17,6 +17,7 @@ namespace filesystem
 	namespace
 	{
 		utils::hook::detour fs_startup_hook;
+		utils::hook::detour exec_hook;
 
 		bool initialized = false;
 
@@ -84,6 +85,23 @@ namespace filesystem
 			return current_path.data();
 		}
 
+		std::string normalize_exec_path(std::string path)
+		{
+			if (path.empty())
+			{
+				return path;
+			}
+
+			const auto slash = path.find_last_of("/\\");
+			const auto dot = path.find_last_of('.');
+			if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
+			{
+				path.append(".cfg");
+			}
+
+			return path;
+		}
+
 		void __cdecl exec_disk_log_stub(const int channel, const char* fmt, const char* requested_path)
 		{
 			(void)fmt;
@@ -96,6 +114,45 @@ namespace filesystem
 			}
 
 			game::Com_Printf(channel, "execing %s from disk\n", requested_path ? requested_path : "<null>");
+		}
+
+		char exec_stub()
+		{
+			const auto nesting = *game::command_id;
+			if (game::cmd_argc[nesting] != 2)
+			{
+				return exec_hook.invoke<char>();
+			}
+
+			const auto* const requested_path = game::cmd_argv[nesting][1];
+			if (requested_path == nullptr || requested_path[0] == '\0')
+			{
+				return exec_hook.invoke<char>();
+			}
+
+			auto normalized_path = normalize_exec_path(requested_path);
+			if (_stricmp(normalized_path.c_str(), "config_mp.cfg") == 0
+				|| _stricmp(normalized_path.c_str(), "gfxConfig.cfg") == 0)
+			{
+				return exec_hook.invoke<char>();
+			}
+
+			std::string script_data{};
+			std::string real_path{};
+			if (!filesystem::read_file(normalized_path, &script_data, &real_path))
+			{
+				return exec_hook.invoke<char>();
+			}
+
+			game::Com_Printf(16, "execing %s from %s\n", normalized_path.c_str(), real_path.c_str());
+
+			if (script_data.empty() || script_data.back() != '\n')
+			{
+				script_data.push_back('\n');
+			}
+
+			game::Cbuf_AddText(0, script_data.c_str());
+			return 1;
 		}
 	}
 
@@ -236,6 +293,7 @@ namespace filesystem
 		void post_load() override
 		{
 			fs_startup_hook.create(game::game_offset(0x10272D80), fs_startup_stub);
+			exec_hook.create(game::game_offset(0x103F5960), exec_stub);
 
 			utils::hook::jump(game::game_offset(0x10274AA0), sys_default_install_path_stub);
 			utils::hook::call(game::game_offset(0x103F589B), exec_disk_log_stub);
