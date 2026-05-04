@@ -438,22 +438,77 @@ namespace profile_patches
 			);
 		}
 
-		void apply_active_profile_config_name()
+		bool try_decode_config_to_plaintext(std::string& data)
 		{
-			const auto active_name_value = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(custom_profile_config_name));
+			if (looks_like_plaintext_config(data))
+			{
+				return true;
+			}
 
-			utils::hook::set<std::uint32_t>(game::game_offset(0x103F18EF), active_name_value);
-			utils::hook::set<std::uint32_t>(game::game_offset(0x103F1A53), active_name_value);
-			utils::hook::set<std::uint32_t>(game::game_offset(0x103F7288), active_name_value);
+			decrypt_in_place(data);
+			return looks_like_plaintext_config(data);
 		}
 
-		void apply_profile_config_save_encryption()
+		std::string get_custom_profile_import_path()
 		{
-			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D71), 0x83);
-			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D72), 0xC4);
-			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D73), 0x08);
-			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D74), 0x90);
-			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6D75), 0x90);
+			const auto profile_custom_path = build_custom_profile_config_path();
+			if (!profile_custom_path.empty() && utils::io::file_exists(profile_custom_path))
+			{
+				return profile_custom_path;
+			}
+
+			const auto legacy_path = build_legacy_shared_config_path();
+			if (!legacy_path.empty() && utils::io::file_exists(legacy_path))
+			{
+				return legacy_path;
+			}
+
+			return {};
+		}
+
+		bool import_custom_profile_config_into_stock()
+		{
+			const auto source_path = get_custom_profile_import_path();
+			const auto stock_path = build_profile_config_path();
+			const auto custom_path = build_custom_profile_config_path();
+			if (source_path.empty() || stock_path.empty() || custom_path.empty())
+			{
+				return false;
+			}
+
+			std::string data{};
+			if (!utils::io::read_file(source_path, &data) || !try_decode_config_to_plaintext(data))
+			{
+				return false;
+			}
+
+			const auto deduped = dedupe_config_text(data);
+			if (source_path != custom_path || deduped != data)
+			{
+				utils::io::write_file(custom_path, deduped, false);
+			}
+
+			auto encrypted = deduped;
+			decrypt_in_place(encrypted);
+			return utils::io::write_file(stock_path, encrypted, false);
+		}
+
+		bool export_stock_profile_config_to_custom()
+		{
+			const auto stock_path = build_profile_config_path();
+			const auto custom_path = build_custom_profile_config_path();
+			if (stock_path.empty() || custom_path.empty())
+			{
+				return false;
+			}
+
+			std::string data{};
+			if (!utils::io::read_file(stock_path, &data) || !try_decode_config_to_plaintext(data))
+			{
+				return false;
+			}
+
+			return utils::io::write_file(custom_path, dedupe_config_text(data), false);
 		}
 
 	}
@@ -463,11 +518,9 @@ namespace profile_patches
 	public:
 		void post_load() override
 		{
-			// Safer phase-one profile config support: only redirect the exact
-			// config filename sites, and keep the broader profile-path helper
-			// untouched so profile creation/existence checks still behave normally.
-			apply_active_profile_config_name();
-			apply_profile_config_save_encryption();
+			// Keep the profile helper commands available, but do not alter the
+			// game's active config filename or save path automatically while we
+			// investigate signed-in startup freezes.
 
 			scheduler::once([]()
 			{
@@ -481,10 +534,23 @@ namespace profile_patches
 				command::add("profile_convert_config", []()
 				{
 					convert_config();
-					apply_active_profile_config_name();
-					apply_profile_config_save_encryption();
 					dedupe_custom_profile_config();
+					import_custom_profile_config_into_stock();
 					print_runtime_config_path();
+				});
+
+				command::add("profile_sync_config", []()
+				{
+					const auto source_path = get_custom_profile_import_path();
+					if (import_custom_profile_config_into_stock())
+					{
+						print_profile_message("^3profile:config synced %s into %s\n",
+							source_path.c_str(), build_profile_config_path().c_str());
+					}
+					else
+					{
+						print_profile_message("^1profile:config failed to sync plaintext config into stock profile config\n");
+					}
 				});
 
 				command::add("profile_show_config_path", []()
@@ -499,8 +565,39 @@ namespace profile_patches
 				});
 			}, scheduler::main);
 
+			scheduler::loop([]()
+			{
+				static std::string imported_profile{};
+				static std::string missing_profile{};
+
+				const auto profile_name = get_profile_name();
+				if (profile_name.empty())
+				{
+					return;
+				}
+
+				if (profile_name == imported_profile || profile_name == missing_profile)
+				{
+					return;
+				}
+
+				const auto source_path = get_custom_profile_import_path();
+				if (source_path.empty())
+				{
+					missing_profile = profile_name;
+					return;
+				}
+
+				if (import_custom_profile_config_into_stock())
+				{
+					imported_profile = profile_name;
+					missing_profile.clear();
+				}
+			}, scheduler::main, 250ms);
+
 			scheduler::on_shutdown([]()
 			{
+				export_stock_profile_config_to_custom();
 				dedupe_custom_profile_config();
 			});
 		}
