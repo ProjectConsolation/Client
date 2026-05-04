@@ -46,6 +46,8 @@ namespace filesystem
 
 			filesystem::register_path(L".");
 			filesystem::register_path(L"consolation");
+			filesystem::register_path(L"raw");
+			filesystem::register_path(L"userraw");
 			if (const auto players_directory = get_default_players_directory(); !players_directory.empty())
 			{
 				filesystem::register_path(players_directory);
