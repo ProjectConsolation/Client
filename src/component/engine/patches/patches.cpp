@@ -160,6 +160,23 @@ namespace patches
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
 		}
 
+		void make_dvar_debug_writable(const char* name)
+		{
+			auto* const dvar = game::Dvar_FindVar(name);
+			if (!dvar)
+			{
+				return;
+			}
+
+			const auto writable_flags = static_cast<std::uint16_t>(dvar->flags)
+				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only
+					| game::dvar_flags::write_protected
+					| game::dvar_flags::latched
+					| game::dvar_flags::cheat_protected);
+
+			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
+		}
+
 		HWND __stdcall create_window_ex_stub(DWORD ex_style, LPCSTR class_name, LPCSTR window_name, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE inst, LPVOID param)
 		{
 			if (!strcmp(class_name, "JB_MP"))
@@ -471,6 +488,7 @@ namespace patches
 				auto* const sv_cheats = dvars::Dvar_RegisterBool("sv_cheats", 1, "Enable Cheats", game::dvar_flags::none);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11A343C0)) = sv_cheats;
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x1149FCD8)) = sv_cheats;
+				make_dvar_debug_writable("r_fullbright");
 #endif
 			}, scheduler::main);
 
@@ -480,6 +498,9 @@ namespace patches
 				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
+#ifdef DEBUG
+				make_dvar_debug_writable("r_fullbright");
+#endif
 			}, scheduler::main, 250ms);
 		}
 	};
