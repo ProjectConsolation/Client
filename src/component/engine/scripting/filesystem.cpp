@@ -38,6 +38,32 @@ namespace filesystem
 			return {};
 		}
 
+		void add_engine_search_path(const char* folder_name, const char* root_path)
+		{
+			const auto func_loc = game::game_offset(0x10272AE0);
+
+			__asm
+			{
+				push root_path
+				mov edi, folder_name
+				call func_loc
+				add esp, 4
+			}
+		}
+
+		void register_engine_search_paths()
+		{
+			static auto current_path = std::filesystem::current_path().string();
+			if (current_path.empty())
+			{
+				return;
+			}
+
+			add_engine_search_path("consolation", current_path.c_str());
+			add_engine_search_path("raw", current_path.c_str());
+			add_engine_search_path("userraw", current_path.c_str());
+		}
+
 		void fs_startup_stub(const char* name)
 		{
 			console::debug("[FS] Startup\n");
@@ -59,6 +85,7 @@ namespace filesystem
 			//filesystem::register_path(L"main");
 
 			fs_startup_hook.invoke<void>(name);
+			register_engine_search_paths();
 		}
 
 		std::vector<std::filesystem::path> get_paths(const std::filesystem::path& path)
