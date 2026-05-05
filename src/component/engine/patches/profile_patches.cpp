@@ -17,8 +17,13 @@ namespace profile_patches
 		const char default_profile_config_name[] = "config_mp.cfg";
 		const char custom_profile_config_name[] = "consolation_mp.cfg";
 		const char decrypted_profile_config_name[] = "consolation_mp_decrypted.cfg";
+		constexpr int active_profile_index = 0;
+		constexpr auto live_clan_target_primary = 0x111CF170;
+		constexpr auto live_clan_target_secondary = 0x111F1C00;
+		constexpr auto clan_dirty_flags = 0x1149E6BC;
 		void print_profile_message(const char* fmt, ...);
 		std::string build_profile_file_path(const char* filename);
+
 		const char* get_dvar_string(const std::size_t dvar_ptr_address)
 		{
 			const auto dvar = *reinterpret_cast<game::dvar_s**>(game::game_offset(dvar_ptr_address));
@@ -28,6 +33,11 @@ namespace profile_patches
 			}
 
 			return dvar->current.string;
+		}
+
+		const char* get_dvar_string(game::dvar_s* dvar)
+		{
+			return dvar && dvar->current.string ? dvar->current.string : "";
 		}
 
 		std::string join_path(const std::string& base, const std::string& leaf)
@@ -173,6 +183,54 @@ namespace profile_patches
 
 			const auto last = value.find_last_not_of(" \t\r\n");
 			return value.substr(first, last - first + 1);
+		}
+
+		std::string normalize_clan_name(const std::string& raw_value)
+		{
+			std::string result{};
+			result.reserve(4);
+
+			for (const auto ch : raw_value)
+			{
+				if (result.size() >= 4)
+				{
+					break;
+				}
+
+				const auto normalized = static_cast<unsigned char>(ch);
+				if (normalized < 32
+					|| normalized == '^'
+					|| normalized == 0xA4
+					|| normalized == '{'
+					|| normalized == '}'
+					|| normalized == '@')
+				{
+					continue;
+				}
+
+				result.push_back(static_cast<char>(normalized));
+			}
+
+			return trim_copy(result);
+		}
+
+		bool is_developer_reserved_clan_tag(const std::string& clan_name)
+		{
+			static const std::unordered_set<std::string> reserved_tags =
+			{
+				"csl",
+			};
+
+			return reserved_tags.find(to_lower(clan_name)) != reserved_tags.end();
+		}
+
+		void update_clan_name_state(const std::string& clan_name)
+		{
+			game::Dvar_SetString("clanName", clan_name.c_str());
+			game::GamerProfile_UpdateProfileFromDvars(active_profile_index, 1);
+			game::Live_UpdateClan(game::game_offset(live_clan_target_primary), clan_name.c_str());
+			game::Live_UpdateClan(game::game_offset(live_clan_target_secondary), clan_name.c_str());
+			*reinterpret_cast<std::uint32_t*>(game::game_offset(clan_dirty_flags)) |= 2u;
 		}
 
 		const char* find_canonical_dvar_name(const std::string& key)
@@ -518,9 +576,8 @@ namespace profile_patches
 	public:
 		void post_load() override
 		{
-			// Keep the profile helper commands available, but do not alter the
-			// game's active config filename or save path automatically while we
-			// investigate signed-in startup freezes.
+			// Keep the profile helper commands available, but avoid touching the
+			// stock signed-in config on the profile-login hot path.
 
 			scheduler::once([]()
 			{
@@ -529,6 +586,41 @@ namespace profile_patches
 				command::add("profile_decrypt_config", []()
 				{
 					migrate_config();
+				});
+
+				command::add("clanName", [](const command::params& args)
+				{
+					auto* const clan_name = game::Dvar_FindVar("clanName");
+					if (!clan_name)
+					{
+						print_profile_message("^1clanName: dvar is unavailable\n");
+						return;
+					}
+
+					if (args.size() < 2)
+					{
+						print_profile_message("^3clanName: current tag is \"%s\"\n", get_dvar_string(clan_name));
+						print_profile_message("^3usage: clanName <tag>\n");
+						return;
+					}
+
+					const auto normalized = normalize_clan_name(args.join(1));
+					if (normalized.empty())
+					{
+						print_profile_message("^1clanName: tag is empty or contains unsupported characters\n");
+						return;
+					}
+
+#ifndef DEBUG
+					if (is_developer_reserved_clan_tag(normalized))
+					{
+						print_profile_message("^1clanName: tag \"%s\" is reserved for developer builds\n", normalized.c_str());
+						return;
+					}
+#endif
+
+					update_clan_name_state(normalized);
+					print_profile_message("^3clanName: set tag to \"%s\"\n", normalized.c_str());
 				});
 
 				command::add("profile_convert_config", []()
@@ -564,36 +656,6 @@ namespace profile_patches
 					print_runtime_config_path();
 				});
 			}, scheduler::main);
-
-			scheduler::loop([]()
-			{
-				static std::string imported_profile{};
-				static std::string missing_profile{};
-
-				const auto profile_name = get_profile_name();
-				if (profile_name.empty())
-				{
-					return;
-				}
-
-				if (profile_name == imported_profile || profile_name == missing_profile)
-				{
-					return;
-				}
-
-				const auto source_path = get_custom_profile_import_path();
-				if (source_path.empty())
-				{
-					missing_profile = profile_name;
-					return;
-				}
-
-				if (import_custom_profile_config_into_stock())
-				{
-					imported_profile = profile_name;
-					missing_profile.clear();
-				}
-			}, scheduler::main, 250ms);
 
 			scheduler::on_shutdown([]()
 			{
