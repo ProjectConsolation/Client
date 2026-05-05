@@ -46,6 +46,9 @@ namespace game
 	Font_s* R_RegisterFont(const char* font);
 	Material* Material_RegisterHandle(const char* material);
 	dvar_s* Dvar_FindVar(const char* dvarName);
+	void Dvar_SetString(const char* dvarName, const char* value);
+	void GamerProfile_UpdateProfileFromDvars(int profileIndex, int updateState);
+	void Live_UpdateClan(int object, const char* clan);
 
 	unsigned int Scr_GetFunctionHandle(const char* filename, const char* funcHandle);
 	void RemoveRefToObject(unsigned int obj);

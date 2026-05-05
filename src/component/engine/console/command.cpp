@@ -20,7 +20,11 @@ namespace command
 		constexpr int CLIENT_REAL_PLAYER_OFFSET = 0x20;
 		constexpr int CLIENT_USERINFO_OFFSET = 1604;
 		constexpr int CLIENT_USERINFO_SIZE = 1024;
+		constexpr int ACTIVE_PROFILE_INDEX = 0;
 		constexpr auto BOT_NAMES_FILE = "consolation/bots.txt";
+		constexpr auto LIVE_CLAN_TARGET_PRIMARY = 0x111CF170;
+		constexpr auto LIVE_CLAN_TARGET_SECONDARY = 0x111F1C00;
+		constexpr auto CLAN_DIRTY_FLAGS = 0x1149E6BC;
 
 		std::unordered_map<std::string, std::function<void(params&)>> handlers;
 		int next_bot_number = 1;
@@ -210,6 +214,49 @@ namespace command
 			return std::format("consolation_bot{}", next_bot_number++ - 1);
 		}
 
+		std::string normalize_clan_name(const std::string& raw_value)
+		{
+			std::string result{};
+			result.reserve(4);
+
+			for (const auto ch : raw_value)
+			{
+				if (result.size() >= 4)
+				{
+					break;
+				}
+
+				auto normalized = static_cast<unsigned char>(ch);
+				if (normalized == '^')
+				{
+					normalized = ' ';
+				}
+
+				if (normalized < 32)
+				{
+					continue;
+				}
+
+				result.push_back(static_cast<char>(normalized));
+			}
+
+			return result;
+		}
+
+		const char* get_dvar_string(game::dvar_s* dvar)
+		{
+			return dvar && dvar->current.string ? dvar->current.string : "";
+		}
+
+		void update_clan_name_state(const std::string& clan_name)
+		{
+			game::Dvar_SetString("clanName", clan_name.c_str());
+			game::GamerProfile_UpdateProfileFromDvars(ACTIVE_PROFILE_INDEX, 1);
+			game::Live_UpdateClan(game::game_offset(LIVE_CLAN_TARGET_PRIMARY), const_cast<char*>(clan_name.c_str()));
+			game::Live_UpdateClan(game::game_offset(LIVE_CLAN_TARGET_SECONDARY), const_cast<char*>(clan_name.c_str()));
+			*reinterpret_cast<std::uint32_t*>(game::game_offset(CLAN_DIRTY_FLAGS)) |= 2u;
+		}
+
 		int rename_new_bot_client()
 		{
 			for (int i = 0; i < get_max_clients(); ++i)
@@ -386,6 +433,27 @@ namespace command
 								console::info("addbot: spawned %i bot(s)\n", spawned);
 						});
 
+					add("clanName", [](const params& args)
+						{
+							auto* const clan_name = game::Dvar_FindVar("clanName");
+							if (!clan_name)
+							{
+								console::error("clanName: dvar is unavailable\n");
+								return;
+							}
+
+							if (args.size() < 2)
+							{
+								console::info("clanName: current tag is \"%s\"\n", get_dvar_string(clan_name));
+								console::info("usage: clanName <tag>\n");
+								return;
+							}
+
+							const auto normalized = normalize_clan_name(args.join(1));
+							update_clan_name_state(normalized);
+							console::info("clanName: set tag to \"%s\"\n", normalized.c_str());
+						});
+
 					add("dvarDump", [](const params& argument)
 						{
 							std::string filename;
@@ -506,6 +574,7 @@ namespace command
 									}, true);
 							}
 						});
+
 				}, scheduler::main);
 		}
 

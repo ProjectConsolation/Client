@@ -246,6 +246,44 @@ namespace game
 		return Dvar_FindMalleableVar(dvarName);
 	}
 
+	void Dvar_SetString(const char* dvarName, const char* value)
+	{
+		int func_loc = game::game_offset(0x10278FD0);
+
+		__asm
+		{
+			mov eax, dvarName
+			mov edi, value
+			call func_loc
+		}
+	}
+
+	void GamerProfile_UpdateProfileFromDvars(int profileIndex, int updateState)
+	{
+		int func_loc = game::game_offset(0x102439B0);
+
+		__asm
+		{
+			push updateState
+			push profileIndex
+			call func_loc
+			add esp, 0x8
+		}
+	}
+
+	void Live_UpdateClan(int object, const char* clan)
+	{
+		int func_loc = game::game_offset(0x10324960);
+
+		__asm
+		{
+			push clan
+			mov eax, object
+			call func_loc
+			add esp, 0x4
+		}
+	}
+
 	dvar_s* Dvar_RegisterBool(const char* name, bool value, int flags, const char* desc)
 	{
 		int func_loc = game::game_offset(0x10278E60);
