@@ -465,6 +465,9 @@ namespace patches
 				dvars::replace_dvar_at(game::game_offset(0x102BE908), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x1148F6A4)),
 					dvars::make_float("cg_fov", "The field of view angle in degrees", 65.0f, 0.0f, 160.0f, game::dvar_flags::saved));
 
+				dvars::replace_dvar_at(game::game_offset(0x10321250), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11260BD0)),
+					dvars::make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
+
 				dvars::replace_dvar_at(game::game_offset(0x101DB65A), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x118EE1C0)),
 					dvars::make_float("jump_height", "The maximum height of a player's jump", 41.0f, 0.0f, 1000.0f, game::dvar_flags::saved));
 

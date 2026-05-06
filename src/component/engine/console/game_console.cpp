@@ -61,6 +61,11 @@ namespace game_console
 			std::size_t selection_start = 0;
 			std::size_t selection_end = 0;
 			int history_index = -1;
+			bool history_snapshot_valid = false;
+			std::string history_snapshot_input{};
+			std::size_t history_snapshot_cursor = 0;
+			std::size_t history_snapshot_selection_start = 0;
+			std::size_t history_snapshot_selection_end = 0;
 			int scroll_offset = 0;
 			bool output_visible = false;
 			bool output_fullscreen = false;
@@ -1261,6 +1266,41 @@ namespace game_console
 			}
 		}
 
+		void save_history_snapshot()
+		{
+			if (!con || con->history_snapshot_valid)
+			{
+				return;
+			}
+
+			con->history_snapshot_input = con->input;
+			con->history_snapshot_cursor = con->cursor;
+			con->history_snapshot_selection_start = con->selection_start;
+			con->history_snapshot_selection_end = con->selection_end;
+			con->history_snapshot_valid = true;
+		}
+
+		void restore_history_snapshot()
+		{
+			if (!con || !con->history_snapshot_valid)
+			{
+				return;
+			}
+
+			con->input = con->history_snapshot_input;
+			con->cursor = std::min(con->history_snapshot_cursor, con->input.size());
+			con->selection_start = std::min(con->history_snapshot_selection_start, con->input.size());
+			con->selection_end = std::min(con->history_snapshot_selection_end, con->input.size());
+			if (con->selection_start == con->selection_end)
+			{
+				con->selection_start = con->cursor;
+				con->selection_end = con->cursor;
+			}
+
+			con->history_snapshot_valid = false;
+			refresh_auto_complete();
+		}
+
 		void refresh_auto_complete()
 		{
 			if (!con)
@@ -2034,6 +2074,7 @@ namespace game_console
 			set_cursor_position(0);
 			con->history_index = -1;
 			con->scroll_offset = 0;
+			con->history_snapshot_valid = false;
 			clear_auto_complete();
 		}
 
@@ -2046,6 +2087,7 @@ namespace game_console
 
 			if (con->history_index < 0)
 			{
+				save_history_snapshot();
 				con->history_index = static_cast<int>(con->history.size()) - 1;
 			}
 			else if (con->history_index > 0)
@@ -2068,9 +2110,17 @@ namespace game_console
 			++con->history_index;
 			if (con->history_index >= static_cast<int>(con->history.size()))
 			{
+				const auto had_snapshot = con->history_snapshot_valid;
 				con->history_index = -1;
-				con->input.clear();
-				set_cursor_position(0);
+				if (had_snapshot)
+				{
+					restore_history_snapshot();
+				}
+				else
+				{
+					con->input.clear();
+					set_cursor_position(0);
+				}
 				return;
 			}
 

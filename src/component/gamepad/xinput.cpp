@@ -775,12 +775,18 @@ namespace xinput
 			const auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
 			const auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
 			constexpr auto move_scale = 127.0f;
+			const auto forward_move = static_cast<int>(std::lround(forward * move_scale));
+			const auto side_move = static_cast<int>(std::lround(side * move_scale));
 
-			// Preserve true analog walking by mapping normalized stick deflection
-			// directly into the signed usercmd movement range.
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(std::lround(side * move_scale)));
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(std::lround(forward * move_scale)));
+			if (forward_move == 0 && side_move == 0)
+			{
+				return;
+			}
 
+			// Preserve keyboard movement by adding the controller's analog
+			// contribution on top of the engine's existing move bytes.
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + side_move);
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + forward_move);
 		}
 
 		float get_view_sensitivity()
@@ -1391,7 +1397,6 @@ namespace xinput
 			install_native_cmd_hook();
 			install_native_look_hook();
 			install_draw_crosshair_hook();
-			install_move_axis_hooks();
 
 			scheduler::loop([]()
 			{
@@ -1409,7 +1414,6 @@ namespace xinput
 				restore_native_cmd_hook();
 				restore_native_look_hook();
 				restore_draw_crosshair_hook();
-				restore_move_axis_hooks();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
 			});
@@ -1421,7 +1425,6 @@ namespace xinput
 			restore_native_cmd_hook();
 			restore_native_look_hook();
 			restore_draw_crosshair_hook();
-			restore_move_axis_hooks();
 		}
 	};
 }
