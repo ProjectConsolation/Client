@@ -1042,13 +1042,17 @@ namespace game_console
 
 			input = to_lower(std::move(input));
 			std::vector<std::string> exact_matches{};
-			std::vector<std::string> prefix_matches{};
-			std::vector<std::string> contains_matches{};
+			std::vector<std::string> dvar_prefix_matches{};
+			std::vector<std::string> cmd_prefix_matches{};
+			std::vector<std::string> dvar_contains_matches{};
+			std::vector<std::string> cmd_contains_matches{};
 			std::unordered_set<std::string> exact_seen{};
-			std::unordered_set<std::string> prefix_seen{};
-			std::unordered_set<std::string> contains_seen{};
+			std::unordered_set<std::string> dvar_prefix_seen{};
+			std::unordered_set<std::string> cmd_prefix_seen{};
+			std::unordered_set<std::string> dvar_contains_seen{};
+			std::unordered_set<std::string> cmd_contains_seen{};
 
-			auto add_candidate = [&](const std::string& candidate)
+			auto add_candidate = [&](const std::string& candidate, const bool is_dvar)
 				{
 					auto name = to_lower(candidate);
 
@@ -1070,28 +1074,32 @@ namespace game_console
 					}
 					else if (name.rfind(input, 0) == 0)
 					{
-						if (prefix_seen.insert(name).second)
+						auto& seen = is_dvar ? dvar_prefix_seen : cmd_prefix_seen;
+						auto& matches = is_dvar ? dvar_prefix_matches : cmd_prefix_matches;
+						if (seen.insert(name).second)
 						{
-							prefix_matches.emplace_back(candidate);
+							matches.emplace_back(candidate);
 						}
 					}
 					else if (name.find(input) != std::string::npos)
 					{
-						if (contains_seen.insert(name).second)
+						auto& seen = is_dvar ? dvar_contains_seen : cmd_contains_seen;
+						auto& matches = is_dvar ? dvar_contains_matches : cmd_contains_matches;
+						if (seen.insert(name).second)
 						{
-							contains_matches.emplace_back(candidate);
+							matches.emplace_back(candidate);
 						}
 					}
 				};
 
 			for (const auto& name : cached_command_names)
 			{
-				add_candidate(name);
+				add_candidate(name, false);
 			}
 
 			for (const auto& name : cached_dvar_names)
 			{
-				add_candidate(name);
+				add_candidate(name, true);
 			}
 
 			auto sort_matches = [](std::vector<std::string>& matches)
@@ -1108,14 +1116,99 @@ namespace game_console
 				return exact_matches;
 			}
 
-			if (!prefix_matches.empty())
+			if (!dvar_prefix_matches.empty() || !cmd_prefix_matches.empty())
 			{
-				sort_matches(prefix_matches);
-				return prefix_matches;
+				sort_matches(dvar_prefix_matches);
+				sort_matches(cmd_prefix_matches);
+				dvar_prefix_matches.insert(
+					dvar_prefix_matches.end(),
+					std::make_move_iterator(cmd_prefix_matches.begin()),
+					std::make_move_iterator(cmd_prefix_matches.end()));
+				return dvar_prefix_matches;
 			}
 
-			sort_matches(contains_matches);
-			return contains_matches;
+			sort_matches(dvar_contains_matches);
+			sort_matches(cmd_contains_matches);
+			dvar_contains_matches.insert(
+				dvar_contains_matches.end(),
+				std::make_move_iterator(cmd_contains_matches.begin()),
+				std::make_move_iterator(cmd_contains_matches.end()));
+			return dvar_contains_matches;
+		}
+
+		void draw_dvar_match_details(const overlay_bounds& bounds, const float hint_x, game::dvar_s* dvar, char* description_buffer, const std::size_t description_buffer_size)
+		{
+			std::string current_value{};
+			std::string default_value{};
+			std::string domain{};
+
+			if (dvar)
+			{
+				const char* current_value_ptr = nullptr;
+				const char* default_value_ptr = nullptr;
+				if (try_get_dvar_value_ptr(dvar, dvar->current, &current_value_ptr))
+				{
+					std::string raw_value{};
+					if (try_copy_c_string(current_value_ptr, raw_value))
+					{
+						current_value = sanitize_display_text(raw_value);
+					}
+				}
+
+				if (try_get_dvar_value_ptr(dvar, dvar->reset, &default_value_ptr))
+				{
+					std::string raw_value{};
+					if (try_copy_c_string(default_value_ptr, raw_value))
+					{
+						default_value = sanitize_display_text(raw_value);
+					}
+				}
+
+				game::dvar_type domain_type{};
+				game::DvarLimits domain_limits{};
+				if (try_copy_dvar_domain(dvar, domain_type, domain_limits))
+				{
+					domain = sanitize_display_text(dvars::dvar_get_domain(domain_type, domain_limits));
+				}
+			}
+
+			const auto has_description = dvar
+				&& safe_read_dvar_description(dvar, description_buffer, description_buffer_size)
+				&& !sanitize_display_text(description_buffer).empty();
+			const auto has_domain = !domain.empty();
+			const auto line_count = dvar ? 2 : 1;
+			draw_hint_box(bounds, hint_x, line_count, color_hint_box);
+			draw_hint_text(bounds, hint_x, 0, dvar ? dvar->name : "<unavailable>", dvar ? color_dvar_match : color_cmd_match);
+
+			if (!dvar)
+			{
+				return;
+			}
+
+			const auto offset = std::max(96.0f, (bounds.screen_max[0] - hint_x) / 2.6f);
+			draw_hint_text(bounds, hint_x, 0, current_value.empty() ? "<unavailable>" : current_value.c_str(), color_dvar_value, offset);
+			draw_hint_text(bounds, hint_x, 1, "  default", color_dvar_inactive);
+			draw_hint_text(bounds, hint_x, 1, default_value.empty() ? "<unavailable>" : default_value.c_str(), color_dvar_inactive, offset);
+
+			if (has_description || has_domain)
+			{
+				const auto details_offset_y = (line_count * bounds.font_height) + 16.0f;
+				const auto detail_lines = (has_description ? 1 : 0) + (has_domain ? 1 : 0);
+				draw_hint_box(bounds, hint_x, detail_lines, color_hint_box, details_offset_y);
+
+				auto detail_line = 0;
+				if (has_description)
+				{
+					const auto description = sanitize_display_text(description_buffer);
+					draw_hint_text(bounds, hint_x, detail_line, description.c_str(), color_dvar_inactive, 0.0f, details_offset_y);
+					++detail_line;
+				}
+
+				if (has_domain)
+				{
+					draw_hint_text(bounds, hint_x, detail_line, domain.c_str(), color_dvar_inactive, 0.0f, details_offset_y);
+				}
+			}
 		}
 
 		void refresh_auto_complete()
@@ -1496,76 +1589,9 @@ namespace game_console
 
 			if (con->auto_complete_matches.size() == 1)
 			{
-				auto* const dvar = game::Dvar_FindVar(con->auto_complete_matches[0].c_str());
 				char description_buffer[256]{};
-				std::string current_value{};
-				std::string default_value{};
-				std::string domain{};
-				if (dvar)
-				{
-					const char* current_value_ptr = nullptr;
-					const char* default_value_ptr = nullptr;
-					if (try_get_dvar_value_ptr(dvar, dvar->current, &current_value_ptr))
-					{
-						std::string raw_value{};
-						if (try_copy_c_string(current_value_ptr, raw_value))
-						{
-							current_value = sanitize_display_text(raw_value);
-						}
-					}
-
-					if (try_get_dvar_value_ptr(dvar, dvar->reset, &default_value_ptr))
-					{
-						std::string raw_value{};
-						if (try_copy_c_string(default_value_ptr, raw_value))
-						{
-							default_value = sanitize_display_text(raw_value);
-						}
-					}
-
-					game::dvar_type domain_type{};
-					game::DvarLimits domain_limits{};
-					if (try_copy_dvar_domain(dvar, domain_type, domain_limits))
-					{
-						domain = sanitize_display_text(dvars::dvar_get_domain(domain_type, domain_limits));
-					}
-				}
-				const auto has_description = dvar
-					&& safe_read_dvar_description(dvar, description_buffer, sizeof(description_buffer))
-					&& !sanitize_display_text(description_buffer).empty();
-				const auto has_domain = !domain.empty();
-				const auto line_count = dvar ? 2 : 1;
-				draw_hint_box(bounds, hint_x, line_count, color_hint_box);
-				draw_hint_text(bounds, hint_x, 0, con->auto_complete_matches[0].c_str(), dvar ? color_dvar_match : color_cmd_match);
-
-				if (dvar)
-				{
-					const auto offset = std::max(96.0f, (bounds.screen_max[0] - hint_x) / 2.6f);
-					draw_hint_text(bounds, hint_x, 0, current_value.empty() ? "<unavailable>" : current_value.c_str(), color_dvar_value, offset);
-					draw_hint_text(bounds, hint_x, 1, "  default", color_dvar_inactive);
-					draw_hint_text(bounds, hint_x, 1, default_value.empty() ? "<unavailable>" : default_value.c_str(), color_dvar_inactive, offset);
-
-					if (has_description || has_domain)
-					{
-						const auto details_offset_y = (line_count * bounds.font_height) + 16.0f;
-						const auto detail_lines = (has_description ? 1 : 0) + (has_domain ? 1 : 0);
-						draw_hint_box(bounds, hint_x, detail_lines, color_hint_box, details_offset_y);
-
-						auto detail_line = 0;
-						if (has_description)
-						{
-							const auto description = sanitize_display_text(description_buffer);
-							draw_hint_text(bounds, hint_x, detail_line, description.c_str(), color_dvar_inactive, 0.0f, details_offset_y);
-							++detail_line;
-						}
-
-						if (has_domain)
-						{
-							draw_hint_text(bounds, hint_x, detail_line, domain.c_str(), color_dvar_inactive, 0.0f, details_offset_y);
-						}
-					}
-				}
-
+				auto* const dvar = game::Dvar_FindVar(con->auto_complete_matches[0].c_str());
+				draw_dvar_match_details(bounds, hint_x, dvar, description_buffer, sizeof(description_buffer));
 				return;
 			}
 
@@ -1663,6 +1689,20 @@ namespace game_console
 				const auto max_scroll = std::max(0, static_cast<int>(con->auto_complete_matches.size()) - visible_lines);
 				con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
 				const auto first_line = std::clamp(con->scroll_offset, 0, max_scroll);
+
+				if (con->auto_complete_matches.size() == 1)
+				{
+					auto* const dvar = game::Dvar_FindVar(con->auto_complete_matches[0].c_str());
+					if (dvar)
+					{
+						char description_buffer[256]{};
+						draw_dvar_match_details(bounds, x, dvar, description_buffer, sizeof(description_buffer));
+						draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->auto_complete_matches.size()));
+						const auto version_text = build_full_version_string();
+						draw_text_shadowed(version_text.c_str(), x, y + content_height + bounds.font_height + 5.0f, color_version_footer, 1.0f);
+						return;
+					}
+				}
 
 				for (int i = 0; i < visible_lines; ++i)
 				{
