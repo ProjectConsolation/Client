@@ -101,6 +101,9 @@ namespace game_console
 
 		HWND get_window();
 		void draw_console_overlay();
+		struct overlay_bounds;
+		void draw_hint_box(const overlay_bounds& bounds, float hint_x, int lines, float* color, float offset_y = 0.0f);
+		void draw_hint_text(const overlay_bounds& bounds, float hint_x, int line, const char* text, float* color, float offset = 0.0f, float offset_y = 0.0f);
 		void insert_character(char ch);
 		void insert_text(std::string text);
 		void set_cursor_position(std::size_t cursor);
