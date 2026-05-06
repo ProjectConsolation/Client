@@ -1153,6 +1153,7 @@ namespace game_console
 		void draw_dvar_match_details(const overlay_bounds& bounds, const float hint_x, game::dvar_s* dvar, char* description_buffer, const std::size_t description_buffer_size)
 		{
 			std::string current_value{};
+			std::string latched_value{};
 			std::string default_value{};
 			std::string domain{};
 
@@ -1166,6 +1167,19 @@ namespace game_console
 					if (try_copy_c_string(current_value_ptr, raw_value))
 					{
 						current_value = sanitize_display_text(raw_value);
+					}
+				}
+
+				if ((dvar->flags & game::dvar_flags::latched) != game::dvar_flags::none)
+				{
+					const char* latched_value_ptr = nullptr;
+					if (try_get_dvar_value_ptr(dvar, dvar->latched, &latched_value_ptr))
+					{
+						std::string raw_value{};
+						if (try_copy_c_string(latched_value_ptr, raw_value))
+						{
+							latched_value = sanitize_display_text(raw_value);
+						}
 					}
 				}
 
@@ -1190,7 +1204,8 @@ namespace game_console
 				&& safe_read_dvar_description(dvar, description_buffer, description_buffer_size)
 				&& !sanitize_display_text(description_buffer).empty();
 			const auto has_domain = !domain.empty();
-			const auto line_count = dvar ? 2 : 1;
+			const auto has_latched = !latched_value.empty();
+			const auto line_count = dvar ? (has_latched ? 3 : 2) : 1;
 			draw_hint_box(bounds, hint_x, line_count, color_hint_box);
 			draw_hint_text(bounds, hint_x, 0, dvar ? dvar->name : "<unavailable>", dvar ? color_dvar_match : color_cmd_match);
 
@@ -1201,8 +1216,15 @@ namespace game_console
 
 			const auto offset = std::max(96.0f, (bounds.screen_max[0] - hint_x) / 2.6f);
 			draw_hint_text(bounds, hint_x, 0, current_value.empty() ? "<unavailable>" : current_value.c_str(), color_dvar_value, offset);
-			draw_hint_text(bounds, hint_x, 1, "  default", color_dvar_inactive);
-			draw_hint_text(bounds, hint_x, 1, default_value.empty() ? "<unavailable>" : default_value.c_str(), color_dvar_inactive, offset);
+			auto value_line = 1;
+			if (has_latched)
+			{
+				draw_hint_text(bounds, hint_x, 1, "  latched value", color_dvar_inactive);
+				draw_hint_text(bounds, hint_x, 1, latched_value.c_str(), color_dvar_inactive, offset);
+				value_line = 2;
+			}
+			draw_hint_text(bounds, hint_x, value_line, "  default", color_dvar_inactive);
+			draw_hint_text(bounds, hint_x, value_line, default_value.empty() ? "<unavailable>" : default_value.c_str(), color_dvar_inactive, offset);
 
 			if (has_description || has_domain)
 			{
