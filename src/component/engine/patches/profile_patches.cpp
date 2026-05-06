@@ -227,10 +227,11 @@ namespace profile_patches
 		void update_clan_name_state(const std::string& clan_name)
 		{
 			game::Dvar_SetString("clanName", clan_name.c_str());
-			game::GamerProfile_UpdateProfileFromDvars(active_profile_index, 1);
 			game::Live_UpdateClan(game::game_offset(live_clan_target_primary), clan_name.c_str());
 			game::Live_UpdateClan(game::game_offset(live_clan_target_secondary), clan_name.c_str());
 			*reinterpret_cast<std::uint32_t*>(game::game_offset(clan_dirty_flags)) |= 2u;
+			game::Cbuf_AddText(0, "updategamerprofile\n");
+			game::GamerProfile_UpdateProfileFromDvars(active_profile_index, 1);
 		}
 
 		const char* find_canonical_dvar_name(const std::string& key)
