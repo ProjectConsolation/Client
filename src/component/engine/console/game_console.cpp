@@ -70,6 +70,9 @@ namespace game_console
 			std::string auto_complete_query{};
 			std::string auto_complete_choice{};
 			bool auto_complete_is_dvar_arg = false;
+			std::size_t auto_complete_query_start = 0;
+			std::size_t auto_complete_query_length = 0;
+			std::size_t auto_complete_selected_index = 0;
 			bool may_auto_complete = false;
 		};
 
@@ -106,6 +109,8 @@ namespace game_console
 		void draw_hint_box(const overlay_bounds& bounds, float hint_x, int lines, float* color, float offset_y = 0.0f);
 		void draw_hint_text(const overlay_bounds& bounds, float hint_x, int line, const char* text, float* color, float offset = 0.0f, float offset_y = 0.0f);
 		bool is_dvar_command_token(std::string_view token);
+		void commit_auto_complete_choice(const bool append_space);
+		void cycle_auto_complete_choice(const int direction);
 		void insert_character(char ch);
 		void insert_text(std::string text);
 		void set_cursor_position(std::size_t cursor);
@@ -885,6 +890,9 @@ namespace game_console
 			con->auto_complete_query.clear();
 			con->auto_complete_choice.clear();
 			con->auto_complete_is_dvar_arg = false;
+			con->auto_complete_query_start = 0;
+			con->auto_complete_query_length = 0;
+			con->auto_complete_selected_index = 0;
 			con->may_auto_complete = false;
 		}
 
@@ -1279,10 +1287,15 @@ namespace game_console
 				return;
 			}
 
+			const bool has_prefix = !con->input.empty() && (con->input[0] == '/' || con->input[0] == '\\');
 			con->auto_complete_is_dvar_arg = false;
+			con->auto_complete_query_start = 0;
+			con->auto_complete_query_length = 0;
+			con->auto_complete_selected_index = 0;
 			const auto separator = input.find(' ');
 			auto query = input;
 			auto exact = false;
+			std::size_t query_start = has_prefix ? 1u : 0u;
 
 			if (separator != std::string::npos)
 			{
@@ -1292,23 +1305,31 @@ namespace game_console
 				{
 					query = input.substr(arg_begin);
 					con->auto_complete_is_dvar_arg = true;
+					query_start = (has_prefix ? 1u : 0u) + arg_begin;
 				}
 				else
 				{
 					query = command;
 					exact = true;
+					query_start = has_prefix ? 1u : 0u;
 				}
+			}
+			else
+			{
+				query_start = has_prefix ? 1u : 0u;
 			}
 
 			con->auto_complete_query = query;
+			con->auto_complete_query_start = query_start;
+			con->auto_complete_query_length = query.size();
 			con->auto_complete_matches = gather_auto_complete_matches(query, exact);
 			if (con->auto_complete_matches.empty())
 			{
 				rebuild_auto_complete_cache();
 				con->auto_complete_matches = gather_auto_complete_matches(query, exact);
 			}
-			con->auto_complete_choice = con->auto_complete_matches.empty() ? std::string{} : con->auto_complete_matches.front();
-			con->may_auto_complete = !con->auto_complete_choice.empty();
+			con->auto_complete_selected_index = 0;
+			sync_auto_complete_choice();
 		}
 
 		void handle_auto_complete()
@@ -1329,40 +1350,23 @@ namespace game_console
 				rebuild_auto_complete_cache();
 			}
 
-			refresh_auto_complete();
+			if (con->auto_complete_matches.empty())
+			{
+				refresh_auto_complete();
+			}
+
 			if (!con->may_auto_complete || con->auto_complete_choice.empty())
 			{
 				return;
 			}
 
-			const auto first_char = con->input.front();
-			const bool has_prefix = first_char == '\\' || first_char == '/';
-			const auto base_input = has_prefix ? con->input.substr(1) : con->input;
-			const auto separator = base_input.find(' ');
-			con->input.clear();
-			set_cursor_position(0);
-
-			if (has_prefix)
+			if (con->auto_complete_matches.size() == 1)
 			{
-				con->input.push_back(first_char);
-				set_cursor_position(1);
+				commit_auto_complete_choice(true);
+				return;
 			}
 
-			if (con->auto_complete_is_dvar_arg && separator != std::string::npos)
-			{
-				con->input.append(base_input.substr(0, separator + 1));
-				set_cursor_position(con->input.size());
-				insert_text(con->auto_complete_choice);
-			}
-			else
-			{
-				insert_text(con->auto_complete_choice);
-			}
-
-			if (con->cursor < max_input_chars)
-			{
-				insert_character(' ');
-			}
+			cycle_auto_complete_choice(1);
 		}
 
 		void draw_box(const float x, const float y, const float width, const float height, float* color)
@@ -1611,6 +1615,69 @@ namespace game_console
 				|| lower == "togglep";
 		}
 
+		void sync_auto_complete_choice()
+		{
+			if (!con || con->auto_complete_matches.empty())
+			{
+				if (con)
+				{
+					con->auto_complete_choice.clear();
+					con->may_auto_complete = false;
+				}
+				return;
+			}
+
+			con->auto_complete_selected_index %= con->auto_complete_matches.size();
+			con->auto_complete_choice = con->auto_complete_matches[con->auto_complete_selected_index];
+			con->may_auto_complete = !con->auto_complete_choice.empty();
+		}
+
+		void cycle_auto_complete_choice(const int direction)
+		{
+			if (!con || con->auto_complete_matches.size() <= 1)
+			{
+				return;
+			}
+
+			const auto count = con->auto_complete_matches.size();
+			const auto current = static_cast<int>(con->auto_complete_selected_index);
+			auto next = current + direction;
+			while (next < 0)
+			{
+				next += static_cast<int>(count);
+			}
+			next %= static_cast<int>(count);
+			con->auto_complete_selected_index = static_cast<std::size_t>(next);
+			sync_auto_complete_choice();
+		}
+
+		void commit_auto_complete_choice(const bool append_space)
+		{
+			if (!con || con->auto_complete_matches.empty())
+			{
+				return;
+			}
+
+			sync_auto_complete_choice();
+			if (con->auto_complete_choice.empty())
+			{
+				return;
+			}
+
+			const auto start = std::min(con->auto_complete_query_start, con->input.size());
+			const auto length = std::min(con->auto_complete_query_length, con->input.size() - start);
+			con->input.replace(start, length, con->auto_complete_choice);
+			con->cursor = start + con->auto_complete_choice.size();
+
+			if (append_space && con->cursor < max_input_chars)
+			{
+				con->input.insert(con->cursor, 1, ' ');
+				++con->cursor;
+			}
+
+			clear_input_selection();
+		}
+
 		void draw_input(const overlay_bounds& bounds)
 		{
 			if (!con)
@@ -1811,6 +1878,10 @@ namespace game_console
 					}
 
 					const auto line_y = y + bounds.font_height + (bounds.font_height * i);
+					if (static_cast<std::size_t>(index) == con->auto_complete_selected_index)
+					{
+						draw_box(x - 2.0f, line_y - 2.0f, std::max(0.0f, width - 10.0f), bounds.font_height + 4.0f, overlay_selected_color);
+					}
 					draw_text(con->auto_complete_matches[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
 				}
 
@@ -1955,6 +2026,11 @@ namespace game_console
 			if (!con || con->input.empty())
 			{
 				return;
+			}
+
+			if (!con->auto_complete_matches.empty() && con->may_auto_complete && !con->auto_complete_choice.empty())
+			{
+				commit_auto_complete_choice(true);
 			}
 
 			append_line("] " + con->input);
