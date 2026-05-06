@@ -1050,6 +1050,7 @@ namespace game_console
 			std::vector<std::string> dvar_contains_matches{};
 			std::vector<std::string> cmd_contains_matches{};
 			std::unordered_set<std::string> exact_seen{};
+			std::unordered_set<std::string> matched_seen{};
 			std::unordered_set<std::string> dvar_prefix_seen{};
 			std::unordered_set<std::string> cmd_prefix_seen{};
 			std::unordered_set<std::string> dvar_contains_seen{};
@@ -1077,6 +1078,11 @@ namespace game_console
 					}
 					else if (name.rfind(input, 0) == 0)
 					{
+						if (!matched_seen.insert(name).second)
+						{
+							return;
+						}
+
 						auto& seen = is_dvar ? dvar_prefix_seen : cmd_prefix_seen;
 						auto& matches = is_dvar ? dvar_prefix_matches : cmd_prefix_matches;
 						if (seen.insert(name).second)
@@ -1086,6 +1092,11 @@ namespace game_console
 					}
 					else if (name.find(input) != std::string::npos)
 					{
+						if (!matched_seen.insert(name).second)
+						{
+							return;
+						}
+
 						auto& seen = is_dvar ? dvar_contains_seen : cmd_contains_seen;
 						auto& matches = is_dvar ? dvar_contains_matches : cmd_contains_matches;
 						if (seen.insert(name).second)
@@ -1095,14 +1106,14 @@ namespace game_console
 					}
 				};
 
-			for (const auto& name : cached_command_names)
-			{
-				add_candidate(name, false);
-			}
-
 			for (const auto& name : cached_dvar_names)
 			{
 				add_candidate(name, true);
+			}
+
+			for (const auto& name : cached_command_names)
+			{
+				add_candidate(name, false);
 			}
 
 			auto sort_matches = [](std::vector<std::string>& matches)
@@ -1516,7 +1527,7 @@ namespace game_console
 				color);
 		}
 
-		void draw_hint_box(const overlay_bounds& bounds, const float hint_x, const int lines, float* color, const float offset_y = 0.0f)
+		void draw_hint_box(const overlay_bounds& bounds, const float hint_x, const int lines, float* color, const float offset_y)
 		{
 			const auto height = lines * bounds.font_height + 12.0f;
 			const auto y = bounds.y - 3.0f + bounds.font_height + 12.0f + offset_y;
@@ -1524,7 +1535,7 @@ namespace game_console
 			draw_box(hint_x - 6.0f, y, width, height, color);
 		}
 
-		void draw_hint_text(const overlay_bounds& bounds, const float hint_x, const int line, const char* text, float* color, const float offset = 0.0f, const float offset_y = 0.0f)
+		void draw_hint_text(const overlay_bounds& bounds, const float hint_x, const int line, const char* text, float* color, const float offset, const float offset_y)
 		{
 			const auto y = bounds.font_height + bounds.y + (bounds.font_height * (line + 1)) + 15.0f + offset_y;
 			draw_text(text, hint_x + offset, y, color, 1.0f);
@@ -1563,7 +1574,8 @@ namespace game_console
 			if (blink_on)
 			{
 				const auto cursor_x = draw_x + get_text_width(std::string_view(con->input).substr(0, cursor_position));
-				draw_text("|", cursor_x, input_y - 1.0f, color_white, 1.0f);
+				const auto caret_width = get_text_width("|");
+				draw_text("|", cursor_x - (caret_width * 0.5f), input_y - 1.0f, color_white, 1.0f);
 			}
 
 			if (con->output_visible)
@@ -1594,7 +1606,15 @@ namespace game_console
 			{
 				char description_buffer[256]{};
 				auto* const dvar = game::Dvar_FindVar(con->auto_complete_matches[0].c_str());
-				draw_dvar_match_details(bounds, hint_x, dvar, description_buffer, sizeof(description_buffer));
+				if (dvar)
+				{
+					draw_dvar_match_details(bounds, hint_x, dvar, description_buffer, sizeof(description_buffer));
+				}
+				else
+				{
+					draw_hint_box(bounds, hint_x, 1, color_hint_box);
+					draw_hint_text(bounds, hint_x, 0, con->auto_complete_matches[0].c_str(), color_cmd_match);
+				}
 				return;
 			}
 
@@ -1700,11 +1720,16 @@ namespace game_console
 					{
 						char description_buffer[256]{};
 						draw_dvar_match_details(bounds, x, dvar, description_buffer, sizeof(description_buffer));
-						draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->auto_complete_matches.size()));
-						const auto version_text = build_full_version_string();
-						draw_text_shadowed(version_text.c_str(), x, y + content_height + bounds.font_height + 5.0f, color_version_footer, 1.0f);
-						return;
 					}
+					else
+					{
+						draw_text(con->auto_complete_matches[0].c_str(), x, y + bounds.font_height, color_white, 1.0f);
+					}
+
+					draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->auto_complete_matches.size()));
+					const auto version_text = build_full_version_string();
+					draw_text_shadowed(version_text.c_str(), x, y + content_height + bounds.font_height + 5.0f, color_version_footer, 1.0f);
+					return;
 				}
 
 				for (int i = 0; i < visible_lines; ++i)
