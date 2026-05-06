@@ -1467,7 +1467,7 @@ namespace game_console
 			if (blink_on)
 			{
 				const auto cursor_x = draw_x + get_text_width(std::string_view(con->input).substr(0, cursor_position));
-				draw_text("|", cursor_x, input_y, color_white, 1.0f);
+				draw_text("|", cursor_x, input_y - 1.0f, color_white, 1.0f);
 			}
 
 			if (con->output_visible)
