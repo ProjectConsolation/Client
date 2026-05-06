@@ -231,6 +231,12 @@ namespace patches
 
 			if (type == game::DVAR_TYPE_BOOL)
 			{
+				if (!_stricmp(dvarName, "r_fullscreen"))
+				{
+					value.enabled = true;
+					flags = static_cast<unsigned short>(game::dvar_flags::saved);
+				}
+
 				auto* var = find_dvar(dvars::overrides::register_bool_overrides, dvarName);
 				if (var)
 				{
@@ -243,6 +249,12 @@ namespace patches
 
 			if (type == game::DVAR_TYPE_INT)
 			{
+				if (!_stricmp(dvarName, "com_maxfps"))
+				{
+					value.integer = 85;
+					flags = static_cast<unsigned short>(game::dvar_flags::saved);
+				}
+
 				auto* var = find_dvar(dvars::overrides::register_int_overrides, dvarName);
 				if (var)
 				{
@@ -473,10 +485,9 @@ namespace patches
 
 				utils::hook::nop(game::game_offset(0x103F6970), 5);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x10711AF8)) =
-					dvars::Dvar_RegisterInt("com_maxfps", "Cap frames per second", 60, 0, 1000, game::dvar_flags::saved);
+					dvars::Dvar_RegisterInt("com_maxfps", "Cap frames per second", 85, 0, 1000, game::dvar_flags::saved);
 
 				make_dvar_saved_and_writable("sv_cheats");
-				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
 
@@ -495,7 +506,6 @@ namespace patches
 			scheduler::loop([]
 			{
 				make_dvar_saved_and_writable("sv_cheats");
-				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
 #ifdef DEBUG

@@ -1873,10 +1873,7 @@ namespace game_console
 
 			if (con->output_fullscreen && match_view)
 			{
-				const auto desired_lines = std::max(1, static_cast<int>(con->auto_complete_matches.size()));
-				const float desired_content_height = (desired_lines * bounds.font_height) + 6.0f;
-				const float desired_output_height = desired_content_height + footer_height + 12.0f;
-				output_height = std::min(remaining_height, desired_output_height);
+				output_height = remaining_height;
 			}
 			draw_box(bounds.screen_min[0], output_y,
 				bounds.screen_max[0] - bounds.screen_min[0],
@@ -1890,11 +1887,39 @@ namespace game_console
 			const float content_height = std::max(24.0f, height - footer_height);
 			const auto visible_lines = std::max(1, static_cast<int>(content_height / std::max(1.0f, bounds.font_height)));
 
+			auto draw_log_lines = [&](const std::vector<std::string>& source_lines)
+			{
+				const auto max_scroll = std::max(0, static_cast<int>(source_lines.size()) - visible_lines);
+				con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
+				const auto first_line = std::max(0, static_cast<int>(source_lines.size()) - visible_lines - con->scroll_offset);
+				const auto offset = source_lines.size() >= static_cast<std::size_t>(visible_lines)
+					? 0.0f
+					: (bounds.font_height * (visible_lines - static_cast<int>(source_lines.size())));
+
+				for (int i = 0; i < visible_lines; ++i)
+				{
+					const auto index = i + first_line;
+					if (index >= static_cast<int>(source_lines.size()))
+					{
+						break;
+					}
+
+					const auto line_y = y + bounds.font_height + (bounds.font_height * i) + offset;
+					draw_text(source_lines[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
+				}
+
+				draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(source_lines.size()));
+			};
+
 			if (match_view)
 			{
+				const auto saved_scroll_offset = con->scroll_offset;
 				const auto max_scroll = std::max(0, static_cast<int>(con->auto_complete_matches.size()) - visible_lines);
 				con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
 				const auto first_line = std::clamp(con->scroll_offset, 0, max_scroll);
+
+				draw_log_lines(con->lines);
+				con->scroll_offset = std::clamp(saved_scroll_offset, 0, max_scroll);
 
 				if (con->auto_complete_matches.size() == 1)
 				{
