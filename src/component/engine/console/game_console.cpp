@@ -109,6 +109,9 @@ namespace game_console
 		void draw_hint_box(const overlay_bounds& bounds, float hint_x, int lines, float* color, float offset_y = 0.0f);
 		void draw_hint_text(const overlay_bounds& bounds, float hint_x, int line, const char* text, float* color, float offset = 0.0f, float offset_y = 0.0f);
 		bool is_dvar_command_token(std::string_view token);
+		std::string get_auto_complete_common_prefix();
+		void apply_auto_complete_text(std::string text, bool append_space);
+		void sync_auto_complete_choice();
 		void commit_auto_complete_choice(const bool append_space);
 		void cycle_auto_complete_choice(const int direction);
 		void insert_character(char ch);
