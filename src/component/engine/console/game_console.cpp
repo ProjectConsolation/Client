@@ -69,6 +69,7 @@ namespace game_console
 			std::vector<std::string> auto_complete_matches{};
 			std::string auto_complete_query{};
 			std::string auto_complete_choice{};
+			bool auto_complete_is_dvar_arg = false;
 			bool may_auto_complete = false;
 		};
 
@@ -104,6 +105,7 @@ namespace game_console
 		struct overlay_bounds;
 		void draw_hint_box(const overlay_bounds& bounds, float hint_x, int lines, float* color, float offset_y = 0.0f);
 		void draw_hint_text(const overlay_bounds& bounds, float hint_x, int line, const char* text, float* color, float offset = 0.0f, float offset_y = 0.0f);
+		bool is_dvar_command_token(std::string_view token);
 		void insert_character(char ch);
 		void insert_text(std::string text);
 		void set_cursor_position(std::size_t cursor);
@@ -882,6 +884,7 @@ namespace game_console
 			con->auto_complete_matches.clear();
 			con->auto_complete_query.clear();
 			con->auto_complete_choice.clear();
+			con->auto_complete_is_dvar_arg = false;
 			con->may_auto_complete = false;
 		}
 
@@ -1276,9 +1279,26 @@ namespace game_console
 				return;
 			}
 
+			con->auto_complete_is_dvar_arg = false;
 			const auto separator = input.find(' ');
-			const auto query = separator == std::string::npos ? input : input.substr(0, separator);
-			const auto exact = separator != std::string::npos;
+			auto query = input;
+			auto exact = false;
+
+			if (separator != std::string::npos)
+			{
+				const auto command = input.substr(0, separator);
+				const auto arg_begin = input.find_first_not_of(' ', separator + 1);
+				if (is_dvar_command_token(command) && arg_begin != std::string::npos)
+				{
+					query = input.substr(arg_begin);
+					con->auto_complete_is_dvar_arg = true;
+				}
+				else
+				{
+					query = command;
+					exact = true;
+				}
+			}
 
 			con->auto_complete_query = query;
 			con->auto_complete_matches = gather_auto_complete_matches(query, exact);
@@ -1317,6 +1337,8 @@ namespace game_console
 
 			const auto first_char = con->input.front();
 			const bool has_prefix = first_char == '\\' || first_char == '/';
+			const auto base_input = has_prefix ? con->input.substr(1) : con->input;
+			const auto separator = base_input.find(' ');
 			con->input.clear();
 			set_cursor_position(0);
 
@@ -1326,7 +1348,17 @@ namespace game_console
 				set_cursor_position(1);
 			}
 
-			insert_text(con->auto_complete_choice);
+			if (con->auto_complete_is_dvar_arg && separator != std::string::npos)
+			{
+				con->input.append(base_input.substr(0, separator + 1));
+				set_cursor_position(con->input.size());
+				insert_text(con->auto_complete_choice);
+			}
+			else
+			{
+				insert_text(con->auto_complete_choice);
+			}
+
 			if (con->cursor < max_input_chars)
 			{
 				insert_character(' ');
@@ -1561,6 +1593,22 @@ namespace game_console
 		{
 			const auto y = bounds.font_height + bounds.y + (bounds.font_height * (line + 1)) + 15.0f + offset_y;
 			draw_text(text, hint_x + offset, y, color, 1.0f);
+		}
+
+		bool is_dvar_command_token(std::string_view token)
+		{
+			if (token.empty())
+			{
+				return false;
+			}
+
+			auto lower = to_lower(std::string(token));
+			return lower == "set"
+				|| lower == "seta"
+				|| lower == "sets"
+				|| lower == "reset"
+				|| lower == "toggle"
+				|| lower == "togglep";
 		}
 
 		void draw_input(const overlay_bounds& bounds)
