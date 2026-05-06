@@ -144,7 +144,6 @@ namespace xinput
 		{
 			return is_gamepad_enabled()
 				&& pad.connected
-				&& is_gamepad_in_use()
 				&& !shutdown_requested
 				&& !is_menu_mode();
 		}
