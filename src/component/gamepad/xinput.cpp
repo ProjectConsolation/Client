@@ -21,6 +21,7 @@
 
 #pragma comment(lib, "xinput9_1_0.lib")
 
+#if 0
 namespace xinput
 {
 	bool should_hide_cursor_now();
@@ -151,7 +152,6 @@ namespace xinput
 		{
 			return is_gamepad_enabled()
 				&& pad.connected
-				&& pad.in_use
 				&& !shutdown_requested
 				&& !is_menu_mode();
 		}
@@ -790,13 +790,6 @@ namespace xinput
 				return;
 			}
 
-			auto pitch = CL_GamepadAxisValue(GPAD_VIRTAXIS_PITCH);
-			if (!dvars::input_invertPitch || !dvars::input_invertPitch->current.enabled)
-			{
-				pitch *= -1.0f;
-			}
-
-			auto yaw = -CL_GamepadAxisValue(GPAD_VIRTAXIS_YAW);
 			const auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
 			const auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
 			auto move_scale = static_cast<float>(std::numeric_limits<char>::max());
@@ -815,19 +808,6 @@ namespace xinput
 			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + forward_move);
 			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove));
 			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove));
-
-			auto* const pitch_offset = get_native_pitch_offset();
-			auto* const yaw_offset = get_native_yaw_offset();
-			if (pitch_offset && yaw_offset)
-			{
-				const auto ads_active = pad.left_trigger > 0.0f;
-				const auto sensitivity = get_view_sensitivity();
-				const auto yaw_rate = get_turn_rate("cl_yawspeed", "cl_yawspeed_ads", 140.0f, 90.0f, ads_active) * sensitivity;
-				const auto pitch_rate = get_turn_rate("cl_pitchspeed", "cl_pitchspeed_ads", 140.0f, 90.0f, ads_active) * sensitivity;
-
-				*pitch_offset = std::clamp(*pitch_offset + (pitch * pitch_rate * analog_frame_seconds), -85.0f, 85.0f);
-				*yaw_offset += yaw * yaw_rate * analog_frame_seconds;
-			}
 		}
 
 		float get_view_sensitivity()
@@ -987,7 +967,7 @@ namespace xinput
 
 			if (should_drive_native_cmd())
 			{
-				CL_GamepadMove(cmd);
+				apply_native_view_input();
 				return;
 			}
 
@@ -1469,6 +1449,7 @@ namespace xinput
 	};
 }
 
+#if 0
 namespace gamepad
 {
 	bool is_controller_active()
@@ -1493,3 +1474,5 @@ namespace gamepad
 }
 
 REGISTER_COMPONENT(xinput::component)
+#endif
+#endif
