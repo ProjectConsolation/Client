@@ -44,6 +44,7 @@ namespace game_console
 		bool process_shutting_down = false;
 		bool component_ready = false;
 		bool hooks_installed = false;
+		bool console_print_hook_installed = false;
 		bool was_f1_down = false;
 		bool was_oem5_down = false;
 		bool was_oem102_down = false;
@@ -130,7 +131,19 @@ namespace game_console
 
 		void install_hooks_if_ready()
 		{
-			if (hooks_installed || process_shutting_down)
+			if (process_shutting_down)
+			{
+				return;
+			}
+
+			if (!console_print_hook_installed && game::CL_ConsolePrint.get())
+			{
+				cl_console_print_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_ConsolePrint.get()), cl_console_print_stub);
+				console_print_hook_installed = true;
+				component_ready = true;
+			}
+
+			if (hooks_installed)
 			{
 				return;
 			}
@@ -142,7 +155,6 @@ namespace game_console
 			}
 
 			cl_key_event_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_KeyEvent_.get()), cl_key_event_stub);
-			cl_console_print_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_ConsolePrint.get()), cl_console_print_stub);
 			con_set_console_rect_hook.create(reinterpret_cast<std::uintptr_t>(game::Con_SetConsoleRect.get()), con_set_console_rect_stub);
 			hooks_installed = true;
 			component_ready = true;
@@ -2514,7 +2526,7 @@ namespace game_console
 
 	void append_output(std::string_view text)
 	{
-		if (text.empty() || process_shutting_down || !component_ready)
+		if (text.empty() || process_shutting_down)
 		{
 			return;
 		}
@@ -2544,10 +2556,11 @@ namespace game_console
 				con = new console_state{};
 			}
 
-			scheduler::on_shutdown([]
+			scheduler::on_shutdown([]()
 				{
 					component_ready = false;
 					hooks_installed = false;
+					console_print_hook_installed = false;
 					set_overlay_active(false);
 					key_was_down.fill(false);
 					key_next_repeat_time.fill(0);
@@ -2632,6 +2645,7 @@ namespace game_console
 			process_shutting_down = true;
 			component_ready = false;
 			hooks_installed = false;
+			console_print_hook_installed = false;
 			set_overlay_active(false);
 			cl_key_event_hook.clear();
 			cl_console_print_hook.clear();
