@@ -1266,6 +1266,16 @@ namespace game_console
 			}
 		}
 
+		void invalidate_history_snapshot()
+		{
+			if (!con)
+			{
+				return;
+			}
+
+			con->history_snapshot_valid = false;
+		}
+
 		void save_history_snapshot()
 		{
 			if (!con || con->history_snapshot_valid)
@@ -1581,6 +1591,7 @@ namespace game_console
 			con->input.erase(selection_begin, selection_end - selection_begin);
 			con->cursor = selection_begin;
 			clear_input_selection();
+			invalidate_history_snapshot();
 			return true;
 		}
 
@@ -2145,6 +2156,7 @@ namespace game_console
 			con->input.insert(con->input.begin() + static_cast<std::ptrdiff_t>(con->cursor), ch);
 			++con->cursor;
 			clear_input_selection();
+			invalidate_history_snapshot();
 			refresh_auto_complete();
 		}
 
@@ -2182,6 +2194,7 @@ namespace game_console
 			con->input.insert(con->cursor, text);
 			con->cursor += text.size();
 			clear_input_selection();
+			invalidate_history_snapshot();
 			refresh_auto_complete();
 		}
 

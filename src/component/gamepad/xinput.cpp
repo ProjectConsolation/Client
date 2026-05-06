@@ -846,8 +846,8 @@ namespace xinput
 				return;
 			}
 
-			const auto yaw_axis = -pad.right_stick_x;
-			auto pitch_axis = pad.right_stick_y;
+			const auto yaw_axis = -CL_GamepadAxisValue(GPAD_VIRTAXIS_YAW);
+			auto pitch_axis = CL_GamepadAxisValue(GPAD_VIRTAXIS_PITCH);
 
 			if (!dvars::input_invertPitch || !dvars::input_invertPitch->current.enabled)
 			{
