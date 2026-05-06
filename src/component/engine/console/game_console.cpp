@@ -1366,6 +1366,13 @@ namespace game_console
 				return;
 			}
 
+			const auto common_prefix = get_auto_complete_common_prefix();
+			if (common_prefix.size() > con->auto_complete_query.size())
+			{
+				apply_auto_complete_text(common_prefix, false);
+				return;
+			}
+
 			cycle_auto_complete_choice(1);
 		}
 
@@ -1615,6 +1622,53 @@ namespace game_console
 				|| lower == "togglep";
 		}
 
+		std::string get_auto_complete_common_prefix()
+		{
+			if (!con || con->auto_complete_matches.empty())
+			{
+				return {};
+			}
+
+			auto prefix = con->auto_complete_matches.front();
+			for (std::size_t i = 1; i < con->auto_complete_matches.size() && !prefix.empty(); ++i)
+			{
+				const auto& match = con->auto_complete_matches[i];
+				const auto limit = std::min(prefix.size(), match.size());
+				std::size_t length = limit;
+				while (length > 0 && _strnicmp(prefix.c_str(), match.c_str(), static_cast<int>(length)) != 0)
+				{
+					--length;
+				}
+
+				prefix.resize(length);
+			}
+
+			return prefix;
+		}
+
+		void apply_auto_complete_text(std::string text, const bool append_space)
+		{
+			if (!con)
+			{
+				return;
+			}
+
+			const auto start = std::min(con->auto_complete_query_start, con->input.size());
+			const auto length = std::min(con->auto_complete_query_length, con->input.size() - start);
+			const auto inserted_length = text.size();
+			con->input.replace(start, length, std::move(text));
+			con->cursor = start + inserted_length;
+
+			if (append_space && con->cursor < max_input_chars)
+			{
+				con->input.insert(con->cursor, 1, ' ');
+				++con->cursor;
+			}
+
+			clear_input_selection();
+			refresh_auto_complete();
+		}
+
 		void sync_auto_complete_choice()
 		{
 			if (!con || con->auto_complete_matches.empty())
@@ -1664,18 +1718,7 @@ namespace game_console
 				return;
 			}
 
-			const auto start = std::min(con->auto_complete_query_start, con->input.size());
-			const auto length = std::min(con->auto_complete_query_length, con->input.size() - start);
-			con->input.replace(start, length, con->auto_complete_choice);
-			con->cursor = start + con->auto_complete_choice.size();
-
-			if (append_space && con->cursor < max_input_chars)
-			{
-				con->input.insert(con->cursor, 1, ' ');
-				++con->cursor;
-			}
-
-			clear_input_selection();
+			apply_auto_complete_text(con->auto_complete_choice, append_space);
 		}
 
 		void draw_input(const overlay_bounds& bounds)
