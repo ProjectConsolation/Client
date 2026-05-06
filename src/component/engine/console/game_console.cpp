@@ -1758,12 +1758,7 @@ namespace game_console
 			{
 				const auto cursor_x = draw_x + get_text_width(std::string_view(con->input).substr(0, cursor_position));
 				const auto caret_width = get_text_width("|");
-				draw_text("|", cursor_x - (caret_width * 0.5f), input_y - 1.0f, color_white, 1.0f);
-			}
-
-			if (con->output_visible)
-			{
-				return;
+				draw_text("|", cursor_x - (caret_width * 0.25f), input_y, color_white, 1.0f);
 			}
 
 			if (con->auto_complete_query.empty() || con->auto_complete_matches.empty())
@@ -1861,7 +1856,6 @@ namespace game_console
 			const float output_y = con->output_fullscreen
 				? bounds.y + bounds.font_height + 10.0f
 				: bounds.screen_min[1] + 32.0f;
-			const bool match_view = !con->auto_complete_query.empty() && !con->auto_complete_matches.empty();
 			const auto height_scale = con->output_fullscreen
 				? 1.0f
 				: (con_outputHeightScale ? std::clamp(con_outputHeightScale->current.value, 0.20f, 0.98f) : 0.72f);
@@ -1870,11 +1864,6 @@ namespace game_console
 			float output_height = con->output_fullscreen
 				? remaining_height
 				: remaining_height * height_scale;
-
-			if (con->output_fullscreen && match_view)
-			{
-				output_height = remaining_height;
-			}
 			draw_box(bounds.screen_min[0], output_y,
 				bounds.screen_max[0] - bounds.screen_min[0],
 				output_height,
@@ -1887,118 +1876,26 @@ namespace game_console
 			const float content_height = std::max(24.0f, height - footer_height);
 			const auto visible_lines = std::max(1, static_cast<int>(content_height / std::max(1.0f, bounds.font_height)));
 
-			auto draw_log_lines = [&](const std::vector<std::string>& source_lines)
+			const auto max_scroll = std::max(0, static_cast<int>(con->lines.size()) - visible_lines);
+			con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
+			const auto first_line = std::max(0, static_cast<int>(con->lines.size()) - visible_lines - con->scroll_offset);
+			const auto offset = con->lines.size() >= static_cast<std::size_t>(visible_lines)
+				? 0.0f
+				: (bounds.font_height * (visible_lines - static_cast<int>(con->lines.size())));
+
+			for (int i = 0; i < visible_lines; ++i)
 			{
-				const auto max_scroll = std::max(0, static_cast<int>(source_lines.size()) - visible_lines);
-				con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
-				const auto first_line = std::max(0, static_cast<int>(source_lines.size()) - visible_lines - con->scroll_offset);
-				const auto offset = source_lines.size() >= static_cast<std::size_t>(visible_lines)
-					? 0.0f
-					: (bounds.font_height * (visible_lines - static_cast<int>(source_lines.size())));
-
-				for (int i = 0; i < visible_lines; ++i)
+				const auto index = i + first_line;
+				if (index >= static_cast<int>(con->lines.size()))
 				{
-					const auto index = i + first_line;
-					if (index >= static_cast<int>(source_lines.size()))
-					{
-						break;
-					}
-
-					const auto line_y = y + bounds.font_height + (bounds.font_height * i) + offset;
-					draw_text(source_lines[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
+					break;
 				}
 
-				draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(source_lines.size()));
-			};
-
-			if (match_view)
-			{
-				const auto saved_scroll_offset = con->scroll_offset;
-				const auto max_scroll = std::max(0, static_cast<int>(con->auto_complete_matches.size()) - visible_lines);
-				con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
-				const auto first_line = std::clamp(con->scroll_offset, 0, max_scroll);
-
-				draw_log_lines(con->lines);
-				con->scroll_offset = std::clamp(saved_scroll_offset, 0, max_scroll);
-
-				if (con->auto_complete_matches.size() == 1)
-				{
-					auto* const dvar = game::Dvar_FindVar(con->auto_complete_matches[0].c_str());
-					if (dvar)
-					{
-						char description_buffer[256]{};
-						draw_dvar_match_details(bounds, x, dvar, description_buffer, sizeof(description_buffer));
-					}
-					else
-					{
-						draw_text(con->auto_complete_matches[0].c_str(), x, y + bounds.font_height, color_white, 1.0f);
-					}
-
-					draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->auto_complete_matches.size()));
-					const auto version_text = build_full_version_string();
-					draw_text_shadowed(version_text.c_str(), x, y + content_height + bounds.font_height + 5.0f, color_version_footer, 1.0f);
-					return;
-				}
-
-				for (int i = 0; i < visible_lines; ++i)
-				{
-					const auto index = i + first_line;
-					if (index >= static_cast<int>(con->auto_complete_matches.size()))
-					{
-						break;
-					}
-
-					const auto line_y = y + bounds.font_height + (bounds.font_height * i);
-					if (static_cast<std::size_t>(index) == con->auto_complete_selected_index)
-					{
-						draw_box(x - 2.0f, line_y - 2.0f, std::max(0.0f, width - 10.0f), bounds.font_height + 4.0f, overlay_selected_color);
-					}
-					draw_text(con->auto_complete_matches[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
-				}
-
-				draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->auto_complete_matches.size()));
-
-				if (con->output_fullscreen && !con->auto_complete_matches.empty())
-				{
-					const auto selected_index = std::min(con->auto_complete_selected_index, con->auto_complete_matches.size() - 1);
-					const auto detail_x = x + (width * 0.52f);
-					auto* const selected_dvar = game::Dvar_FindVar(con->auto_complete_matches[selected_index].c_str());
-					if (selected_dvar)
-					{
-						char description_buffer[256]{};
-						draw_dvar_match_details(bounds, detail_x, selected_dvar, description_buffer, sizeof(description_buffer));
-					}
-					else
-					{
-						draw_hint_box(bounds, detail_x, 2, color_hint_box);
-						draw_hint_text(bounds, detail_x, 0, con->auto_complete_matches[selected_index].c_str(), color_cmd_match);
-						draw_hint_text(bounds, detail_x, 1, "command", color_dvar_inactive);
-					}
-				}
+				const auto line_y = y + bounds.font_height + (bounds.font_height * i) + offset;
+				draw_text(con->lines[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
 			}
-			else
-			{
-				const auto max_scroll = std::max(0, static_cast<int>(con->lines.size()) - visible_lines);
-				con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
-				const auto first_line = std::max(0, static_cast<int>(con->lines.size()) - visible_lines - con->scroll_offset);
-				const auto offset = con->lines.size() >= static_cast<std::size_t>(visible_lines)
-					? 0.0f
-					: (bounds.font_height * (visible_lines - static_cast<int>(con->lines.size())));
 
-				for (int i = 0; i < visible_lines; ++i)
-				{
-					const auto index = i + first_line;
-					if (index >= static_cast<int>(con->lines.size()))
-					{
-						break;
-					}
-
-					const auto line_y = y + bounds.font_height + (bounds.font_height * i) + offset;
-					draw_text(con->lines[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
-				}
-
-				draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->lines.size()));
-			}
+			draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->lines.size()));
 
 			const auto version_text = build_full_version_string();
 			draw_text_shadowed(version_text.c_str(), x, y + content_height + bounds.font_height + 5.0f, color_version_footer, 1.0f);

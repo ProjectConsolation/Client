@@ -231,12 +231,6 @@ namespace patches
 
 			if (type == game::DVAR_TYPE_BOOL)
 			{
-				if (!_stricmp(dvarName, "r_fullscreen"))
-				{
-					value.enabled = true;
-					flags = static_cast<unsigned short>(game::dvar_flags::saved);
-				}
-
 				auto* var = find_dvar(dvars::overrides::register_bool_overrides, dvarName);
 				if (var)
 				{
@@ -249,12 +243,6 @@ namespace patches
 
 			if (type == game::DVAR_TYPE_INT)
 			{
-				if (!_stricmp(dvarName, "com_maxfps"))
-				{
-					value.integer = 85;
-					flags = static_cast<unsigned short>(game::dvar_flags::saved);
-				}
-
 				auto* var = find_dvar(dvars::overrides::register_int_overrides, dvarName);
 				if (var)
 				{
@@ -483,9 +471,12 @@ namespace patches
 				dvars::replace_dvar_at(game::game_offset(0x103B2260), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054944)),
 					dvars::make_int("developer", "Enable development environment", 0, 0, 2, game::dvar_flags::none));
 
-				utils::hook::nop(game::game_offset(0x103F6970), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x10711AF8)) =
-					dvars::Dvar_RegisterInt("com_maxfps", "Cap frames per second", 85, 0, 1000, game::dvar_flags::saved);
+				dvars::replace_dvar_at(game::game_offset(0x103F6989), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x10711AF8)),
+					dvars::make_int("com_maxfps", "Cap frames per second", 85, 0, 1000, game::dvar_flags::saved));
+
+				dvars::replace_dvar_at(game::game_offset(0x102C44A8), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x113EFA78)),
+					dvars::make_bool("r_fullscreen", "Display game full screen", true,
+						static_cast<std::uint16_t>(game::dvar_flags::saved) | static_cast<std::uint16_t>(game::dvar_flags::latched)));
 
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("vid_xpos");
