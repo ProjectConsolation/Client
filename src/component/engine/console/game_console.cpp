@@ -1929,6 +1929,24 @@ namespace game_console
 				}
 
 				draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->auto_complete_matches.size()));
+
+				if (con->output_fullscreen && !con->auto_complete_matches.empty())
+				{
+					const auto selected_index = std::min(con->auto_complete_selected_index, con->auto_complete_matches.size() - 1);
+					const auto detail_x = x + (width * 0.52f);
+					auto* const selected_dvar = game::Dvar_FindVar(con->auto_complete_matches[selected_index].c_str());
+					if (selected_dvar)
+					{
+						char description_buffer[256]{};
+						draw_dvar_match_details(bounds, detail_x, selected_dvar, description_buffer, sizeof(description_buffer));
+					}
+					else
+					{
+						draw_hint_box(bounds, detail_x, 2, color_hint_box);
+						draw_hint_text(bounds, detail_x, 0, con->auto_complete_matches[selected_index].c_str(), color_cmd_match);
+						draw_hint_text(bounds, detail_x, 1, "command", color_dvar_inactive);
+					}
+				}
 			}
 			else
 			{
