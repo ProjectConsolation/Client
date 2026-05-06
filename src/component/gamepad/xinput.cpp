@@ -81,6 +81,12 @@ namespace xinput
 		std::uint32_t unpack_exact_move_a_rejoin = 0;
 		std::uint32_t unpack_exact_move_b_rejoin = 0;
 
+		void set_bool_dvar(game::dvar_s* dvar, bool value);
+		float get_view_sensitivity();
+		float get_turn_rate(const char* normal_name, const char* ads_name, float normal_default, float ads_default, bool ads_active);
+		float* get_native_pitch_offset();
+		float* get_native_yaw_offset();
+
 		enum direction
 		{
 			dir_up = 0,
@@ -1401,7 +1407,7 @@ namespace xinput
 				pad.left_trigger,
 				pad.right_trigger,
 				static_cast<int>(pad.menu_mode),
-				static_cast<int>(in_use));
+				static_cast<int>(pad.in_use));
 
 			pad.previous_state = pad.state;
 		}
