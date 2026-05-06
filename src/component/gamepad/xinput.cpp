@@ -30,6 +30,7 @@ namespace xinput
 		struct controller_state
 		{
 			bool connected = false;
+			bool in_use = false;
 			bool menu_mode = false;
 			XINPUT_STATE state{};
 			XINPUT_STATE previous_state{};
@@ -128,7 +129,7 @@ namespace xinput
 
 		bool is_gamepad_in_use()
 		{
-			return dvars::gpad_in_use && dvars::gpad_in_use->current.enabled;
+			return pad.in_use;
 		}
 
 		bool is_menu_mode()
@@ -144,8 +145,15 @@ namespace xinput
 		{
 			return is_gamepad_enabled()
 				&& pad.connected
+				&& pad.in_use
 				&& !shutdown_requested
 				&& !is_menu_mode();
+		}
+
+		void set_gamepad_in_use(const bool in_use)
+		{
+			pad.in_use = in_use;
+			set_bool_dvar(dvars::gpad_in_use, in_use);
 		}
 
 		float get_stick_deadzone_min()
@@ -340,6 +348,10 @@ namespace xinput
 			}
 
 			queue_command(key, command, is_down, time);
+			if (is_down)
+			{
+				set_gamepad_in_use(true);
+			}
 		}
 
 		void debug_print(const char* fmt, ...)
@@ -429,6 +441,7 @@ namespace xinput
 		void update_activity(const DWORD time)
 		{
 			pad.last_activity_time = time;
+			set_gamepad_in_use(true);
 		}
 
 		void set_cursor_visible(const bool visible)
@@ -771,21 +784,44 @@ namespace xinput
 				return;
 			}
 
-			const auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
-			const auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
-			constexpr auto move_scale = 127.0f;
-			const auto forward_move = static_cast<int>(std::lround(forward * move_scale));
-			const auto side_move = static_cast<int>(std::lround(side * move_scale));
-
-			if (forward_move == 0 && side_move == 0)
+			auto pitch = CL_GamepadAxisValue(GPAD_VIRTAXIS_PITCH);
+			if (!dvars::input_invertPitch || !dvars::input_invertPitch->current.enabled)
 			{
-				return;
+				pitch *= -1.0f;
 			}
 
-			// Preserve keyboard movement by adding the controller's analog
-			// contribution on top of the engine's existing move bytes.
+			auto yaw = -CL_GamepadAxisValue(GPAD_VIRTAXIS_YAW);
+			const auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
+			const auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
+			auto move_scale = static_cast<float>(std::numeric_limits<char>::max());
+
+			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
+			{
+				const auto length = std::fabs(side) <= std::fabs(forward)
+					? side / forward
+					: forward / side;
+				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+			}
+
+			const auto forward_move = static_cast<int>(std::floor(forward * move_scale));
+			const auto side_move = static_cast<int>(std::floor(side * move_scale));
 			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + side_move);
 			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + forward_move);
+			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove));
+			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove));
+
+			auto* const pitch_offset = get_native_pitch_offset();
+			auto* const yaw_offset = get_native_yaw_offset();
+			if (pitch_offset && yaw_offset)
+			{
+				const auto ads_active = pad.left_trigger > 0.0f;
+				const auto sensitivity = get_view_sensitivity();
+				const auto yaw_rate = get_turn_rate("cl_yawspeed", "cl_yawspeed_ads", 140.0f, 90.0f, ads_active) * sensitivity;
+				const auto pitch_rate = get_turn_rate("cl_pitchspeed", "cl_pitchspeed_ads", 140.0f, 90.0f, ads_active) * sensitivity;
+
+				*pitch_offset = std::clamp(*pitch_offset + (pitch * pitch_rate * analog_frame_seconds), -85.0f, 85.0f);
+				*yaw_offset += yaw * yaw_rate * analog_frame_seconds;
+			}
 		}
 
 		float get_view_sensitivity()
@@ -934,7 +970,6 @@ namespace xinput
 				mov result, eax
 			}
 
-			apply_native_gamepad_to_cmd(result);
 			patches::enforce_ads_sprint_interrupt(result);
 
 			return result;
@@ -946,7 +981,7 @@ namespace xinput
 
 			if (should_drive_native_cmd())
 			{
-				apply_native_view_input();
+				CL_GamepadMove(cmd);
 				return;
 			}
 
@@ -1285,7 +1320,7 @@ namespace xinput
 				pad = {};
 				last_analog_update_time = 0;
 				analog_frame_seconds = 1.0f / 60.0f;
-				set_bool_dvar(dvars::gpad_in_use, false);
+				set_gamepad_in_use(false);
 				return;
 			}
 
@@ -1317,7 +1352,7 @@ namespace xinput
 			{
 				release_all_inputs(time);
 				pad.previous_state = pad.state;
-				set_bool_dvar(dvars::gpad_in_use, false);
+				set_gamepad_in_use(false);
 				return;
 			}
 
@@ -1355,8 +1390,6 @@ namespace xinput
 				update_activity(time);
 			}
 
-			const auto in_use = (time - pad.last_activity_time) <= 2000u;
-			set_bool_dvar(dvars::gpad_in_use, in_use);
 			update_cursor_visibility(time);
 
 			debug_print("gpad: buttons=0x%04X lx=%.3f ly=%.3f rx=%.3f ry=%.3f lt=%.3f rt=%.3f menu=%d in_use=%d\n",
@@ -1374,14 +1407,16 @@ namespace xinput
 		}
 	}
 
-	void record_mouse_activity()
-	{
-		last_mouse_activity_time = GetTickCount();
-		if (cursor_hidden_for_gamepad)
+		void record_mouse_activity()
 		{
-			set_cursor_visible(true);
+			last_mouse_activity_time = GetTickCount();
+			pad.in_use = false;
+			set_bool_dvar(dvars::gpad_in_use, false);
+			if (cursor_hidden_for_gamepad)
+			{
+				set_cursor_visible(true);
+			}
 		}
-	}
 
 	bool should_hide_cursor_now()
 	{

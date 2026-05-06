@@ -484,8 +484,6 @@ namespace patches
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
-				make_dvar_saved_and_writable("com_maxfps");
-				make_dvar_saved_and_writable("input_viewSensitivity");
 
 				//debug block sv_cheats
 #ifdef DEBUG
@@ -504,8 +502,6 @@ namespace patches
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
-				make_dvar_saved_and_writable("com_maxfps");
-				make_dvar_saved_and_writable("input_viewSensitivity");
 #ifdef DEBUG
 				make_dvar_debug_writable("r_fullbright");
 #endif
