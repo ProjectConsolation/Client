@@ -21,7 +21,6 @@
 
 #pragma comment(lib, "xinput9_1_0.lib")
 
-#if 0
 namespace xinput
 {
 	bool should_hide_cursor_now();
@@ -724,11 +723,6 @@ namespace xinput
 			{ GPAD_PHYSAXIS_NONE, GPAD_MAP_NONE }
 		};
 
-		std::int8_t clamp_cmd_axis(const int value)
-		{
-			return static_cast<std::int8_t>(std::clamp(value, -127, 127));
-		}
-
 		float get_physical_axis_value(const gamepad_physical_axis axis)
 		{
 			switch (axis)
@@ -783,31 +777,51 @@ namespace xinput
 			return axis_deflection;
 		}
 
-		void CL_GamepadMove(game::usercmd_t* cmd)
+		struct analog_move
 		{
-			if (!cmd || !should_drive_native_cmd())
+			float side;
+			float forward;
+			float magnitude;
+		};
+
+		std::int8_t encode_cmd_axis(const float value)
+		{
+			const auto scaled = std::round(value * 127.0f);
+			return static_cast<std::int8_t>(std::clamp(static_cast<int>(scaled), -127, 127));
+		}
+
+		float apply_move_response_curve(const float magnitude)
+		{
+			constexpr auto curve = 1.0f;
+			if (magnitude <= 0.0f)
 			{
-				return;
+				return 0.0f;
 			}
 
-			const auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
-			const auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
-			auto move_scale = static_cast<float>(std::numeric_limits<char>::max());
+			return std::pow(magnitude, curve);
+		}
 
-			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
+		analog_move get_left_stick_move()
+		{
+			// pad.left_stick_x and pad.left_stick_y have already been run through
+			// radial deadzone processing in normalize_stick_pair(), so we receive
+			// a directional intent mapped to [0.0f, 1.0f], or so.
+      //
+			const auto stick_x = pad.left_stick_x;
+			const auto stick_y = pad.left_stick_y;
+
+			const auto length = std::sqrt((stick_x * stick_x) + (stick_y * stick_y));
+			if (length <= 0.0f)
 			{
-				const auto length = std::fabs(side) <= std::fabs(forward)
-					? side / forward
-					: forward / side;
-				move_scale = std::sqrt((length * length) + 1.0f) * move_scale;
+				return { 0.0f, 0.0f, 0.0f };
 			}
 
-			const auto forward_move = static_cast<int>(std::floor(forward * move_scale));
-			const auto side_move = static_cast<int>(std::floor(side * move_scale));
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove) + side_move);
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove) + forward_move);
-			cmd->rightmove = clamp_cmd_axis(static_cast<int>(cmd->rightmove));
-			cmd->forwardmove = clamp_cmd_axis(static_cast<int>(cmd->forwardmove));
+			const auto curved_magnitude = apply_move_response_curve(length);
+
+			const auto dir_x = stick_x / length;
+			const auto dir_y = stick_y / length;
+
+			return { dir_x * curved_magnitude, dir_y * curved_magnitude, curved_magnitude };
 		}
 
 		float get_view_sensitivity()
@@ -903,7 +917,12 @@ namespace xinput
 				return;
 			}
 
-			CL_GamepadMove(cmd);
+			const auto move = get_left_stick_move();
+			if (move.magnitude > 0.0f)
+			{
+				cmd->rightmove = encode_cmd_axis(move.side);
+				cmd->forwardmove = encode_cmd_axis(move.forward);
+			}
 		}
 
 		double get_move_axis_value(const gamepad_virtual_axis axis, const bool positive)
@@ -956,6 +975,7 @@ namespace xinput
 				mov result, eax
 			}
 
+			apply_native_gamepad_to_cmd(result);
 			patches::enforce_ads_sprint_interrupt(result);
 
 			return result;
@@ -1449,7 +1469,7 @@ namespace xinput
 	};
 }
 
-#if 0
+
 namespace gamepad
 {
 	bool is_controller_active()
@@ -1474,5 +1494,3 @@ namespace gamepad
 }
 
 REGISTER_COMPONENT(xinput::component)
-#endif
-#endif
