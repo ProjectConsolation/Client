@@ -602,6 +602,11 @@ namespace xinput
 
 		void handle_digital_buttons(const XINPUT_GAMEPAD& current, const XINPUT_GAMEPAD& previous, const DWORD time)
 		{
+			if (is_overlay_blocking_input() && !pad.menu_mode)
+			{
+				return;
+			}
+
 			for (const auto& mapping : digital_buttons)
 			{
 				const auto was_down = (previous.wButtons & mapping.xinput_mask) != 0;
@@ -646,6 +651,11 @@ namespace xinput
 
 		void handle_trigger_button(const float current_value, const float previous_value, const int gameplay_key, const int menu_key, const DWORD time)
 		{
+			if (is_overlay_blocking_input() && !pad.menu_mode)
+			{
+				return;
+			}
+
 			const auto was_down = previous_value > 0.0f;
 			const auto is_down = current_value > 0.0f;
 			if (was_down == is_down)
@@ -799,71 +809,34 @@ namespace xinput
 
 		int msg_read_bit(game::msg_t* msg)
 		{
-			auto* const fields = reinterpret_cast<std::uint32_t*>(msg);
-			const auto bit_index = fields[8] & 7u;
-			if (!bit_index)
+			int value = 0;
+			__asm
 			{
-				const auto byte_index = fields[7];
-				if (byte_index >= fields[5] + fields[6])
-				{
-					fields[0] = 1;
-					return -1;
-				}
-
-				fields[8] = byte_index * 8u;
-				fields[7] = byte_index + 1u;
+				mov edx, msg
+				xor ecx, ecx
+				mov eax, 0x103EEDE0
+				call eax
+				mov value, eax
 			}
-
-			const auto byte_index = fields[8] >> 3u;
-			const auto* const src = byte_index < fields[5]
-				? reinterpret_cast<const std::uint8_t*>(fields[2])
-				: reinterpret_cast<const std::uint8_t*>(fields[3] - fields[5]);
-			++fields[8];
-			return (src[byte_index] >> bit_index) & 1;
+			return value;
 		}
 
 		int msg_read_bits(game::msg_t* msg, int bits)
 		{
-			auto* const fields = reinterpret_cast<std::uint32_t*>(msg);
 			int value = 0;
-			int out_bit = 0;
-
-			if (bits <= 0)
+			__asm
 			{
-				return 0;
+				push esi
+				mov esi, msg
+				push bits
+				mov eax, 0x103EEE50
+				call eax
+				add esp, 4
+				mov value, eax
+				pop esi
 			}
 
-			while (true)
-			{
-				auto bit_index = fields[8] & 7u;
-				if (!bit_index)
-				{
-					const auto byte_index = fields[7];
-					if (byte_index >= fields[5] + fields[6])
-					{
-						fields[0] = 1;
-						return -1;
-					}
-
-					fields[8] = byte_index * 8u;
-					fields[7] = byte_index + 1u;
-					bit_index = 0;
-				}
-
-				const auto byte_index = fields[8] >> 3u;
-				const auto* const src = byte_index < fields[5]
-					? reinterpret_cast<const std::uint8_t*>(fields[2])
-					: reinterpret_cast<const std::uint8_t*>(fields[3] - fields[5]);
-				const auto bit = (src[byte_index] >> bit_index) & 1;
-				++fields[8];
-				value |= bit << out_bit;
-				++out_bit;
-
-				if (out_bit >= bits)
-				{
-					return value;
-				}
-			}
+			return value;
 		}
 
 		void ApplyMovement(game::msg_t* msg, int key, game::usercmd_t* from, game::usercmd_t* to)
@@ -887,8 +860,8 @@ namespace xinput
 				// Original QoS callsite passes:
 				//   eax = msg_t*
 				//   edi = to usercmd
-				//   [esp + 4] = key
-				//   [esp + 8] = from usercmd
+				//   [esp + 4] = from usercmd
+				//   [esp + 8] = key
 				push ebx
 				push esi
 
@@ -896,8 +869,8 @@ namespace xinput
 				mov esi, [esp + 10h]
 
 				push edi
-				push esi
 				push ebx
+				push esi
 				push eax
 				call ApplyMovement
 				add esp, 10h
@@ -1174,12 +1147,6 @@ namespace xinput
 			{
 				return;
 			}
-
-			original_write_move_bits_a = utils::hook::get<std::uint16_t>(game::game_offset(0x103EF9CE));
-			original_write_move_bits_b = utils::hook::get<std::uint16_t>(game::game_offset(0x103EFA44));
-
-			utils::hook::set<std::uint16_t>(game::game_offset(0x103EF9CE), 0x106A);
-			utils::hook::set<std::uint16_t>(game::game_offset(0x103EFA44), 0x106A);
 			utils::hook::call(game::game_offset(0x102F0DBC), MSG_ReadDeltaUsercmdKey_stub);
 
 			usercmd_movement_patched = true;
@@ -1236,9 +1203,6 @@ namespace xinput
 			{
 				return;
 			}
-
-			utils::hook::set<std::uint16_t>(game::game_offset(0x103EF9CE), original_write_move_bits_a);
-			utils::hook::set<std::uint16_t>(game::game_offset(0x103EFA44), original_write_move_bits_b);
 
 			usercmd_movement_patched = false;
 		}
