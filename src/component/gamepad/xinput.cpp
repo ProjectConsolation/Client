@@ -21,6 +21,11 @@
 
 #pragma comment(lib, "xinput9_1_0.lib")
 
+namespace game
+{
+	struct msg_t;
+}
+
 namespace xinput
 {
 	bool should_hide_cursor_now();
@@ -57,8 +62,6 @@ namespace xinput
 		std::array<std::uint8_t, 5> original_draw_crosshair_call{};
 		std::uint16_t original_write_move_bits_a = 0;
 		std::uint16_t original_write_move_bits_b = 0;
-		std::uint16_t original_read_move_bits_a = 0;
-		std::uint16_t original_read_move_bits_b = 0;
 		std::atomic<DWORD> last_mouse_activity_time{ 0 };
 		bool cursor_hidden_for_gamepad = false;
 		DWORD last_analog_update_time = 0;
@@ -120,6 +123,11 @@ namespace xinput
 			return pad.in_use;
 		}
 
+		bool is_overlay_blocking_input()
+		{
+			return game::keyCatchers && ((*game::keyCatchers & 0x10) != 0);
+		}
+
 		bool is_menu_mode()
 		{
 			const auto* const cl_ingame = game::Dvar_FindVar("cl_ingame");
@@ -134,7 +142,8 @@ namespace xinput
 			return is_gamepad_enabled()
 				&& pad.connected
 				&& !shutdown_requested
-				&& !is_menu_mode();
+				&& !is_menu_mode()
+				&& !is_overlay_blocking_input();
 		}
 
 		bool is_gameplay_active()
@@ -301,6 +310,11 @@ namespace xinput
 		void handle_gameplay_button_event(const int key, const bool is_down, const DWORD time)
 		{
 			if (!key)
+			{
+				return;
+			}
+
+			if (is_overlay_blocking_input())
 			{
 				return;
 			}
@@ -492,7 +506,8 @@ namespace xinput
 
 			const auto controller_active = is_gamepad_enabled()
 				&& pad.connected
-				&& ((time - pad.last_activity_time) <= 2000u);
+				&& ((time - pad.last_activity_time) <= 2000u)
+				&& !is_overlay_blocking_input();
 			const auto recent_mouse_activity = (time - last_mouse_activity_time.load()) <= 16u;
 
 			if (controller_active && !recent_mouse_activity)
@@ -782,6 +797,118 @@ namespace xinput
 			return static_cast<char>(std::clamp(value, static_cast<int>(std::numeric_limits<char>::min()), static_cast<int>(std::numeric_limits<char>::max())));
 		}
 
+		int msg_read_bit(game::msg_t* msg)
+		{
+			auto* const fields = reinterpret_cast<std::uint32_t*>(msg);
+			const auto bit_index = fields[8] & 7u;
+			if (!bit_index)
+			{
+				const auto byte_index = fields[7];
+				if (byte_index >= fields[5] + fields[6])
+				{
+					fields[0] = 1;
+					return -1;
+				}
+
+				fields[8] = byte_index * 8u;
+				fields[7] = byte_index + 1u;
+			}
+
+			const auto byte_index = fields[8] >> 3u;
+			const auto* const src = byte_index < fields[5]
+				? reinterpret_cast<const std::uint8_t*>(fields[2])
+				: reinterpret_cast<const std::uint8_t*>(fields[3] - fields[5]);
+			++fields[8];
+			return (src[byte_index] >> bit_index) & 1;
+		}
+
+		int msg_read_bits(game::msg_t* msg, int bits)
+		{
+			auto* const fields = reinterpret_cast<std::uint32_t*>(msg);
+			int value = 0;
+			int out_bit = 0;
+
+			if (bits <= 0)
+			{
+				return 0;
+			}
+
+			while (true)
+			{
+				auto bit_index = fields[8] & 7u;
+				if (!bit_index)
+				{
+					const auto byte_index = fields[7];
+					if (byte_index >= fields[5] + fields[6])
+					{
+						fields[0] = 1;
+						return -1;
+					}
+
+					fields[8] = byte_index * 8u;
+					fields[7] = byte_index + 1u;
+					bit_index = 0;
+				}
+
+				const auto byte_index = fields[8] >> 3u;
+				const auto* const src = byte_index < fields[5]
+					? reinterpret_cast<const std::uint8_t*>(fields[2])
+					: reinterpret_cast<const std::uint8_t*>(fields[3] - fields[5]);
+				const auto bit = (src[byte_index] >> bit_index) & 1;
+				++fields[8];
+				value |= bit << out_bit;
+				++out_bit;
+
+				if (out_bit >= bits)
+				{
+					return value;
+				}
+			}
+		}
+
+		void ApplyMovement(game::msg_t* msg, int key, game::usercmd_t* from, game::usercmd_t* to)
+		{
+			if (msg_read_bit(msg))
+			{
+				const auto movement_bits = static_cast<std::int16_t>(key ^ msg_read_bits(msg, 16));
+				to->forwardmove = static_cast<std::int8_t>(movement_bits);
+				to->rightmove = static_cast<std::int8_t>(movement_bits >> 8);
+				return;
+			}
+
+			to->forwardmove = from->forwardmove;
+			to->rightmove = from->rightmove;
+		}
+
+		__declspec(naked) void MSG_ReadDeltaUsercmdKey_stub()
+		{
+			__asm
+			{
+				// Original QoS callsite passes:
+				//   eax = msg_t*
+				//   edi = to usercmd
+				//   [esp + 4] = key
+				//   [esp + 8] = from usercmd
+				push ebx
+				push esi
+
+				mov ebx, [esp + 0Ch]
+				mov esi, [esp + 10h]
+
+				push edi
+				push esi
+				push ebx
+				push eax
+				call ApplyMovement
+				add esp, 10h
+
+				pop esi
+				pop ebx
+
+				ret
+			}
+		}
+
 		float apply_move_response_curve(const float magnitude)
 		{
 			constexpr auto curve = 1.0f;
@@ -1050,13 +1177,10 @@ namespace xinput
 
 			original_write_move_bits_a = utils::hook::get<std::uint16_t>(game::game_offset(0x103EF9CE));
 			original_write_move_bits_b = utils::hook::get<std::uint16_t>(game::game_offset(0x103EFA44));
-			original_read_move_bits_a = utils::hook::get<std::uint16_t>(game::game_offset(0x103F02C8));
-			original_read_move_bits_b = utils::hook::get<std::uint16_t>(game::game_offset(0x103F03F6));
 
 			utils::hook::set<std::uint16_t>(game::game_offset(0x103EF9CE), 0x106A);
 			utils::hook::set<std::uint16_t>(game::game_offset(0x103EFA44), 0x106A);
-			utils::hook::set<std::uint16_t>(game::game_offset(0x103F02C8), 0x106A);
-			utils::hook::set<std::uint16_t>(game::game_offset(0x103F03F6), 0x106A);
+			utils::hook::call(game::game_offset(0x102F0DBC), MSG_ReadDeltaUsercmdKey_stub);
 
 			usercmd_movement_patched = true;
 		}
@@ -1115,8 +1239,6 @@ namespace xinput
 
 			utils::hook::set<std::uint16_t>(game::game_offset(0x103EF9CE), original_write_move_bits_a);
 			utils::hook::set<std::uint16_t>(game::game_offset(0x103EFA44), original_write_move_bits_b);
-			utils::hook::set<std::uint16_t>(game::game_offset(0x103F02C8), original_read_move_bits_a);
-			utils::hook::set<std::uint16_t>(game::game_offset(0x103F03F6), original_read_move_bits_b);
 
 			usercmd_movement_patched = false;
 		}
@@ -1163,6 +1285,7 @@ namespace xinput
 
 			pad.connected = true;
 			pad.state = state;
+
 			update_analog_state(pad.state.Gamepad);
 
 			const auto menu_mode = is_menu_mode();
@@ -1171,10 +1294,6 @@ namespace xinput
 				release_all_inputs(time);
 				pad.previous_state = {};
 				pad.menu_mode = menu_mode;
-			}
-
-			if (!is_gameplay_active())
-			{
 			}
 
 			if (!is_gamepad_enabled())
@@ -1265,7 +1384,6 @@ namespace xinput
 				install_native_cmd_hook();
 				install_native_look_hook();
 				install_draw_crosshair_hook();
-				install_usercmd_movement_patch();
 
 			scheduler::loop([]()
 			{
