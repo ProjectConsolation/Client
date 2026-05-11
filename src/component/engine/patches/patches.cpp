@@ -2,6 +2,7 @@
 #include "loader/component_loader.hpp"
 
 #include "component/engine/console/console.hpp"
+#include "component/engine/console/command.hpp"
 #include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"
@@ -111,11 +112,11 @@ namespace patches
 			return 1;
 		}
 
-		using cl_parse_server_message_huffman_t = unsigned int(__cdecl*)(int, _DWORD*);
+		using cl_parse_server_message_huffman_t = unsigned int(__cdecl*)(int, std::uint32_t*);
 		utils::hook::detour cl_parse_server_message_huffman_hook;
-		unsigned int __cdecl CL_ParseServerMessage_huffman_guard(int a1, _DWORD* a2)
+		unsigned int __cdecl CL_ParseServerMessage_huffman_guard(int a1, std::uint32_t* a2)
 		{
-			const auto* const original = reinterpret_cast<cl_parse_server_message_huffman_t>(cl_parse_server_message_huffman_hook.get_original());
+			const cl_parse_server_message_huffman_t original = reinterpret_cast<cl_parse_server_message_huffman_t>(cl_parse_server_message_huffman_hook.get_original());
 
 			if (!a2)
 			{
@@ -152,7 +153,7 @@ namespace patches
 		utils::hook::detour ui_replace_directive_hook;
 		char* __fastcall UI_ReplaceDirective_guard(int ArgList, char* a2, int a3, unsigned __int8 a4)
 		{
-			const auto* const original = reinterpret_cast<ui_replace_directive_t>(ui_replace_directive_hook.get_original());
+			const ui_replace_directive_t original = reinterpret_cast<ui_replace_directive_t>(ui_replace_directive_hook.get_original());
 			const auto* const arg_list = reinterpret_cast<const char*>(ArgList);
 			if (bounded_length(arg_list, k_ui_replace_directive_max_len + 1) > k_ui_replace_directive_max_len
 				|| bounded_length(a2, k_ui_replace_directive_max_len + 1) > k_ui_replace_directive_max_len)
@@ -164,11 +165,11 @@ namespace patches
 			return original(ArgList, a2, a3, a4);
 		}
 
-		using party_atomic_host_handle_member_join_t = int(__cdecl*)(char, _DWORD*, int, __int64, int, _DWORD*);
+		using party_atomic_host_handle_member_join_t = int(__cdecl*)(char, std::uint32_t*, int, __int64, int, std::uint32_t*);
 		utils::hook::detour party_atomic_host_handle_member_join_hook;
-		int __cdecl PartyAtomicHost_HandleMemberJoin_guard(char a1, _DWORD* a2, int a3, __int64 a4, int a5, _DWORD* a6)
+		int __cdecl PartyAtomicHost_HandleMemberJoin_guard(char a1, std::uint32_t* a2, int a3, __int64 a4, int a5, std::uint32_t* a6)
 		{
-			const auto* const original = reinterpret_cast<party_atomic_host_handle_member_join_t>(party_atomic_host_handle_member_join_hook.get_original());
+			const party_atomic_host_handle_member_join_t original = reinterpret_cast<party_atomic_host_handle_member_join_t>(party_atomic_host_handle_member_join_hook.get_original());
 			if (!a2 || !a6)
 			{
 				return original(a1, a2, a3, a4, a5, a6);
@@ -188,6 +189,55 @@ namespace patches
 			}
 
 			return original(a1, a2, a3, a4, a5, a6);
+		}
+
+		bool PartyAtomicHost_HandleMemberJoin_self_test()
+		{
+			std::uint32_t packet_cursor[8]{};
+			std::uint32_t join_state[8]{};
+
+			packet_cursor[5] = 0;
+			packet_cursor[7] = 1;
+
+			const auto result = PartyAtomicHost_HandleMemberJoin_guard(0, &join_state[0], 0, 0, 0, &packet_cursor[0]);
+			if (result != 0)
+			{
+				game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin self-test failed\n");
+				return false;
+			}
+
+			game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin self-test passed\n");
+			return true;
+		}
+
+		bool UI_ReplaceDirective_self_test()
+		{
+			char oversized[0x110]{};
+			char output[0x110]{};
+			std::memset(oversized, 'A', sizeof(oversized) - 1);
+			oversized[sizeof(oversized) - 1] = '\0';
+
+			const auto result = UI_ReplaceDirective_guard(reinterpret_cast<int>(oversized), output, 0, 0);
+			if (result != output)
+			{
+				game::Com_Printf(0, "UI_ReplaceDirective self-test failed\n");
+				return false;
+			}
+
+			game::Com_Printf(0, "UI_ReplaceDirective self-test passed\n");
+			return true;
+		}
+
+		void register_security_guard_self_test()
+		{
+			command::add("securityGuardSelfTest", [](const command::params&)
+			{
+				const auto party_ok = PartyAtomicHost_HandleMemberJoin_self_test();
+				const auto ui_ok = UI_ReplaceDirective_self_test();
+				game::Com_Printf(0, "securityGuardSelfTest: party=%s ui=%s\n",
+					party_ok ? "pass" : "fail",
+					ui_ok ? "pass" : "fail");
+			});
 		}
 
 		bool dvar_enabled(const char* name)
@@ -600,6 +650,7 @@ namespace patches
 			cl_parse_server_message_huffman_hook.create(game::game_offset(0x1030D960), CL_ParseServerMessage_huffman_guard);
 			ui_replace_directive_hook.create(game::game_offset(0x102BB870), UI_ReplaceDirective_guard);
 			party_atomic_host_handle_member_join_hook.create(game::game_offset(0x103087B0), PartyAtomicHost_HandleMemberJoin_guard);
+			register_security_guard_self_test();
 
 			scheduler::loop([]
 			{
