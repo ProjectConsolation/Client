@@ -66,6 +66,7 @@ namespace xinput
 		bool cursor_hidden_for_gamepad = false;
 		DWORD last_analog_update_time = 0;
 		float analog_frame_seconds = 1.0f / 60.0f;
+		void apply_native_gamepad_to_cmd(game::usercmd_t* cmd);
 		void set_bool_dvar(game::dvar_s* dvar, bool value);
 		float get_view_sensitivity();
 		float get_turn_rate(const char* normal_name, const char* ads_name, float normal_default, float ads_default, bool ads_active);
@@ -812,8 +813,8 @@ namespace xinput
 			int value = 0;
 			__asm
 			{
-				mov edx, msg
 				xor ecx, ecx
+				mov edx, msg
 				mov eax, 0x103EEDE0
 				call eax
 				mov value, eax
@@ -839,45 +840,43 @@ namespace xinput
 			return value;
 		}
 
-		void ApplyMovement(game::msg_t* msg, int key, game::usercmd_t* from, game::usercmd_t* to)
+		void CL_Gamepad_ReadHighPrecision(game::msg_t* msg, int key, game::usercmd_t* to)
 		{
-			if (msg_read_bit(msg))
+			if (!msg || !to)
 			{
-				const auto movement_bits = static_cast<std::int16_t>(key ^ msg_read_bits(msg, 16));
-				to->forwardmove = static_cast<std::int8_t>(movement_bits);
-				to->rightmove = static_cast<std::int8_t>(movement_bits >> 8);
 				return;
 			}
 
-			to->forwardmove = from->forwardmove;
-			to->rightmove = from->rightmove;
+			if (!msg_read_bit(msg))
+			{
+				return;
+			}
+
+			const auto packed = static_cast<std::uint16_t>(msg_read_bits(msg, 16));
+			to->forwardmove = static_cast<std::int8_t>(packed & 0xFF);
+			to->rightmove = static_cast<std::int8_t>((packed >> 8) & 0xFF);
 		}
+
+		game::msg_t* pending_delta_msg = nullptr;
+		int pending_delta_key = 0;
+		game::usercmd_t* pending_delta_to = nullptr;
 
 		__declspec(naked) void MSG_ReadDeltaUsercmdKey_stub()
 		{
 			__asm
 			{
-				// Original QoS callsite passes:
-				//   eax = msg_t*
-				//   edi = to usercmd
-				//   [esp + 4] = from usercmd
-				//   [esp + 8] = key
-				push ebx
-				push esi
+				mov [pending_delta_msg], eax
+				mov [pending_delta_key], ecx
+				mov [pending_delta_to], edi
 
-				mov ebx, [esp + 0Ch]
-				mov esi, [esp + 10h]
+				mov edx, 0x103F0170
+				call edx
 
-				push edi
-				push ebx
-				push esi
-				push eax
-				call ApplyMovement
-				add esp, 10h
-
-				pop esi
-				pop ebx
-
+				push [pending_delta_to]
+				push [pending_delta_key]
+				push [pending_delta_msg]
+				call CL_Gamepad_ReadHighPrecision
+				add esp, 12
 				ret
 			}
 		}
@@ -1406,4 +1405,4 @@ namespace gamepad
 	}
 }
 
-REGISTER_COMPONENT(xinput::component)
+//REGISTER_COMPONENT(xinput::component)
