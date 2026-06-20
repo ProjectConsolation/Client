@@ -142,7 +142,7 @@ namespace
 		{
 #ifdef DEBUG
 			configure_debug_crt();
-			//xlive::apply_early(); // attemp at patching xlive FIRST, before a debugger can attach
+			xlive::apply_early(); // Patch xlive before attaching a debugger.
 			//MessageBoxA(NULL, "ATTACH DEBUGGER NOW", "DEBUG", MB_DEFBUTTON1);
 #endif
 
