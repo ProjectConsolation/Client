@@ -1,57 +1,3 @@
-/*
- * xlive.cpp — GFWL (Games for Windows Live) anti-debug bypass
- *
- * The retail xlive.dll wraps its public API inside a protection layer that
- * detects debuggers and corrupts internal state on detection. This component
- * patches all known checks so VS can attach freely.
- *
- * ── How xlive's thread-based detection works ─────────────────────────────────
- *
- * xlive (2009) uses two independent detection mechanisms:
- *
- *   Mechanism A — hardware breakpoint detection (sub_4F8A59):
- *     DuplicateHandle(current_thread) -> TargetHandle
- *     CreateThread(lpStart=sub_5F75F8, lpParam=TargetHandle)
- *     sub_5F75F8: SuspendThread(param) -> GetThreadContext -> checks Dr7
- *       Dr7 == 0 (no HW BPs): exit code = 0xF3B02C90
- *       Dr7 != 0 (HW BPs set): exit code = 1
- *     Parent reads exit code, applies mask 0xD9BB259C / threshold 0xC153B2.
- *
- *   Mechanism B — low-memory stub execution (sub_5072BB):
- *     DuplicateHandle(current_thread) -> TargetHandle (a small integer like 0x968)
- *     CreateThread(lpStart=TargetHandle, ...) — executes code AT the handle address
- *     This relied on xlive pre-mapping executable stubs at handle-range addresses
- *     using VirtualAlloc on Windows XP/Vista/7, where the first 64 KB was
- *     allocatable. On Windows 10/11 this is impossible — the kernel permanently
- *     reserves the first 64 KB — so CreateThread crashes with AV at 0x968 etc.
- *
- * ── Why naive byte patches don't fix it ──────────────────────────────────────
- *
- * The "detected" fall-through path in sub_5072BB leads to sub_8DC4BC which
- * performs the actual low-memory setup. Patching the branch that skips to the
- * early return (which we previously called Fix 7/8/11) also skips sub_8DC4BC,
- * leaving the thread stub unmapped — same crash, different address each run.
- *
- * ── The correct fix ───────────────────────────────────────────────────────────
- *
- * Hook CreateThread in xlive's own IAT. When lpStartAddress < 0x10000 (a
- * handle-value execution attempt), skip the thread entirely and return a fake
- * HANDLE whose subsequent WaitForSingleObject / GetExitCodeThread calls return
- * a clean exit code (0xF3B02C90) that keeps xlive's state machine healthy.
- *
- * All other CreateThread calls (lpStart >= 0x10000) are forwarded normally.
- *
- * Ordinal reference (from xlive.lib):
- *   xlive_5000 = XLiveInitialize
- *   xlive_5001 = _XLiveInput@4
- *   xlive_5002 = _XLiveRender@0
- *   xlive_5003 = _XLiveUnInitialize@0
- *   xlive_5251 = _XCloseHandle@4
- *   xlive_5297 = _XLiveInitializeEx@8
- *   xlive_51   = _XNetStartup@4
- *   xlive_52   = _XNetCleanup@0
- */
-
 #include <std_include.hpp>
 #include <utils/hook.hpp>
 #include "loader/component_loader.hpp"
@@ -59,527 +5,453 @@
 
 namespace xlive
 {
-    namespace
-    {
-        utils::hook::detour ntqip_hook;
+	namespace
+	{
+		constexpr auto status_success = 0x00000000L;
+		constexpr auto status_port_not_set = 0xC0000353L;
+		constexpr auto process_debug_port = 7u;
+		constexpr auto process_debug_object_handle = 0x1Eu;
+		constexpr auto process_debug_flags = 0x1Fu;
+		constexpr auto thread_hide_from_debugger = 0x11u;
+		constexpr auto system_kernel_debugger_information = 0x23u;
+		constexpr auto peverifyhash_rva = 0x000F36B3u;
+
+		utils::hook::detour nt_query_information_process_hook;
+		utils::hook::detour nt_set_information_thread_hook;
+		utils::hook::detour nt_set_information_process_hook;
+		utils::hook::detour nt_query_system_information_hook;
+		utils::hook::detour nt_get_context_thread_hook;
+		utils::hook::detour nt_set_context_thread_hook;
+		utils::hook::detour nt_set_debug_filter_state_hook;
+		utils::hook::detour nt_yield_execution_hook;
 
 #ifdef DEBUG
-        // Writes a formatted string to the VS Output window (Debug > Output).
-        static void dbg(const char* fmt, ...)
-        {
-            char buf[256];
-            va_list args;
-            va_start(args, fmt);
-            vsnprintf(buf, sizeof(buf), fmt, args);
-            va_end(args);
-            OutputDebugStringA("[xlive] ");
-            OutputDebugStringA(buf);
-            OutputDebugStringA("\n");
-        }
+		void dbg(const char* fmt, ...)
+		{
+			char buf[512]{};
+			va_list args;
+			va_start(args, fmt);
+			vsnprintf(buf, sizeof(buf), fmt, args);
+			va_end(args);
+			OutputDebugStringA("[xlive] ");
+			OutputDebugStringA(buf);
+			OutputDebugStringA("\n");
+		}
 #else
-        // In release builds the call disappears entirely — zero overhead.
-        static inline void dbg(const char*, ...) {}
+		void dbg(const char*, ...) {}
 #endif
 
-        // Replaces xlive's IAT slot for IsDebuggerPresent — always returns FALSE.
-        static BOOL WINAPI IsDebuggerPresent_stub() { return FALSE; }
+		using nt_query_information_process_t = LONG(__stdcall*)(HANDLE, UINT, PVOID, ULONG, PULONG);
+		using nt_set_information_thread_t = LONG(__stdcall*)(HANDLE, UINT, PVOID, ULONG);
+		using nt_set_information_process_t = LONG(__stdcall*)(HANDLE, UINT, PVOID, ULONG);
+		using nt_query_system_information_t = LONG(__stdcall*)(UINT, PVOID, ULONG, PULONG);
+		using nt_get_context_thread_t = LONG(__stdcall*)(HANDLE, PCONTEXT);
+		using nt_set_context_thread_t = LONG(__stdcall*)(HANDLE, const CONTEXT*);
+		using nt_set_debug_filter_state_t = LONG(__stdcall*)(ULONG, ULONG, BOOLEAN);
+		using nt_yield_execution_t = LONG(__stdcall*)();
 
-        // Hooks NtQueryInformationProcess to hide the debugger from xlive's
-        // explicit kernel queries (ProcessDebugPort=7, ProcessDebugObjectHandle=0x1E).
-        LONG __stdcall NtQueryInformationProcess_hook(HANDLE hProcess, UINT infoClass,
-            PVOID pInfo, ULONG infoLen,
-            PULONG pRetLen)
-        {
-            if (infoClass == 7)  // ProcessDebugPort
-            {
-                if (pInfo && infoLen >= sizeof(ULONG_PTR))
-                    *static_cast<ULONG_PTR*>(pInfo) = 0;
-                if (pRetLen) *pRetLen = sizeof(ULONG_PTR);
-                return 0;
-            }
-            if (infoClass == 0x1E)  // ProcessDebugObjectHandle
-            {
-                if (pInfo && infoLen >= sizeof(HANDLE))
-                    *static_cast<HANDLE*>(pInfo) = nullptr;
-                return static_cast<LONG>(0xC0000353);  // STATUS_PORT_NOT_SET
-            }
-            return static_cast<LONG(__stdcall*)(HANDLE, UINT, PVOID, ULONG, PULONG)>(
-                ntqip_hook.get_original())(hProcess, infoClass, pInfo, infoLen, pRetLen);
-        }
+		BOOL WINAPI is_debugger_present_stub()
+		{
+			return FALSE;
+		}
 
-        // -------------------------------------------------------------------------
-        // Low-memory thread intercept
-        //
-        // xlive's Mechanism B creates threads with lpStartAddress = a handle value
-        // (typically < 0x10000). On Windows XP/Vista/7 these pages were allocatable;
-        // on Windows 10/11 the kernel owns the first 64 KB and attempting to execute
-        // there crashes with AV regardless of any protection bypass.
-        //
-        // This stub intercepts those calls and returns a fake HANDLE backed by a
-        // real event object. WaitForSingleObject on it returns WAIT_OBJECT_0
-        // immediately, and GetExitCodeThread returns 0xF3B02C90 — the "no hardware
-        // breakpoints" clean value that xlive's mask checks expect.
-        //
-        // All CreateThread calls with lpStartAddress >= 0x10000 are forwarded
-        // unchanged so xlive's legitimate threading still works.
+		BOOL WINAPI check_remote_debugger_present_stub(HANDLE, PBOOL present)
+		{
+			if (present)
+			{
+				*present = FALSE;
+			}
 
-        // Sentinel exit code: the value sub_5F75F8 returns when Dr7 == 0.
-        // Both xlive mask checks (0xD9BB259C and 0xE5937CB2) produce results
-        // below their respective thresholds with this value, satisfying xlive.
-        static constexpr DWORD CLEAN_EXIT_CODE = 0xF3B02C90;
+			return TRUE;
+		}
 
-        // A thread-local "fake handle" pool. xlive holds at most a handful of
-        // these concurrently so a fixed-size ring is sufficient.
-        static constexpr size_t FAKE_POOL_SIZE = 32;
-        struct FakeThread
-        {
-            HANDLE event = nullptr;  // manual-reset event, pre-signalled
-            DWORD  exit_code = CLEAN_EXIT_CODE;
-            bool   active = false;
-        };
-        static FakeThread       fake_pool[FAKE_POOL_SIZE];
-        static CRITICAL_SECTION fake_pool_cs;
-        static bool             fake_pool_init = false;
+		void WINAPI output_debug_string_a_stub(LPCSTR)
+		{
+		}
 
-        static void ensure_fake_pool()
-        {
-            if (fake_pool_init) return;
-            InitializeCriticalSection(&fake_pool_cs);
-            fake_pool_init = true;
-        }
+		void WINAPI output_debug_string_w_stub(LPCWSTR)
+		{
+		}
 
-        // Encode a FakeThread* as a pseudo-HANDLE using a sentinel tag bit.
-        // Real handles are always multiples of 4 and have bits 0-1 clear.
-        // We use the lowest bit to tag our fake handles; real code never sees
-        // them except through our hooked GetExitCodeThread/WaitForSingleObject.
-        static HANDLE encode_fake(FakeThread* ft)
-        {
-            return reinterpret_cast<HANDLE>(reinterpret_cast<uintptr_t>(ft) | 1u);
-        }
-        static FakeThread* decode_fake(HANDLE h)
-        {
-            const auto v = reinterpret_cast<uintptr_t>(h);
-            if ((v & 1u) == 0) return nullptr;
-            auto* ft = reinterpret_cast<FakeThread*>(v & ~uintptr_t(1));
-            if (ft < fake_pool || ft >= fake_pool + FAKE_POOL_SIZE) return nullptr;
-            return ft->active ? ft : nullptr;
-        }
+		LONG __stdcall nt_query_information_process_stub(HANDLE process, UINT info_class, PVOID info, ULONG info_len, PULONG ret_len)
+		{
+			if (info_class == process_debug_port)
+			{
+				if (info && info_len >= sizeof(ULONG_PTR))
+				{
+					*static_cast<ULONG_PTR*>(info) = 0;
+				}
 
-        static HANDLE alloc_fake_thread()
-        {
-            ensure_fake_pool();
-            EnterCriticalSection(&fake_pool_cs);
-            FakeThread* ft = nullptr;
-            for (auto& slot : fake_pool)
-                if (!slot.active) { ft = &slot; break; }
+				if (ret_len)
+				{
+					*ret_len = sizeof(ULONG_PTR);
+				}
 
-            if (!ft)
-            {
-                LeaveCriticalSection(&fake_pool_cs);
-                dbg("alloc_fake_thread: pool exhausted!");
-                return nullptr;
-            }
-            if (!ft->event)
-                ft->event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-            ft->exit_code = CLEAN_EXIT_CODE;
-            ft->active = true;
-            SetEvent(ft->event);
-            LeaveCriticalSection(&fake_pool_cs);
-            return encode_fake(ft);
-        }
+				return status_success;
+			}
 
-        static void free_fake_thread(FakeThread* ft)
-        {
-            EnterCriticalSection(&fake_pool_cs);
-            ResetEvent(ft->event);
-            ft->active = false;
-            LeaveCriticalSection(&fake_pool_cs);
-        }
+			if (info_class == process_debug_object_handle)
+			{
+				if (info && info_len >= sizeof(HANDLE))
+				{
+					*static_cast<HANDLE*>(info) = nullptr;
+				}
 
-        // Hooked CreateThread — intercepted in xlive's own IAT.
-        static HANDLE WINAPI CreateThread_hook(
-            LPSECURITY_ATTRIBUTES sec, SIZE_T stack,
-            LPTHREAD_START_ROUTINE start, LPVOID param,
-            DWORD flags, LPDWORD tid)
-        {
-            if (reinterpret_cast<uintptr_t>(start) < 0x10000u)
-            {
-                dbg("CreateThread intercept: low-addr start=%p param=%p -> fake handle",
-                    reinterpret_cast<void*>(start), param);
-                if (tid) *tid = 0;
-                HANDLE h = alloc_fake_thread();
-                dbg("CreateThread intercept: returned fake handle=%p", h);
-                return h ? h : INVALID_HANDLE_VALUE;
-            }
-            return CreateThread(sec, stack, start, param, flags, tid);
-        }
+				if (ret_len)
+				{
+					*ret_len = sizeof(HANDLE);
+				}
 
-        // Hooked WaitForSingleObject — passes fake handles without blocking.
-        static DWORD WINAPI WaitForSingleObject_hook(HANDLE h, DWORD timeout)
-        {
-            if (FakeThread* ft = decode_fake(h))
-            {
-                dbg("WaitForSingleObject: fake handle=%p -> WAIT_OBJECT_0", h);
-                return WAIT_OBJECT_0;
-            }
-            return WaitForSingleObject(h, timeout);
-        }
+				return status_port_not_set;
+			}
 
-        // Hooked GetExitCodeThread — returns the clean exit code for fake handles.
-        static BOOL WINAPI GetExitCodeThread_hook(HANDLE h, LPDWORD exit_code)
-        {
-            if (FakeThread* ft = decode_fake(h))
-            {
-                if (exit_code) *exit_code = ft->exit_code;
-                dbg("GetExitCodeThread: fake handle=%p -> exit_code=0x%08X", h, ft->exit_code);
-                return TRUE;
-            }
-            return GetExitCodeThread(h, exit_code);
-        }
+			if (info_class == process_debug_flags)
+			{
+				if (info && info_len >= sizeof(ULONG))
+				{
+					*static_cast<ULONG*>(info) = 1;
+				}
 
-        // Hooked CloseHandle — recycles fake handles silently.
-        static BOOL WINAPI CloseHandle_hook(HANDLE h)
-        {
-            if (FakeThread* ft = decode_fake(h))
-            {
-                dbg("CloseHandle: recycling fake handle=%p", h);
-                free_fake_thread(ft);
-                return TRUE;
-            }
-            return CloseHandle(h);
-        }
+				if (ret_len)
+				{
+					*ret_len = sizeof(ULONG);
+				}
 
-        // -------------------------------------------------------------------------
-        // Patch helpers
+				return status_success;
+			}
 
-        bool mem_write(void* dst, const void* src, size_t len)
-        {
-            DWORD old = 0;
-            if (!VirtualProtect(dst, len, PAGE_EXECUTE_READWRITE, &old))
-                return false;
-            memcpy(dst, src, len);
-            VirtualProtect(dst, len, old, &old);
-            return true;
-        }
+			return nt_query_information_process_hook.invoke<LONG>(process, info_class, info, info_len, ret_len);
+		}
 
-        uint8_t* scan(uint8_t* base, size_t size, const uint8_t* pat, size_t pat_len)
-        {
-            if (!pat_len || size < pat_len) return nullptr;
-            for (size_t i = 0, lim = size - pat_len; i <= lim; ++i)
-                if (!memcmp(base + i, pat, pat_len))
-                    return base + i;
-            return nullptr;
-        }
+		LONG __stdcall nt_set_information_thread_stub(HANDLE thread, UINT info_class, PVOID info, ULONG info_len)
+		{
+			if (info_class == thread_hide_from_debugger)
+			{
+				return status_success;
+			}
 
-        // -------------------------------------------------------------------------
-        // Fix 1 — redirect IsDebuggerPresent in xlive's own IAT
+			return nt_set_information_thread_hook.invoke<LONG>(thread, info_class, info, info_len);
+		}
 
-        void patch_isdebugger(uint8_t* base, size_t image_size)
-        {
-            __try
-            {
-                const auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
-                if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+		LONG __stdcall nt_set_information_process_stub(HANDLE process, UINT info_class, PVOID info, ULONG info_len)
+		{
+			if (info_class == process_debug_flags)
+			{
+				return status_success;
+			}
 
-                const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
-                if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+			return nt_set_information_process_hook.invoke<LONG>(process, info_class, info, info_len);
+		}
 
-                const DWORD import_rva = nt->OptionalHeader.DataDirectory[
-                    IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
-                if (!import_rva || import_rva >= image_size) return;
+		LONG __stdcall nt_query_system_information_stub(UINT info_class, PVOID info, ULONG info_len, PULONG ret_len)
+		{
+			const auto result = nt_query_system_information_hook.invoke<LONG>(info_class, info, info_len, ret_len);
 
-                auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + import_rva);
+			if (result == status_success && info_class == system_kernel_debugger_information && info && info_len >= 2)
+			{
+				auto* const bytes = static_cast<BYTE*>(info);
+				bytes[0] = FALSE; // KernelDebuggerEnabled
+				bytes[1] = TRUE;  // KernelDebuggerNotPresent
+			}
 
-                for (; desc->Name && desc->Name < image_size; ++desc)
-                {
-                    const char* dll = reinterpret_cast<char*>(base + desc->Name);
-                    if (_stricmp(dll, "KERNEL32.dll") != 0 &&
-                        _stricmp(dll, "KERNEL32") != 0)
-                        continue;
+			return result;
+		}
 
-                    if (!desc->OriginalFirstThunk || !desc->FirstThunk) continue;
+		LONG __stdcall nt_get_context_thread_stub(HANDLE thread, PCONTEXT context)
+		{
+			const auto result = nt_get_context_thread_hook.invoke<LONG>(thread, context);
 
-                    auto* oft = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->OriginalFirstThunk);
-                    auto* ft = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->FirstThunk);
+			if (result == status_success && context && (context->ContextFlags & CONTEXT_DEBUG_REGISTERS) != 0)
+			{
+				context->Dr0 = 0;
+				context->Dr1 = 0;
+				context->Dr2 = 0;
+				context->Dr3 = 0;
+				context->Dr6 = 0;
+				context->Dr7 = 0;
+			}
 
-                    for (; oft->u1.AddressOfData; ++oft, ++ft)
-                    {
-                        if (IMAGE_SNAP_BY_ORDINAL(oft->u1.Ordinal)) continue;
-                        if (oft->u1.AddressOfData >= image_size)    continue;
+			return result;
+		}
 
-                        const auto* ibn = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(
-                            base + oft->u1.AddressOfData);
-                        const auto name_off = reinterpret_cast<const uint8_t*>(ibn->Name) - base;
-                        if (name_off >= static_cast<ptrdiff_t>(image_size)) continue;
+		LONG __stdcall nt_set_context_thread_stub(HANDLE thread, const CONTEXT* context)
+		{
+			if (context && (context->ContextFlags & CONTEXT_DEBUG_REGISTERS) != 0)
+			{
+				auto sanitized = *context;
+				sanitized.Dr0 = 0;
+				sanitized.Dr1 = 0;
+				sanitized.Dr2 = 0;
+				sanitized.Dr3 = 0;
+				sanitized.Dr6 = 0;
+				sanitized.Dr7 = 0;
+				return nt_set_context_thread_hook.invoke<LONG>(thread, &sanitized);
+			}
 
-                        const char* fn_name = reinterpret_cast<const char*>(ibn->Name);
-                        void* stub = nullptr;
+			return nt_set_context_thread_hook.invoke<LONG>(thread, context);
+		}
 
-                        if (strcmp(fn_name, "IsDebuggerPresent") == 0) stub = reinterpret_cast<void*>(&IsDebuggerPresent_stub);
-                        else if (strcmp(fn_name, "CreateThread") == 0) stub = reinterpret_cast<void*>(&CreateThread_hook);
-                        else if (strcmp(fn_name, "WaitForSingleObject") == 0) stub = reinterpret_cast<void*>(&WaitForSingleObject_hook);
-                        else if (strcmp(fn_name, "GetExitCodeThread") == 0) stub = reinterpret_cast<void*>(&GetExitCodeThread_hook);
-                        else if (strcmp(fn_name, "CloseHandle") == 0) stub = reinterpret_cast<void*>(&CloseHandle_hook);
+		LONG __stdcall nt_set_debug_filter_state_stub(ULONG, ULONG, BOOLEAN)
+		{
+			return status_success;
+		}
 
-                        if (stub)
-                        {
-                            dbg("IAT patch: xlive.%s -> hook", fn_name);
-                            mem_write(&ft->u1.Function, &stub, sizeof(stub));
-                        }
-                    }
-                }
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER) {}
-        }
+		LONG __stdcall nt_yield_execution_stub()
+		{
+			return nt_yield_execution_hook.invoke<LONG>();
+		}
 
-        // -------------------------------------------------------------------------
+		bool mem_write(void* dst, const void* src, const size_t len)
+		{
+			DWORD old = 0;
+			if (!VirtualProtect(dst, len, PAGE_EXECUTE_READWRITE, &old))
+			{
+				return false;
+			}
 
-        void patch_xlive()
-        {
-            const auto base = reinterpret_cast<uint8_t*>(GetModuleHandleA("xlive.dll"));
-            if (!base) return;
+			memcpy(dst, src, len);
+			FlushInstructionCache(GetCurrentProcess(), dst, len);
+			VirtualProtect(dst, len, old, &old);
+			return true;
+		}
 
-            const auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
-            const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
-            const size_t sz = nt->OptionalHeader.SizeOfImage;
+		uint8_t* scan(uint8_t* base, const size_t size, const uint8_t* pat, const size_t pat_len)
+		{
+			if (!pat_len || size < pat_len)
+			{
+				return nullptr;
+			}
 
-            int patch_count = 0;
-            const auto patch_all = [&](const uint8_t* pat, size_t pat_len,
-                size_t off, const uint8_t* data, size_t data_len,
-                const char* tag)
-                {
-                    uint8_t* p = scan(base, sz, pat, pat_len);
-                    while (p)
-                    {
-                        mem_write(p + off, data, data_len);
-                        dbg("patch_all [%s]: hit at +0x%X", tag, static_cast<unsigned>(p - base));
-                        ++patch_count;
-                        p = scan(p + 1, sz - (p - base) - 1, pat, pat_len);
-                    }
-                };
+			for (size_t i = 0; i <= size - pat_len; ++i)
+			{
+				if (!memcmp(base + i, pat, pat_len))
+				{
+					return base + i;
+				}
+			}
 
-            static const uint8_t NOP1 = 0x90;
-            static const uint8_t NOP2[2] = { 0x90, 0x90 };
-            static const uint8_t NOP10[10] = { 0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90 };
-            static const uint8_t NOP12[12] = { 0x90,0x90,0x90,0x90,0x90,0x90, 0x90,0x90,0x90,0x90,0x90,0x90 };
-            static const uint8_t JMP_SHORT = 0xEB;
+			return nullptr;
+		}
 
-            // Fix 1: IsDebuggerPresent IAT redirect + CreateThread/Wait/Exit/Close hooks
-            patch_isdebugger(base, sz);
+		bool get_module_range(const char* name, uint8_t*& base, size_t& image_size)
+		{
+			base = reinterpret_cast<uint8_t*>(GetModuleHandleA(name));
+			if (!base)
+			{
+				return false;
+			}
 
-            // -------------------------------------------------------------------
-            // Fix 2: xlive-research PEVerifyHash bypass (xlive 3.5.95.0)
-            //
-            // Upstream patch:
-            //   000F36B3: 8B FF 55 8B EC -> 31 C0 C2 0C 00
-            //
-            // This returns success from PEVerifyHash without touching the xlive
-            // exports or replacing the dll, so normal GFWL/xlive behavior keeps
-            // flowing through the retail implementation.
-            {
-                constexpr std::uintptr_t rva = 0x000F36B3;
-                static const uint8_t expected[] = { 0x8B, 0xFF, 0x55, 0x8B, 0xEC };
-                static const uint8_t ret_success[] = { 0x31, 0xC0, 0xC2, 0x0C, 0x00 };
+			const auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+			if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+			{
+				return false;
+			}
 
-                if (rva + sizeof(expected) <= sz)
-                {
-                    auto* const target = base + rva;
-                    if (!std::memcmp(target, expected, sizeof(expected)))
-                    {
-                        mem_write(target, ret_success, sizeof(ret_success));
-                        dbg("patch [F2 PEVerifyHash]: applied at +0x%X", static_cast<unsigned>(rva));
-                        ++patch_count;
-                    }
-                    else if (!std::memcmp(target, ret_success, sizeof(ret_success)))
-                    {
-                        dbg("patch [F2 PEVerifyHash]: already applied");
-                    }
-                    else
-                    {
-                        dbg("patch [F2 PEVerifyHash]: signature mismatch at +0x%X", static_cast<unsigned>(rva));
-                    }
-                }
-            }
+			const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+			if (nt->Signature != IMAGE_NT_SIGNATURE)
+			{
+				return false;
+			}
 
-            // -------------------------------------------------------------------
-            // Fix 3: NOP PEB.BeingDebugged pointer corruption
-            {
-                static const uint8_t pat[] = {
-                    0x81,0xEF,0x35,0x01,0x00,0x00,
-                    0x81,0xEE,0x20,0xF6,0x01,0x00
-                };
-                patch_all(pat, sizeof(pat), 0, NOP12, 12, "F2 PEB ptr corrupt");
-            }
+			image_size = nt->OptionalHeader.SizeOfImage;
+			return true;
+		}
 
-            // -------------------------------------------------------------------
-            // Fix 2B: bypass INT3 breakpoint scans on sub_5F75F8
-            {
-                static const uint8_t cc_primary[][5] = {
-                    {0x80,0x39,0xCC,0x75,0x1D},
-                    {0x80,0x39,0xCC,0x75,0x05},
-                    {0x80,0x3A,0xCC,0x75,0x08},
-                    {0x80,0x38,0xCC,0x75,0x10},
-                    {0x80,0x38,0xCC,0x75,0x04},
-                    {0x80,0x3A,0xCC,0x75,0x0A},
-                    {0x80,0x38,0xCC,0x75,0x0F},
-                    {0x80,0x38,0xCC,0x75,0x0A},
-                    {0x80,0x3A,0xCC,0x75,0x07},
-                    {0x80,0x3E,0xCC,0x75,0x0A},
-                };
-                for (const auto& pat : cc_primary)
-                {
-                    uint8_t* p = scan(base, sz, pat, 5);
-                    while (p)
-                    {
-                        mem_write(p + 3, &JMP_SHORT, 1);
-                        dbg("patch [F2B cc_primary]: hit at +0x%X", static_cast<unsigned>(p - base));
-                        ++patch_count;
-                        p = scan(p + 1, sz - (p - base) - 1, pat, 5);
-                    }
-                }
+		void clear_peb_debug_flags()
+		{
+			const auto teb = __readfsdword(0x18);
+			const auto peb = *reinterpret_cast<uint8_t**>(teb + 0x30);
+			if (!peb)
+			{
+				return;
+			}
 
-                struct CcPatch { const uint8_t* pat; size_t len; size_t jnz_off; const char* tag; };
-                static const CcPatch cc_var[] = {
-                    {(const uint8_t*)"\x80\x7D\xC7\xCC\x75\x07\x81\x75\xBC\xDB\x00\x00\x00", 13, 4, "xor DBh"},
-                    {(const uint8_t*)"\x80\x7D\xC3\xCC\x75\x04\xC1\x7D\xBC\x1A",             10, 4, "sar 1Ah"},
-                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x0A\x81\xA5\xBC\xFE\xFF\xFF\x81\x00\x00\x00", 19, 7, "and 81h"},
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x07\x81\x43\x04\xC3\x00\x00\x00", 13, 4, "add C3h"},
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x10\x81\x45\xA0\x10\x01\x00\x00", 13, 4, "add 110h"},
-                    {(const uint8_t*)"\x80\xBD\xC3\xFE\xFF\xFF\xCC\x75\x1D",  9, 7, "early exit A"},
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1B",              6, 4, "early exit B"},
-                    {(const uint8_t*)"\x80\x7D\xAB\xCC\x75\x1C",              6, 4, "early exit C"},
-                    {(const uint8_t*)"\x80\xBD\xDB\xFE\xFF\xFF\xCC\x75\x18",  9, 7, "report detect"},
-                };
-                for (const auto& e : cc_var)
-                {
-                    uint8_t* p = scan(base, sz, e.pat, e.len);
-                    while (p)
-                    {
-                        mem_write(p + e.jnz_off, &JMP_SHORT, 1);
-                        dbg("patch [F2B cc_var %s]: hit at +0x%X", e.tag, static_cast<unsigned>(p - base));
-                        ++patch_count;
-                        p = scan(p + 1, sz - (p - base) - 1, e.pat, e.len);
-                    }
-                }
-            }
+			peb[2] = 0; // BeingDebugged
+			*reinterpret_cast<DWORD*>(peb + 0x68) = 0; // NtGlobalFlag on x86
+		}
 
-            // Fix 3A: NOP int 1 SEH traps
-            {
-                static const uint8_t pat[] = { 0x83,0x65,0xFC,0x00, 0xCD,0x01 };
-                patch_all(pat, sizeof(pat), 4, NOP2, 2, "F3A int1");
-            }
+		void patch_xlive_imports(uint8_t* base, const size_t image_size)
+		{
+			__try
+			{
+				const auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+				const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+				const auto import_rva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
 
-            // Fix 3B: NOP int 3 SEH trap — magic SI/DI sentinel
-            {
-                static const uint8_t pat[] = { 0x66,0xBE,0x47,0x46, 0x66,0xBF,0x4D,0x4A, 0xCC };
-                patch_all(pat, sizeof(pat), 8, &NOP1, 1, "F3B int3");
-            }
+				if (!import_rva || import_rva >= image_size)
+				{
+					return;
+				}
 
-            // Fix 3C: NOP ud2 SEH trap
-            {
-                static const uint8_t pat[] = { 0xC7,0x45,0xFC,0x02,0x00,0x00,0x00, 0x0F,0x0B };
-                patch_all(pat, sizeof(pat), 7, NOP2, 2, "F3C ud2");
-            }
+				auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + import_rva);
+				for (; desc->Name && desc->Name < image_size; ++desc)
+				{
+					const auto* const dll = reinterpret_cast<const char*>(base + desc->Name);
+					if (_stricmp(dll, "kernel32.dll") != 0 && _stricmp(dll, "kernel32") != 0)
+					{
+						continue;
+					}
 
-            // Fix 4: NOP int 41h SEH traps
-            {
-                static const uint8_t pat[] = { 0x66,0xB8,0x4F,0x00, 0xCD,0x41 };
-                patch_all(pat, sizeof(pat), 4, NOP2, 2, "F4 int41h");
-            }
+					if (!desc->OriginalFirstThunk || !desc->FirstThunk)
+					{
+						continue;
+					}
 
-            // Fix 5: NOP divide-by-zero SEH traps
-            {
-                static const uint8_t pat[] = { 0x33,0xC0, 0xF7,0xF0 };
-                patch_all(pat, sizeof(pat), 2, NOP2, 2, "F5 divzero");
-            }
+					auto* original_thunk = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->OriginalFirstThunk);
+					auto* thunk = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->FirstThunk);
 
-            // Fix 6: NOP POPFW trap-flag traps
-            {
-                static const uint8_t pat[] = { 0x66,0xFF,0x75 };
-                uint8_t* p = scan(base, sz, pat, sizeof(pat));
-                while (p)
-                {
-                    if (p[4] == 0x66 && p[5] == 0x9D)
-                    {
-                        mem_write(p + 4, NOP2, 2);
-                        dbg("patch [F6 popfw]: hit at +0x%X", static_cast<unsigned>(p - base));
-                        ++patch_count;
-                    }
-                    p = scan(p + 1, sz - (p - base) - 1, pat, sizeof(pat));
-                }
-            }
+					for (; original_thunk->u1.AddressOfData; ++original_thunk, ++thunk)
+					{
+						if (IMAGE_SNAP_BY_ORDINAL(original_thunk->u1.Ordinal)
+							|| original_thunk->u1.AddressOfData >= image_size)
+						{
+							continue;
+						}
 
-            // Fix 7: NOP PEB.BeingDebugged XOR in XLiveInitialize (xlive_5000)
-            {
-                static const uint8_t pat[] = {
-                    0x64,0xA1,0x18,0x00,0x00,0x00,
-                    0x8B,0x40,0x30,
-                    0x0F,0xB6,0x40,0x02,
-                    0x8B,0x4D,0xD4,
-                    0x89,0x01,
-                    0x39,0x55,0xD8,
-                    0x74,0x0A
-                };
-                patch_all(pat, sizeof(pat), sizeof(pat), NOP10, 10, "F7 init XOR");
-            }
+						const auto* import = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + original_thunk->u1.AddressOfData);
+						const auto* const name = reinterpret_cast<const char*>(import->Name);
+						void* replacement = nullptr;
 
-            dbg("patch_xlive: applied %d patches total", patch_count);
-        }
+						if (strcmp(name, "IsDebuggerPresent") == 0)
+						{
+							replacement = reinterpret_cast<void*>(&is_debugger_present_stub);
+						}
+						else if (strcmp(name, "CheckRemoteDebuggerPresent") == 0)
+						{
+							replacement = reinterpret_cast<void*>(&check_remote_debugger_present_stub);
+						}
+						else if (strcmp(name, "OutputDebugStringA") == 0)
+						{
+							replacement = reinterpret_cast<void*>(&output_debug_string_a_stub);
+						}
+						else if (strcmp(name, "OutputDebugStringW") == 0)
+						{
+							replacement = reinterpret_cast<void*>(&output_debug_string_w_stub);
+						}
 
-        // -------------------------------------------------------------------------
+						if (replacement)
+						{
+							mem_write(&thunk->u1.Function, &replacement, sizeof(replacement));
+							dbg("patched xlive import %s", name);
+						}
+					}
+				}
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+			}
+		}
 
-        void clear_being_debugged()
-        {
-            const DWORD teb = __readfsdword(0x18);
-            reinterpret_cast<BYTE*>(*reinterpret_cast<ULONG_PTR*>(teb + 0x30))[2] = 0;
-        }
+		void patch_peverifyhash(uint8_t* base, const size_t image_size)
+		{
+			static const uint8_t prologue[] = {
+				0x8B, 0xFF, 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x20,
+				0x53, 0x56, 0x57, 0x8D, 0x45, 0xE0, 0x33, 0xF6,
+				0x50, 0xFF, 0x75, 0x0C, 0x8B, 0xF9
+			};
+			static const uint8_t ret_success[] = { 0x31, 0xC0, 0xC2, 0x0C, 0x00 };
 
-        void hook_ntqip()
-        {
-            const auto ntdll = GetModuleHandleA("ntdll.dll");
-            if (!ntdll) return;
-            const auto fn = GetProcAddress(ntdll, "NtQueryInformationProcess");
-            if (!fn) return;
-            ntqip_hook.create(fn, NtQueryInformationProcess_hook);
-            dbg("hook_ntqip: NtQueryInformationProcess hooked");
-        }
+			auto* target = scan(base, image_size, prologue, sizeof(prologue));
+			if (!target && peverifyhash_rva + sizeof(ret_success) <= image_size)
+			{
+				target = base + peverifyhash_rva;
+			}
 
-        DWORD WINAPI cleaner_thread(LPVOID)
-        {
-            while (true) { clear_being_debugged(); Sleep(1); }
-            return 0;
-        }
+			if (!target)
+			{
+				dbg("PEVerifyHash patch skipped: signature missing");
+				return;
+			}
 
-    } // anonymous namespace
+			if (!memcmp(target, ret_success, sizeof(ret_success)))
+			{
+				dbg("PEVerifyHash patch already applied");
+				return;
+			}
 
-    // -------------------------------------------------------------------------
+			if (memcmp(target, prologue, sizeof(ret_success)) != 0)
+			{
+				dbg("PEVerifyHash patch skipped: unexpected bytes at +0x%X", static_cast<unsigned>(target - base));
+				return;
+			}
 
-    void apply_early()
-    {
-        if (!GetModuleHandleA("xlive.dll"))
-        {
-            MessageBoxA(nullptr, "xlive.dll not loaded — patches skipped", "xlive", MB_OK);
-            return;
-        }
-        dbg("apply_early: begin");
-        ensure_fake_pool();
-        patch_xlive();
-        clear_being_debugged();
-        hook_ntqip();
-        CloseHandle(CreateThread(nullptr, 0, cleaner_thread, nullptr, 0, nullptr));
-        dbg("apply_early: done");
-    }
+			mem_write(target, ret_success, sizeof(ret_success));
+			dbg("PEVerifyHash patch applied at +0x%X", static_cast<unsigned>(target - base));
+		}
 
-    class component final : public component_interface
-    {
-    public:
-        void post_load() override
-        {
-            dbg("post_load: re-applying patches");
-            patch_xlive();
-            clear_being_debugged();
-        }
-    };
+		void patch_xlive()
+		{
+			uint8_t* base = nullptr;
+			size_t image_size = 0;
+
+			if (!get_module_range("xlive.dll", base, image_size))
+			{
+				return;
+			}
+
+			patch_peverifyhash(base, image_size);
+			patch_xlive_imports(base, image_size);
+		}
+
+		void create_nt_hook(const char* name, void* stub, utils::hook::detour& hook)
+		{
+			const auto ntdll = GetModuleHandleA("ntdll.dll");
+			if (!ntdll)
+			{
+				return;
+			}
+
+			const auto target = GetProcAddress(ntdll, name);
+			if (!target)
+			{
+				return;
+			}
+
+			hook.create(target, stub);
+			dbg("hooked %s", name);
+		}
+
+		void hook_ntdll()
+		{
+			create_nt_hook("NtQueryInformationProcess", nt_query_information_process_stub, nt_query_information_process_hook);
+			create_nt_hook("NtSetInformationThread", nt_set_information_thread_stub, nt_set_information_thread_hook);
+			create_nt_hook("NtSetInformationProcess", nt_set_information_process_stub, nt_set_information_process_hook);
+			create_nt_hook("NtQuerySystemInformation", nt_query_system_information_stub, nt_query_system_information_hook);
+			create_nt_hook("NtGetContextThread", nt_get_context_thread_stub, nt_get_context_thread_hook);
+			create_nt_hook("NtSetContextThread", nt_set_context_thread_stub, nt_set_context_thread_hook);
+			create_nt_hook("NtSetDebugFilterState", nt_set_debug_filter_state_stub, nt_set_debug_filter_state_hook);
+			create_nt_hook("NtYieldExecution", nt_yield_execution_stub, nt_yield_execution_hook);
+		}
+
+		DWORD WINAPI peb_cleaner_thread(LPVOID)
+		{
+			while (true)
+			{
+				clear_peb_debug_flags();
+				Sleep(16);
+			}
+		}
+	}
+
+	void apply_early()
+	{
+		dbg("apply_early: begin");
+		clear_peb_debug_flags();
+		hook_ntdll();
+		patch_xlive();
+		CloseHandle(CreateThread(nullptr, 0, peb_cleaner_thread, nullptr, 0, nullptr));
+		dbg("apply_early: done");
+	}
+
+	class component final : public component_interface
+	{
+	public:
+		void post_load() override
+		{
+			clear_peb_debug_flags();
+			patch_xlive();
+		}
+	};
 }
 
 #ifdef DEBUG
