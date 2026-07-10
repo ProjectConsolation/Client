@@ -368,7 +368,41 @@ namespace xlive
             patch_isdebugger(base, sz);
 
             // -------------------------------------------------------------------
-            // Fix 2: NOP PEB.BeingDebugged pointer corruption
+            // Fix 2: xlive-research PEVerifyHash bypass (xlive 3.5.95.0)
+            //
+            // Upstream patch:
+            //   000F36B3: 8B FF 55 8B EC -> 31 C0 C2 0C 00
+            //
+            // This returns success from PEVerifyHash without touching the xlive
+            // exports or replacing the dll, so normal GFWL/xlive behavior keeps
+            // flowing through the retail implementation.
+            {
+                constexpr std::uintptr_t rva = 0x000F36B3;
+                static const uint8_t expected[] = { 0x8B, 0xFF, 0x55, 0x8B, 0xEC };
+                static const uint8_t ret_success[] = { 0x31, 0xC0, 0xC2, 0x0C, 0x00 };
+
+                if (rva + sizeof(expected) <= sz)
+                {
+                    auto* const target = base + rva;
+                    if (!std::memcmp(target, expected, sizeof(expected)))
+                    {
+                        mem_write(target, ret_success, sizeof(ret_success));
+                        dbg("patch [F2 PEVerifyHash]: applied at +0x%X", static_cast<unsigned>(rva));
+                        ++patch_count;
+                    }
+                    else if (!std::memcmp(target, ret_success, sizeof(ret_success)))
+                    {
+                        dbg("patch [F2 PEVerifyHash]: already applied");
+                    }
+                    else
+                    {
+                        dbg("patch [F2 PEVerifyHash]: signature mismatch at +0x%X", static_cast<unsigned>(rva));
+                    }
+                }
+            }
+
+            // -------------------------------------------------------------------
+            // Fix 3: NOP PEB.BeingDebugged pointer corruption
             {
                 static const uint8_t pat[] = {
                     0x81,0xEF,0x35,0x01,0x00,0x00,

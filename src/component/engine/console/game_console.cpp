@@ -44,6 +44,7 @@ namespace game_console
 		bool process_shutting_down = false;
 		bool component_ready = false;
 		bool hooks_installed = false;
+		bool console_print_hook_installed = false;
 		bool was_f1_down = false;
 		bool was_oem5_down = false;
 		bool was_oem102_down = false;
@@ -61,6 +62,11 @@ namespace game_console
 			std::size_t selection_start = 0;
 			std::size_t selection_end = 0;
 			int history_index = -1;
+			bool history_snapshot_valid = false;
+			std::string history_snapshot_input{};
+			std::size_t history_snapshot_cursor = 0;
+			std::size_t history_snapshot_selection_start = 0;
+			std::size_t history_snapshot_selection_end = 0;
 			int scroll_offset = 0;
 			bool output_visible = false;
 			bool output_fullscreen = false;
@@ -69,6 +75,10 @@ namespace game_console
 			std::vector<std::string> auto_complete_matches{};
 			std::string auto_complete_query{};
 			std::string auto_complete_choice{};
+			bool auto_complete_is_dvar_arg = false;
+			std::size_t auto_complete_query_start = 0;
+			std::size_t auto_complete_query_length = 0;
+			std::size_t auto_complete_selected_index = 0;
 			bool may_auto_complete = false;
 		};
 
@@ -101,6 +111,15 @@ namespace game_console
 
 		HWND get_window();
 		void draw_console_overlay();
+		struct overlay_bounds;
+		void draw_hint_box(const overlay_bounds& bounds, float hint_x, int lines, float* color, float offset_y = 0.0f);
+		void draw_hint_text(const overlay_bounds& bounds, float hint_x, int line, const char* text, float* color, float offset = 0.0f, float offset_y = 0.0f);
+		bool is_dvar_command_token(std::string_view token);
+		std::string get_auto_complete_common_prefix();
+		void apply_auto_complete_text(std::string text, bool append_space);
+		void sync_auto_complete_choice();
+		void commit_auto_complete_choice(const bool append_space);
+		void cycle_auto_complete_choice(const int direction);
 		void insert_character(char ch);
 		void insert_text(std::string text);
 		void set_cursor_position(std::size_t cursor);
@@ -112,7 +131,19 @@ namespace game_console
 
 		void install_hooks_if_ready()
 		{
-			if (hooks_installed || process_shutting_down)
+			if (process_shutting_down)
+			{
+				return;
+			}
+
+			if (!console_print_hook_installed && game::CL_ConsolePrint.get())
+			{
+				cl_console_print_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_ConsolePrint.get()), cl_console_print_stub);
+				console_print_hook_installed = true;
+				component_ready = true;
+			}
+
+			if (hooks_installed)
 			{
 				return;
 			}
@@ -124,7 +155,6 @@ namespace game_console
 			}
 
 			cl_key_event_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_KeyEvent_.get()), cl_key_event_stub);
-			cl_console_print_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_ConsolePrint.get()), cl_console_print_stub);
 			con_set_console_rect_hook.create(reinterpret_cast<std::uintptr_t>(game::Con_SetConsoleRect.get()), con_set_console_rect_stub);
 			hooks_installed = true;
 			component_ready = true;
@@ -879,6 +909,10 @@ namespace game_console
 			con->auto_complete_matches.clear();
 			con->auto_complete_query.clear();
 			con->auto_complete_choice.clear();
+			con->auto_complete_is_dvar_arg = false;
+			con->auto_complete_query_start = 0;
+			con->auto_complete_query_length = 0;
+			con->auto_complete_selected_index = 0;
 			con->may_auto_complete = false;
 		}
 
@@ -1042,13 +1076,18 @@ namespace game_console
 
 			input = to_lower(std::move(input));
 			std::vector<std::string> exact_matches{};
-			std::vector<std::string> prefix_matches{};
-			std::vector<std::string> contains_matches{};
+			std::vector<std::string> dvar_prefix_matches{};
+			std::vector<std::string> cmd_prefix_matches{};
+			std::vector<std::string> dvar_contains_matches{};
+			std::vector<std::string> cmd_contains_matches{};
 			std::unordered_set<std::string> exact_seen{};
-			std::unordered_set<std::string> prefix_seen{};
-			std::unordered_set<std::string> contains_seen{};
+			std::unordered_set<std::string> matched_seen{};
+			std::unordered_set<std::string> dvar_prefix_seen{};
+			std::unordered_set<std::string> cmd_prefix_seen{};
+			std::unordered_set<std::string> dvar_contains_seen{};
+			std::unordered_set<std::string> cmd_contains_seen{};
 
-			auto add_candidate = [&](const std::string& candidate)
+			auto add_candidate = [&](const std::string& candidate, const bool is_dvar)
 				{
 					auto name = to_lower(candidate);
 
@@ -1070,28 +1109,42 @@ namespace game_console
 					}
 					else if (name.rfind(input, 0) == 0)
 					{
-						if (prefix_seen.insert(name).second)
+						if (!matched_seen.insert(name).second)
 						{
-							prefix_matches.emplace_back(candidate);
+							return;
+						}
+
+						auto& seen = is_dvar ? dvar_prefix_seen : cmd_prefix_seen;
+						auto& matches = is_dvar ? dvar_prefix_matches : cmd_prefix_matches;
+						if (seen.insert(name).second)
+						{
+							matches.emplace_back(candidate);
 						}
 					}
 					else if (name.find(input) != std::string::npos)
 					{
-						if (contains_seen.insert(name).second)
+						if (!matched_seen.insert(name).second)
 						{
-							contains_matches.emplace_back(candidate);
+							return;
+						}
+
+						auto& seen = is_dvar ? dvar_contains_seen : cmd_contains_seen;
+						auto& matches = is_dvar ? dvar_contains_matches : cmd_contains_matches;
+						if (seen.insert(name).second)
+						{
+							matches.emplace_back(candidate);
 						}
 					}
 				};
 
-			for (const auto& name : cached_command_names)
-			{
-				add_candidate(name);
-			}
-
 			for (const auto& name : cached_dvar_names)
 			{
-				add_candidate(name);
+				add_candidate(name, true);
+			}
+
+			for (const auto& name : cached_command_names)
+			{
+				add_candidate(name, false);
 			}
 
 			auto sort_matches = [](std::vector<std::string>& matches)
@@ -1108,14 +1161,166 @@ namespace game_console
 				return exact_matches;
 			}
 
-			if (!prefix_matches.empty())
+			if (!dvar_prefix_matches.empty() || !cmd_prefix_matches.empty())
 			{
-				sort_matches(prefix_matches);
-				return prefix_matches;
+				sort_matches(dvar_prefix_matches);
+				sort_matches(cmd_prefix_matches);
+				dvar_prefix_matches.insert(
+					dvar_prefix_matches.end(),
+					std::make_move_iterator(cmd_prefix_matches.begin()),
+					std::make_move_iterator(cmd_prefix_matches.end()));
+				return dvar_prefix_matches;
 			}
 
-			sort_matches(contains_matches);
-			return contains_matches;
+			sort_matches(dvar_contains_matches);
+			sort_matches(cmd_contains_matches);
+			dvar_contains_matches.insert(
+				dvar_contains_matches.end(),
+				std::make_move_iterator(cmd_contains_matches.begin()),
+				std::make_move_iterator(cmd_contains_matches.end()));
+			return dvar_contains_matches;
+		}
+
+		void draw_dvar_match_details(const overlay_bounds& bounds, const float hint_x, game::dvar_s* dvar, char* description_buffer, const std::size_t description_buffer_size)
+		{
+			std::string current_value{};
+			std::string latched_value{};
+			std::string default_value{};
+			std::string domain{};
+
+			if (dvar)
+			{
+				const char* current_value_ptr = nullptr;
+				const char* default_value_ptr = nullptr;
+				if (try_get_dvar_value_ptr(dvar, dvar->current, &current_value_ptr))
+				{
+					std::string raw_value{};
+					if (try_copy_c_string(current_value_ptr, raw_value))
+					{
+						current_value = sanitize_display_text(raw_value);
+					}
+				}
+
+				if ((dvar->flags & game::dvar_flags::latched) != game::dvar_flags::none)
+				{
+					const char* latched_value_ptr = nullptr;
+					if (try_get_dvar_value_ptr(dvar, dvar->latched, &latched_value_ptr))
+					{
+						std::string raw_value{};
+						if (try_copy_c_string(latched_value_ptr, raw_value))
+						{
+							latched_value = sanitize_display_text(raw_value);
+						}
+					}
+				}
+
+				if (try_get_dvar_value_ptr(dvar, dvar->reset, &default_value_ptr))
+				{
+					std::string raw_value{};
+					if (try_copy_c_string(default_value_ptr, raw_value))
+					{
+						default_value = sanitize_display_text(raw_value);
+					}
+				}
+
+				game::dvar_type domain_type{};
+				game::DvarLimits domain_limits{};
+				if (try_copy_dvar_domain(dvar, domain_type, domain_limits))
+				{
+					domain = sanitize_display_text(dvars::dvar_get_domain(domain_type, domain_limits));
+				}
+			}
+
+			const auto has_description = dvar
+				&& safe_read_dvar_description(dvar, description_buffer, description_buffer_size)
+				&& !sanitize_display_text(description_buffer).empty();
+			const auto has_domain = !domain.empty();
+			const auto has_latched = !latched_value.empty();
+			const auto line_count = dvar ? (has_latched ? 3 : 2) : 1;
+			draw_hint_box(bounds, hint_x, line_count, color_hint_box);
+			draw_hint_text(bounds, hint_x, 0, dvar ? dvar->name : "<unavailable>", dvar ? color_dvar_match : color_cmd_match);
+
+			if (!dvar)
+			{
+				return;
+			}
+
+			const auto offset = std::max(96.0f, (bounds.screen_max[0] - hint_x) / 2.6f);
+			draw_hint_text(bounds, hint_x, 0, current_value.empty() ? "<unavailable>" : current_value.c_str(), color_dvar_value, offset);
+			auto value_line = 1;
+			if (has_latched)
+			{
+				draw_hint_text(bounds, hint_x, 1, "  latched value", color_dvar_inactive);
+				draw_hint_text(bounds, hint_x, 1, latched_value.c_str(), color_dvar_inactive, offset);
+				value_line = 2;
+			}
+			draw_hint_text(bounds, hint_x, value_line, "  default", color_dvar_inactive);
+			draw_hint_text(bounds, hint_x, value_line, default_value.empty() ? "<unavailable>" : default_value.c_str(), color_dvar_inactive, offset);
+
+			if (has_description || has_domain)
+			{
+				const auto details_offset_y = (line_count * bounds.font_height) + 16.0f;
+				const auto detail_lines = (has_description ? 1 : 0) + (has_domain ? 1 : 0);
+				draw_hint_box(bounds, hint_x, detail_lines, color_hint_box, details_offset_y);
+
+				auto detail_line = 0;
+				if (has_description)
+				{
+					const auto description = sanitize_display_text(description_buffer);
+					draw_hint_text(bounds, hint_x, detail_line, description.c_str(), color_dvar_inactive, 0.0f, details_offset_y);
+					++detail_line;
+				}
+
+				if (has_domain)
+				{
+					draw_hint_text(bounds, hint_x, detail_line, domain.c_str(), color_dvar_inactive, 0.0f, details_offset_y);
+				}
+			}
+		}
+
+		void invalidate_history_snapshot()
+		{
+			if (!con)
+			{
+				return;
+			}
+
+			con->history_snapshot_valid = false;
+		}
+
+		void save_history_snapshot()
+		{
+			if (!con || con->history_snapshot_valid)
+			{
+				return;
+			}
+
+			con->history_snapshot_input = con->input;
+			con->history_snapshot_cursor = con->cursor;
+			con->history_snapshot_selection_start = con->selection_start;
+			con->history_snapshot_selection_end = con->selection_end;
+			con->history_snapshot_valid = true;
+		}
+
+		void restore_history_snapshot()
+		{
+			if (!con || !con->history_snapshot_valid)
+			{
+				return;
+			}
+
+			con->input = con->history_snapshot_input;
+			con->cursor = std::min(con->history_snapshot_cursor, con->input.size());
+			con->selection_start = std::min(con->history_snapshot_selection_start, con->input.size());
+			con->selection_end = std::min(con->history_snapshot_selection_end, con->input.size());
+			if (con->selection_start == con->selection_end)
+			{
+				con->selection_start = con->cursor;
+				con->selection_end = con->cursor;
+			}
+
+			con->history_snapshot_valid = false;
+			refresh_auto_complete();
 		}
 
 		void refresh_auto_complete()
@@ -1147,19 +1352,49 @@ namespace game_console
 				return;
 			}
 
+			const bool has_prefix = !con->input.empty() && (con->input[0] == '/' || con->input[0] == '\\');
+			con->auto_complete_is_dvar_arg = false;
+			con->auto_complete_query_start = 0;
+			con->auto_complete_query_length = 0;
+			con->auto_complete_selected_index = 0;
 			const auto separator = input.find(' ');
-			const auto query = separator == std::string::npos ? input : input.substr(0, separator);
-			const auto exact = separator != std::string::npos;
+			auto query = input;
+			auto exact = false;
+			std::size_t query_start = has_prefix ? 1u : 0u;
+
+			if (separator != std::string::npos)
+			{
+				const auto command = input.substr(0, separator);
+				const auto arg_begin = input.find_first_not_of(' ', separator + 1);
+				if (is_dvar_command_token(command) && arg_begin != std::string::npos)
+				{
+					query = input.substr(arg_begin);
+					con->auto_complete_is_dvar_arg = true;
+					query_start = (has_prefix ? 1u : 0u) + arg_begin;
+				}
+				else
+				{
+					query = command;
+					exact = true;
+					query_start = has_prefix ? 1u : 0u;
+				}
+			}
+			else
+			{
+				query_start = has_prefix ? 1u : 0u;
+			}
 
 			con->auto_complete_query = query;
+			con->auto_complete_query_start = query_start;
+			con->auto_complete_query_length = query.size();
 			con->auto_complete_matches = gather_auto_complete_matches(query, exact);
 			if (con->auto_complete_matches.empty())
 			{
 				rebuild_auto_complete_cache();
 				con->auto_complete_matches = gather_auto_complete_matches(query, exact);
 			}
-			con->auto_complete_choice = con->auto_complete_matches.empty() ? std::string{} : con->auto_complete_matches.front();
-			con->may_auto_complete = !con->auto_complete_choice.empty();
+			con->auto_complete_selected_index = 0;
+			sync_auto_complete_choice();
 		}
 
 		void handle_auto_complete()
@@ -1180,28 +1415,30 @@ namespace game_console
 				rebuild_auto_complete_cache();
 			}
 
-			refresh_auto_complete();
+			if (con->auto_complete_matches.empty())
+			{
+				refresh_auto_complete();
+			}
+
 			if (!con->may_auto_complete || con->auto_complete_choice.empty())
 			{
 				return;
 			}
 
-			const auto first_char = con->input.front();
-			const bool has_prefix = first_char == '\\' || first_char == '/';
-			con->input.clear();
-			set_cursor_position(0);
-
-			if (has_prefix)
+			if (con->auto_complete_matches.size() == 1)
 			{
-				con->input.push_back(first_char);
-				set_cursor_position(1);
+				commit_auto_complete_choice(true);
+				return;
 			}
 
-			insert_text(con->auto_complete_choice);
-			if (con->cursor < max_input_chars)
+			const auto common_prefix = get_auto_complete_common_prefix();
+			if (common_prefix.size() > con->auto_complete_query.size())
 			{
-				insert_character(' ');
+				apply_auto_complete_text(common_prefix, false);
+				return;
 			}
+
+			cycle_auto_complete_choice(1);
 		}
 
 		void draw_box(const float x, const float y, const float width, const float height, float* color)
@@ -1366,6 +1603,7 @@ namespace game_console
 			con->input.erase(selection_begin, selection_end - selection_begin);
 			con->cursor = selection_begin;
 			clear_input_selection();
+			invalidate_history_snapshot();
 			return true;
 		}
 
@@ -1420,7 +1658,7 @@ namespace game_console
 				color);
 		}
 
-		void draw_hint_box(const overlay_bounds& bounds, const float hint_x, const int lines, float* color, const float offset_y = 0.0f)
+		void draw_hint_box(const overlay_bounds& bounds, const float hint_x, const int lines, float* color, const float offset_y)
 		{
 			const auto height = lines * bounds.font_height + 12.0f;
 			const auto y = bounds.y - 3.0f + bounds.font_height + 12.0f + offset_y;
@@ -1428,10 +1666,125 @@ namespace game_console
 			draw_box(hint_x - 6.0f, y, width, height, color);
 		}
 
-		void draw_hint_text(const overlay_bounds& bounds, const float hint_x, const int line, const char* text, float* color, const float offset = 0.0f, const float offset_y = 0.0f)
+		void draw_hint_text(const overlay_bounds& bounds, const float hint_x, const int line, const char* text, float* color, const float offset, const float offset_y)
 		{
 			const auto y = bounds.font_height + bounds.y + (bounds.font_height * (line + 1)) + 15.0f + offset_y;
 			draw_text(text, hint_x + offset, y, color, 1.0f);
+		}
+
+		bool is_dvar_command_token(std::string_view token)
+		{
+			if (token.empty())
+			{
+				return false;
+			}
+
+			auto lower = to_lower(std::string(token));
+			return lower == "set"
+				|| lower == "seta"
+				|| lower == "sets"
+				|| lower == "reset"
+				|| lower == "toggle"
+				|| lower == "togglep";
+		}
+
+		std::string get_auto_complete_common_prefix()
+		{
+			if (!con || con->auto_complete_matches.empty())
+			{
+				return {};
+			}
+
+			auto prefix = con->auto_complete_matches.front();
+			for (std::size_t i = 1; i < con->auto_complete_matches.size() && !prefix.empty(); ++i)
+			{
+				const auto& match = con->auto_complete_matches[i];
+				const auto limit = std::min(prefix.size(), match.size());
+				std::size_t length = limit;
+				while (length > 0 && _strnicmp(prefix.c_str(), match.c_str(), static_cast<int>(length)) != 0)
+				{
+					--length;
+				}
+
+				prefix.resize(length);
+			}
+
+			return prefix;
+		}
+
+		void apply_auto_complete_text(std::string text, const bool append_space)
+		{
+			if (!con)
+			{
+				return;
+			}
+
+			const auto start = std::min(con->auto_complete_query_start, con->input.size());
+			const auto length = std::min(con->auto_complete_query_length, con->input.size() - start);
+			const auto inserted_length = text.size();
+			con->input.replace(start, length, std::move(text));
+			con->cursor = start + inserted_length;
+
+			if (append_space && con->cursor < max_input_chars)
+			{
+				con->input.insert(con->cursor, 1, ' ');
+				++con->cursor;
+			}
+
+			clear_input_selection();
+			refresh_auto_complete();
+		}
+
+		void sync_auto_complete_choice()
+		{
+			if (!con || con->auto_complete_matches.empty())
+			{
+				if (con)
+				{
+					con->auto_complete_choice.clear();
+					con->may_auto_complete = false;
+				}
+				return;
+			}
+
+			con->auto_complete_selected_index %= con->auto_complete_matches.size();
+			con->auto_complete_choice = con->auto_complete_matches[con->auto_complete_selected_index];
+			con->may_auto_complete = !con->auto_complete_choice.empty();
+		}
+
+		void cycle_auto_complete_choice(const int direction)
+		{
+			if (!con || con->auto_complete_matches.size() <= 1)
+			{
+				return;
+			}
+
+			const auto count = con->auto_complete_matches.size();
+			const auto current = static_cast<int>(con->auto_complete_selected_index);
+			auto next = current + direction;
+			while (next < 0)
+			{
+				next += static_cast<int>(count);
+			}
+			next %= static_cast<int>(count);
+			con->auto_complete_selected_index = static_cast<std::size_t>(next);
+			sync_auto_complete_choice();
+		}
+
+		void commit_auto_complete_choice(const bool append_space)
+		{
+			if (!con || con->auto_complete_matches.empty())
+			{
+				return;
+			}
+
+			sync_auto_complete_choice();
+			if (con->auto_complete_choice.empty())
+			{
+				return;
+			}
+
+			apply_auto_complete_text(con->auto_complete_choice, append_space);
 		}
 
 		void draw_input(const overlay_bounds& bounds)
@@ -1467,12 +1820,8 @@ namespace game_console
 			if (blink_on)
 			{
 				const auto cursor_x = draw_x + get_text_width(std::string_view(con->input).substr(0, cursor_position));
-				draw_text("|", cursor_x, input_y, color_white, 1.0f);
-			}
-
-			if (con->output_visible)
-			{
-				return;
+				const auto caret_width = get_text_width("|");
+				draw_text("|", cursor_x - (caret_width * 0.25f), input_y, color_white, 1.0f);
 			}
 
 			if (con->auto_complete_query.empty() || con->auto_complete_matches.empty())
@@ -1496,76 +1845,17 @@ namespace game_console
 
 			if (con->auto_complete_matches.size() == 1)
 			{
-				auto* const dvar = game::Dvar_FindVar(con->auto_complete_matches[0].c_str());
 				char description_buffer[256]{};
-				std::string current_value{};
-				std::string default_value{};
-				std::string domain{};
+				auto* const dvar = game::Dvar_FindVar(con->auto_complete_matches[0].c_str());
 				if (dvar)
 				{
-					const char* current_value_ptr = nullptr;
-					const char* default_value_ptr = nullptr;
-					if (try_get_dvar_value_ptr(dvar, dvar->current, &current_value_ptr))
-					{
-						std::string raw_value{};
-						if (try_copy_c_string(current_value_ptr, raw_value))
-						{
-							current_value = sanitize_display_text(raw_value);
-						}
-					}
-
-					if (try_get_dvar_value_ptr(dvar, dvar->reset, &default_value_ptr))
-					{
-						std::string raw_value{};
-						if (try_copy_c_string(default_value_ptr, raw_value))
-						{
-							default_value = sanitize_display_text(raw_value);
-						}
-					}
-
-					game::dvar_type domain_type{};
-					game::DvarLimits domain_limits{};
-					if (try_copy_dvar_domain(dvar, domain_type, domain_limits))
-					{
-						domain = sanitize_display_text(dvars::dvar_get_domain(domain_type, domain_limits));
-					}
+					draw_dvar_match_details(bounds, hint_x, dvar, description_buffer, sizeof(description_buffer));
 				}
-				const auto has_description = dvar
-					&& safe_read_dvar_description(dvar, description_buffer, sizeof(description_buffer))
-					&& !sanitize_display_text(description_buffer).empty();
-				const auto has_domain = !domain.empty();
-				const auto line_count = dvar ? 2 : 1;
-				draw_hint_box(bounds, hint_x, line_count, color_hint_box);
-				draw_hint_text(bounds, hint_x, 0, con->auto_complete_matches[0].c_str(), dvar ? color_dvar_match : color_cmd_match);
-
-				if (dvar)
+				else
 				{
-					const auto offset = std::max(96.0f, (bounds.screen_max[0] - hint_x) / 2.6f);
-					draw_hint_text(bounds, hint_x, 0, current_value.empty() ? "<unavailable>" : current_value.c_str(), color_dvar_value, offset);
-					draw_hint_text(bounds, hint_x, 1, "  default", color_dvar_inactive);
-					draw_hint_text(bounds, hint_x, 1, default_value.empty() ? "<unavailable>" : default_value.c_str(), color_dvar_inactive, offset);
-
-					if (has_description || has_domain)
-					{
-						const auto details_offset_y = (line_count * bounds.font_height) + 16.0f;
-						const auto detail_lines = (has_description ? 1 : 0) + (has_domain ? 1 : 0);
-						draw_hint_box(bounds, hint_x, detail_lines, color_hint_box, details_offset_y);
-
-						auto detail_line = 0;
-						if (has_description)
-						{
-							const auto description = sanitize_display_text(description_buffer);
-							draw_hint_text(bounds, hint_x, detail_line, description.c_str(), color_dvar_inactive, 0.0f, details_offset_y);
-							++detail_line;
-						}
-
-						if (has_domain)
-						{
-							draw_hint_text(bounds, hint_x, detail_line, domain.c_str(), color_dvar_inactive, 0.0f, details_offset_y);
-						}
-					}
+					draw_hint_box(bounds, hint_x, 1, color_hint_box);
+					draw_hint_text(bounds, hint_x, 0, con->auto_complete_matches[0].c_str(), color_cmd_match);
 				}
-
 				return;
 			}
 
@@ -1629,7 +1919,6 @@ namespace game_console
 			const float output_y = con->output_fullscreen
 				? bounds.y + bounds.font_height + 10.0f
 				: bounds.screen_min[1] + 32.0f;
-			const bool match_view = !con->auto_complete_query.empty() && !con->auto_complete_matches.empty();
 			const auto height_scale = con->output_fullscreen
 				? 1.0f
 				: (con_outputHeightScale ? std::clamp(con_outputHeightScale->current.value, 0.20f, 0.98f) : 0.72f);
@@ -1638,14 +1927,6 @@ namespace game_console
 			float output_height = con->output_fullscreen
 				? remaining_height
 				: remaining_height * height_scale;
-
-			if (con->output_fullscreen && match_view)
-			{
-				const auto desired_lines = std::max(1, static_cast<int>(con->auto_complete_matches.size()));
-				const float desired_content_height = (desired_lines * bounds.font_height) + 6.0f;
-				const float desired_output_height = desired_content_height + footer_height + 12.0f;
-				output_height = std::min(remaining_height, desired_output_height);
-			}
 			draw_box(bounds.screen_min[0], output_y,
 				bounds.screen_max[0] - bounds.screen_min[0],
 				output_height,
@@ -1658,49 +1939,26 @@ namespace game_console
 			const float content_height = std::max(24.0f, height - footer_height);
 			const auto visible_lines = std::max(1, static_cast<int>(content_height / std::max(1.0f, bounds.font_height)));
 
-			if (match_view)
+			const auto max_scroll = std::max(0, static_cast<int>(con->lines.size()) - visible_lines);
+			con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
+			const auto first_line = std::max(0, static_cast<int>(con->lines.size()) - visible_lines - con->scroll_offset);
+			const auto offset = con->lines.size() >= static_cast<std::size_t>(visible_lines)
+				? 0.0f
+				: (bounds.font_height * (visible_lines - static_cast<int>(con->lines.size())));
+
+			for (int i = 0; i < visible_lines; ++i)
 			{
-				const auto max_scroll = std::max(0, static_cast<int>(con->auto_complete_matches.size()) - visible_lines);
-				con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
-				const auto first_line = std::clamp(con->scroll_offset, 0, max_scroll);
-
-				for (int i = 0; i < visible_lines; ++i)
+				const auto index = i + first_line;
+				if (index >= static_cast<int>(con->lines.size()))
 				{
-					const auto index = i + first_line;
-					if (index >= static_cast<int>(con->auto_complete_matches.size()))
-					{
-						break;
-					}
-
-					const auto line_y = y + bounds.font_height + (bounds.font_height * i);
-					draw_text(con->auto_complete_matches[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
+					break;
 				}
 
-				draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->auto_complete_matches.size()));
+				const auto line_y = y + bounds.font_height + (bounds.font_height * i) + offset;
+				draw_text(con->lines[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
 			}
-			else
-			{
-				const auto max_scroll = std::max(0, static_cast<int>(con->lines.size()) - visible_lines);
-				con->scroll_offset = std::clamp(con->scroll_offset, 0, max_scroll);
-				const auto first_line = std::max(0, static_cast<int>(con->lines.size()) - visible_lines - con->scroll_offset);
-				const auto offset = con->lines.size() >= static_cast<std::size_t>(visible_lines)
-					? 0.0f
-					: (bounds.font_height * (visible_lines - static_cast<int>(con->lines.size())));
 
-				for (int i = 0; i < visible_lines; ++i)
-				{
-					const auto index = i + first_line;
-					if (index >= static_cast<int>(con->lines.size()))
-					{
-						break;
-					}
-
-					const auto line_y = y + bounds.font_height + (bounds.font_height * i) + offset;
-					draw_text(con->lines[static_cast<std::size_t>(index)].c_str(), x, line_y, color_white, 1.0f);
-				}
-
-				draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->lines.size()));
-			}
+			draw_output_scrollbar(x, y, width, content_height, visible_lines, static_cast<int>(con->lines.size()));
 
 			const auto version_text = build_full_version_string();
 			draw_text_shadowed(version_text.c_str(), x, y + content_height + bounds.font_height + 5.0f, color_version_footer, 1.0f);
@@ -1819,6 +2077,11 @@ namespace game_console
 				return;
 			}
 
+			if (!con->auto_complete_matches.empty() && con->may_auto_complete && !con->auto_complete_choice.empty())
+			{
+				commit_auto_complete_choice(true);
+			}
+
 			append_line("] " + con->input);
 
 			if (con->history.empty() || con->history.back() != con->input)
@@ -1834,6 +2097,7 @@ namespace game_console
 			set_cursor_position(0);
 			con->history_index = -1;
 			con->scroll_offset = 0;
+			con->history_snapshot_valid = false;
 			clear_auto_complete();
 		}
 
@@ -1846,6 +2110,7 @@ namespace game_console
 
 			if (con->history_index < 0)
 			{
+				save_history_snapshot();
 				con->history_index = static_cast<int>(con->history.size()) - 1;
 			}
 			else if (con->history_index > 0)
@@ -1868,9 +2133,17 @@ namespace game_console
 			++con->history_index;
 			if (con->history_index >= static_cast<int>(con->history.size()))
 			{
+				const auto had_snapshot = con->history_snapshot_valid;
 				con->history_index = -1;
-				con->input.clear();
-				set_cursor_position(0);
+				if (had_snapshot)
+				{
+					restore_history_snapshot();
+				}
+				else
+				{
+					con->input.clear();
+					set_cursor_position(0);
+				}
 				return;
 			}
 
@@ -1895,6 +2168,7 @@ namespace game_console
 			con->input.insert(con->input.begin() + static_cast<std::ptrdiff_t>(con->cursor), ch);
 			++con->cursor;
 			clear_input_selection();
+			invalidate_history_snapshot();
 			refresh_auto_complete();
 		}
 
@@ -1932,6 +2206,7 @@ namespace game_console
 			con->input.insert(con->cursor, text);
 			con->cursor += text.size();
 			clear_input_selection();
+			invalidate_history_snapshot();
 			refresh_auto_complete();
 		}
 
@@ -2251,7 +2526,7 @@ namespace game_console
 
 	void append_output(std::string_view text)
 	{
-		if (text.empty() || process_shutting_down || !component_ready)
+		if (text.empty() || process_shutting_down)
 		{
 			return;
 		}
@@ -2281,10 +2556,11 @@ namespace game_console
 				con = new console_state{};
 			}
 
-			scheduler::on_shutdown([]
+			scheduler::on_shutdown([]()
 				{
 					component_ready = false;
 					hooks_installed = false;
+					console_print_hook_installed = false;
 					set_overlay_active(false);
 					key_was_down.fill(false);
 					key_next_repeat_time.fill(0);
@@ -2369,6 +2645,7 @@ namespace game_console
 			process_shutting_down = true;
 			component_ready = false;
 			hooks_installed = false;
+			console_print_hook_installed = false;
 			set_overlay_active(false);
 			cl_key_event_hook.clear();
 			cl_console_print_hook.clear();

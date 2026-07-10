@@ -2,6 +2,7 @@
 #include "loader/component_loader.hpp"
 
 #include "component/engine/console/console.hpp"
+#include "component/engine/console/command.hpp"
 #include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"
@@ -33,6 +34,27 @@ namespace patches
 
 	namespace
 	{
+		constexpr std::size_t k_huffman_max_decoded_bytes = 0x20000;
+		constexpr std::size_t k_huffman_max_compressed_bytes = k_huffman_max_decoded_bytes / 8;
+		constexpr std::size_t k_ui_replace_directive_max_len = 0x100;
+		constexpr std::size_t k_party_member_join_max_message_bytes = 0x4000;
+
+		std::size_t bounded_length(const char* value, const std::size_t max_len)
+		{
+			if (!value)
+			{
+				return 0;
+			}
+
+			std::size_t length = 0;
+			while (length < max_len && value[length] != '\0')
+			{
+				++length;
+			}
+
+			return length;
+		}
+
 		std::string build_shortversion_string()
 		{
 			std::string version = VERSION_PRODUCT;
@@ -88,6 +110,134 @@ namespace patches
 		int ret_one(DWORD*, int)
 		{
 			return 1;
+		}
+
+		using cl_parse_server_message_huffman_t = unsigned int(__cdecl*)(int, std::uint32_t*);
+		utils::hook::detour cl_parse_server_message_huffman_hook;
+		unsigned int __cdecl CL_ParseServerMessage_huffman_guard(int a1, std::uint32_t* a2)
+		{
+			const cl_parse_server_message_huffman_t original = reinterpret_cast<cl_parse_server_message_huffman_t>(cl_parse_server_message_huffman_hook.get_original());
+
+			if (!a2)
+			{
+				return original(a1, a2);
+			}
+
+			if (a2[5] < a2[7])
+			{
+				game::Com_Error(
+					(int)".\\cl_parse_mp.cpp",
+					1243,
+					1,
+					(char*)"Huffman compressed msg cursor underflow detected\n");
+				return 0;
+			}
+
+			const auto compressed_bytes = static_cast<std::size_t>(a2[5] - a2[7]);
+			if (compressed_bytes > k_huffman_max_compressed_bytes)
+			{
+				game::Com_Error(
+					(int)".\\cl_parse_mp.cpp",
+					1243,
+					1,
+					(char*)"Huffman compressed msg exceeded safe decode limit (%zu > %zu)\n",
+					compressed_bytes,
+					k_huffman_max_compressed_bytes);
+				return 0;
+			}
+
+			return original(a1, a2);
+		}
+
+		using ui_replace_directive_t = char*(__fastcall*)(int, char*, int, unsigned __int8);
+		utils::hook::detour ui_replace_directive_hook;
+		char* __fastcall UI_ReplaceDirective_guard(int ArgList, char* a2, int a3, unsigned __int8 a4)
+		{
+			const ui_replace_directive_t original = reinterpret_cast<ui_replace_directive_t>(ui_replace_directive_hook.get_original());
+			const auto* const arg_list = reinterpret_cast<const char*>(ArgList);
+			if (bounded_length(arg_list, k_ui_replace_directive_max_len + 1) > k_ui_replace_directive_max_len
+				|| bounded_length(a2, k_ui_replace_directive_max_len + 1) > k_ui_replace_directive_max_len)
+			{
+				game::Com_Printf(0, "UI_ReplaceDirective: rejected oversized directive input\n");
+				return a2;
+			}
+
+			return original(ArgList, a2, a3, a4);
+		}
+
+		using party_atomic_host_handle_member_join_t = int(__cdecl*)(char, std::uint32_t*, int, __int64, int, std::uint32_t*);
+		utils::hook::detour party_atomic_host_handle_member_join_hook;
+		int __cdecl PartyAtomicHost_HandleMemberJoin_guard(char a1, std::uint32_t* a2, int a3, __int64 a4, int a5, std::uint32_t* a6)
+		{
+			const party_atomic_host_handle_member_join_t original = reinterpret_cast<party_atomic_host_handle_member_join_t>(party_atomic_host_handle_member_join_hook.get_original());
+			if (!a2 || !a6)
+			{
+				return original(a1, a2, a3, a4, a5, a6);
+			}
+
+			if (a6[5] < a6[7])
+			{
+				game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin: rejected malformed message cursor\n");
+				return 0;
+			}
+
+			const auto unread_bytes = static_cast<std::size_t>(a6[5] - a6[7]);
+			if (unread_bytes > k_party_member_join_max_message_bytes)
+			{
+				game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin: rejected oversized message (%zu bytes)\n", unread_bytes);
+				return 0;
+			}
+
+			return original(a1, a2, a3, a4, a5, a6);
+		}
+
+		bool PartyAtomicHost_HandleMemberJoin_self_test()
+		{
+			std::uint32_t packet_cursor[8]{};
+			std::uint32_t join_state[8]{};
+
+			packet_cursor[5] = 0;
+			packet_cursor[7] = 1;
+
+			const auto result = PartyAtomicHost_HandleMemberJoin_guard(0, &join_state[0], 0, 0, 0, &packet_cursor[0]);
+			if (result != 0)
+			{
+				game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin self-test failed\n");
+				return false;
+			}
+
+			game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin self-test passed\n");
+			return true;
+		}
+
+		bool UI_ReplaceDirective_self_test()
+		{
+			char oversized[0x110]{};
+			char output[0x110]{};
+			std::memset(oversized, 'A', sizeof(oversized) - 1);
+			oversized[sizeof(oversized) - 1] = '\0';
+
+			const auto result = UI_ReplaceDirective_guard(reinterpret_cast<int>(oversized), output, 0, 0);
+			if (result != output)
+			{
+				game::Com_Printf(0, "UI_ReplaceDirective self-test failed\n");
+				return false;
+			}
+
+			game::Com_Printf(0, "UI_ReplaceDirective self-test passed\n");
+			return true;
+		}
+
+		void register_security_guard_self_test()
+		{
+			command::add("securityGuardSelfTest", [](const command::params&)
+			{
+				const auto party_ok = PartyAtomicHost_HandleMemberJoin_self_test();
+				const auto ui_ok = UI_ReplaceDirective_self_test();
+				game::Com_Printf(0, "securityGuardSelfTest: party=%s ui=%s\n",
+					party_ok ? "pass" : "fail",
+					ui_ok ? "pass" : "fail");
+			});
 		}
 
 		bool dvar_enabled(const char* name)
@@ -465,18 +615,23 @@ namespace patches
 				dvars::replace_dvar_at(game::game_offset(0x102BE908), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x1148F6A4)),
 					dvars::make_float("cg_fov", "The field of view angle in degrees", 65.0f, 0.0f, 160.0f, game::dvar_flags::saved));
 
+				dvars::replace_dvar_at(game::game_offset(0x10321250), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11260BD0)),
+					dvars::make_float("input_viewSensitivity", "Mouse sensitivity", 1.0f, 0.01f, 30.0f, game::dvar_flags::saved));
+
 				dvars::replace_dvar_at(game::game_offset(0x101DB65A), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x118EE1C0)),
 					dvars::make_float("jump_height", "The maximum height of a player's jump", 41.0f, 0.0f, 1000.0f, game::dvar_flags::saved));
 
 				dvars::replace_dvar_at(game::game_offset(0x103B2260), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054944)),
 					dvars::make_int("developer", "Enable development environment", 0, 0, 2, game::dvar_flags::none));
 
-				utils::hook::nop(game::game_offset(0x103F6970), 5);
-				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x10711AF8)) =
-					dvars::Dvar_RegisterInt("com_maxfps", "Cap frames per second", 60, 0, 1000, game::dvar_flags::saved);
+				dvars::replace_dvar_at(game::game_offset(0x103F6989), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x10711AF8)),
+					dvars::make_int("com_maxfps", "Cap frames per second", 85, 0, 1000, game::dvar_flags::saved));
+
+				dvars::replace_dvar_at(game::game_offset(0x102C44A8), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x113EFA78)),
+					dvars::make_bool("r_fullscreen", "Display game full screen", true,
+						static_cast<std::uint16_t>(game::dvar_flags::saved) | static_cast<std::uint16_t>(game::dvar_flags::latched)));
 
 				make_dvar_saved_and_writable("sv_cheats");
-				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
 
@@ -492,10 +647,14 @@ namespace patches
 #endif
 			}, scheduler::main);
 
+			cl_parse_server_message_huffman_hook.create(game::game_offset(0x1030D960), CL_ParseServerMessage_huffman_guard);
+			ui_replace_directive_hook.create(game::game_offset(0x102BB870), UI_ReplaceDirective_guard);
+			party_atomic_host_handle_member_join_hook.create(game::game_offset(0x103087B0), PartyAtomicHost_HandleMemberJoin_guard);
+			register_security_guard_self_test();
+
 			scheduler::loop([]
 			{
 				make_dvar_saved_and_writable("sv_cheats");
-				make_dvar_saved_and_writable("r_fullscreen");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
 #ifdef DEBUG

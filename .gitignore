@@ -155,3 +155,9 @@ deps/SDL2-2.32.10-source.zip
 deps/SDL2-devel-2.32.10-VC.zip
 deps/SDL2/
 deps/SDL2-src/
+
+# Generated build/version metadata
+version.txt
+src/build_counter.txt
+src/version.h
+src/version.hpp

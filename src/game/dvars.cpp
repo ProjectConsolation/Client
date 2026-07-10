@@ -518,6 +518,24 @@ namespace dvars
 	game::dvar_s* replace_dvar_at(const std::uintptr_t nop_address, const std::size_t nop_size, game::dvar_s** target, const dvar_spec& spec, const bool log)
 	{
 		utils::hook::nop(nop_address, nop_size);
+		auto* const existing = game::Dvar_FindVar(spec.name);
+		if (existing)
+		{
+			existing->domain = spec.domain;
+			set_saved_dvar_flags(existing, spec.flags);
+			if (target)
+			{
+				*target = existing;
+			}
+
+			if (log)
+			{
+				console::debug("reusing %s dvar '%s' with preserved value\n", dvar_type_name(spec.type), spec.name);
+			}
+
+			return existing;
+		}
+
 		auto* const dvar = register_dvar(spec, log);
 		if (target)
 		{

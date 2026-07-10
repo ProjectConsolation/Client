@@ -194,6 +194,7 @@ namespace console
 		int dispatch_message(const int type, const std::string& message)
 		{
 			std::lock_guard _0(print_mutex);
+			game_console::append_output(message);
 
 			clear_output();
 			set_cursor_pos(0);
@@ -214,6 +215,7 @@ namespace console
 		int dispatch_split_debug_message(const std::string& message)
 		{
 			std::lock_guard _0(print_mutex);
+			game_console::append_output(message);
 
 			clear_output();
 			set_cursor_pos(0);
@@ -421,6 +423,7 @@ namespace console
 			const auto result = format(&ap, fmt);
 			va_end(ap);
 
+			game_console::append_output(result);
 			game::CL_ConsolePrint(0, 6, result.c_str(), 0, 0, 0);
 
 			return invoke_printf("%s", result.data()); // return the status of normal printf, which is what we are hooking
