@@ -16,4 +16,4 @@ namespace sdl_input
 	};
 }
 
-REGISTER_COMPONENT(sdl_input::component)
+//REGISTER_COMPONENT(sdl_input::component)

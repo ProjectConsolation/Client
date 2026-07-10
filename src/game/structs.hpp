@@ -640,6 +640,14 @@ namespace game
 		XAssetHeader header;
 	};
 
+	struct XZoneInfo
+	{
+		const char* name;
+		int allocFlags;
+		int freeFlags;
+	};
+	static_assert(sizeof(XZoneInfo) == 12);
+
 	struct XAssetEntry
 	{
 		XAsset asset;

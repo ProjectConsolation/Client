@@ -1449,4 +1449,4 @@ namespace gamepad
 	}
 }
 
-REGISTER_COMPONENT(xinput::component)
+//REGISTER_COMPONENT(xinput::component)
