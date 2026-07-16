@@ -25,6 +25,10 @@ namespace gametypes
 		constexpr auto GAMETYPE_PREFIX = "maps/mp/gametypes/";
 		constexpr auto GAMETYPE_ENTRY_SIZE = 0x2C;
 		constexpr auto UI_GAMETYPE_MAX = 0x20;
+		constexpr auto UI_GAMETYPE_COUNT = 0x113D1684;
+		constexpr auto UI_GAMETYPE_ENTRIES = 0x113D1688;
+		constexpr auto UI_GAMETYPE_ALT_COUNT = 0x113D31EC;
+		constexpr auto UI_GAMETYPE_ALT_ENTRIES = 0x113D31F0;
 
 		std::unordered_map<std::string, game::RawFile*> loaded_gametype_rawfiles;
 		bool ui_gametype_list_refreshed = false;
@@ -292,9 +296,13 @@ namespace gametypes
 				return;
 			}
 
-			auto* const count = reinterpret_cast<int*>(game::game_offset(0x113D1684));
-			auto* const entries = reinterpret_cast<char*>(game::game_offset(0x113D1688));
+			auto* const count = reinterpret_cast<int*>(game::game_offset(UI_GAMETYPE_COUNT));
+			auto* const entries = reinterpret_cast<char*>(game::game_offset(UI_GAMETYPE_ENTRIES));
+			auto* const alt_count = reinterpret_cast<int*>(game::game_offset(UI_GAMETYPE_ALT_COUNT));
+			auto* const alt_entries = reinterpret_cast<char*>(game::game_offset(UI_GAMETYPE_ALT_ENTRIES));
+
 			std::memset(entries, 0, GAMETYPE_ENTRY_SIZE * UI_GAMETYPE_MAX);
+			std::memset(alt_entries, 0, GAMETYPE_ENTRY_SIZE * UI_GAMETYPE_MAX);
 
 			auto written_count = 0;
 			for (const auto& gametype_id : gametype_ids)
@@ -308,15 +316,19 @@ namespace gametypes
 
 				const auto display_name = parse_gametype_display_name(display_data, gametype_id);
 				auto* const entry = entries + (written_count * GAMETYPE_ENTRY_SIZE);
+				auto* const alt_entry = alt_entries + (written_count * GAMETYPE_ENTRY_SIZE);
 
 				copy_ui_gametype_string(entry, 12, gametype_id);
 				copy_ui_gametype_string(entry + 0x0C, GAMETYPE_ENTRY_SIZE - 0x0C, display_name);
+				copy_ui_gametype_string(alt_entry, 12, gametype_id);
+				copy_ui_gametype_string(alt_entry + 0x0C, GAMETYPE_ENTRY_SIZE - 0x0C, display_name);
 				++written_count;
 			}
 
 			*count = written_count;
+			*alt_count = written_count;
 			ui_gametype_list_refreshed = true;
-			console::info("gametypes: refreshed UI gametype list with %i entries\n", written_count);
+			console::info("gametypes: refreshed UI gametype lists with %i entries\n", written_count);
 		}
 
 		void dump_loaded_gametypes_rawfile()
