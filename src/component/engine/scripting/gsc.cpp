@@ -175,15 +175,20 @@ namespace gsc
 			}
 
 			const auto rawfile_ptr = utils::memory::allocate<game::RawFile>();
-			rawfile_ptr->name = file_name;
+			const auto name_len = std::strlen(file_name);
+			rawfile_ptr->name = static_cast<char*>(utils::memory::allocate(name_len + 1));
+			std::memcpy(const_cast<char*>(rawfile_ptr->name), file_name, name_len);
+			const_cast<char*>(rawfile_ptr->name)[name_len] = '\0';
 
-			auto buffer_size = source_buffer.size();
+			const auto buffer_size = source_buffer.size();
+			rawfile_ptr->len = static_cast<unsigned int>(buffer_size + 1);
 			rawfile_ptr->buffer = static_cast<char*>(utils::memory::allocate(buffer_size + 1));
 			std::memcpy(rawfile_ptr->buffer, source_buffer.data(), buffer_size);
+			rawfile_ptr->buffer[buffer_size] = '\0';
 
 			loaded_scripts[file_name] = rawfile_ptr;
 
-			console::debug("Loaded custom gsc '%s\n", file_name);
+			console::debug("Loaded custom gsc '%s'\n", file_name);
 
 			return rawfile_ptr;
 		}
