@@ -21,11 +21,6 @@
 
 #pragma comment(lib, "xinput9_1_0.lib")
 
-namespace game
-{
-	struct msg_t;
-}
-
 namespace xinput
 {
 	bool should_hide_cursor_now();
@@ -53,15 +48,10 @@ namespace xinput
 
 		controller_state pad{};
 		bool shutdown_requested = false;
-		bool create_cmd_callsite_patched = false;
 		bool native_look_callsite_patched = false;
 		bool draw_crosshair_callsite_patched = false;
-		bool usercmd_movement_patched = false;
-		std::array<std::uint8_t, 5> original_create_cmd_call{};
 		std::array<std::uint8_t, 5> original_native_look_call{};
 		std::array<std::uint8_t, 5> original_draw_crosshair_call{};
-		std::uint16_t original_write_move_bits_a = 0;
-		std::uint16_t original_write_move_bits_b = 0;
 		std::atomic<DWORD> last_mouse_activity_time{ 0 };
 		bool cursor_hidden_for_gamepad = false;
 		DWORD last_analog_update_time = 0;
@@ -377,47 +367,23 @@ namespace xinput
 			game::Com_Printf(0, "%s", buffer);
 		}
 
-		void normalize_stick_pair(const SHORT x, const SHORT y, float& out_x, float& out_y)
+		float apply_axis_deadzone(const SHORT raw, const float deadzone)
 		{
-			if (x == 0 && y == 0)
+			const auto value = raw >= 0
+				? static_cast<float>(raw) / static_cast<float>(std::numeric_limits<SHORT>::max())
+				: static_cast<float>(raw) / 32768.0f;
+
+			if (std::fabs(value) < deadzone)
 			{
-				out_x = 0.0f;
-				out_y = 0.0f;
-				return;
+				return 0.0f;
 			}
 
-			float stick_x = static_cast<float>(x) / static_cast<float>(std::numeric_limits<SHORT>::max());
-			float stick_y = static_cast<float>(y) / static_cast<float>(std::numeric_limits<SHORT>::max());
-			const auto length = std::sqrt((stick_x * stick_x) + (stick_y * stick_y));
-
-			if (length <= 0.0f)
+			if (value > 0.0f)
 			{
-				out_x = 0.0f;
-				out_y = 0.0f;
-				return;
+				return std::clamp((value - deadzone) / std::max(0.001f, 1.0f - deadzone), 0.0f, 1.0f);
 			}
 
-			const auto min_deadzone = get_stick_deadzone_min();
-			const auto max_deadzone = get_stick_deadzone_max();
-			const auto deadzone_total = min_deadzone + max_deadzone;
-
-			float scaled_length = 0.0f;
-			if (length >= min_deadzone)
-			{
-				if (length <= (1.0f - max_deadzone))
-				{
-					scaled_length = (length - min_deadzone) / std::max(0.001f, 1.0f - deadzone_total);
-				}
-				else
-				{
-					scaled_length = 1.0f;
-				}
-			}
-
-			const auto normalized_x = stick_x / length;
-			const auto normalized_y = stick_y / length;
-			out_x = normalized_x * scaled_length;
-			out_y = normalized_y * scaled_length;
+			return std::clamp((value + deadzone) / std::max(0.001f, 1.0f - deadzone), -1.0f, 0.0f);
 		}
 
 		float normalize_trigger(const BYTE value)
@@ -585,18 +551,13 @@ namespace xinput
 
 		void update_analog_state(const XINPUT_GAMEPAD& state)
 		{
-			float left_stick_x = 0.0f;
-			float left_stick_y = 0.0f;
-			float right_stick_x = 0.0f;
-			float right_stick_y = 0.0f;
+			const auto move_deadzone = get_stick_deadzone_min();
+			const auto look_deadzone = get_stick_deadzone_min();
 
-			normalize_stick_pair(state.sThumbLX, state.sThumbLY, left_stick_x, left_stick_y);
-			normalize_stick_pair(state.sThumbRX, state.sThumbRY, right_stick_x, right_stick_y);
-
-			pad.left_stick_x = left_stick_x;
-			pad.left_stick_y = left_stick_y;
-			pad.right_stick_x = right_stick_x;
-			pad.right_stick_y = right_stick_y;
+			pad.left_stick_x = apply_axis_deadzone(state.sThumbLX, move_deadzone);
+			pad.left_stick_y = apply_axis_deadzone(state.sThumbLY, move_deadzone);
+			pad.right_stick_x = apply_axis_deadzone(state.sThumbRX, look_deadzone);
+			pad.right_stick_y = apply_axis_deadzone(state.sThumbRY, look_deadzone);
 			pad.left_trigger = normalize_trigger(state.bLeftTrigger);
 			pad.right_trigger = normalize_trigger(state.bRightTrigger);
 		}
@@ -679,240 +640,14 @@ namespace xinput
 			}
 		}
 
-		enum gamepad_physical_axis
-		{
-			GPAD_PHYSAXIS_NONE = -1,
-			GPAD_PHYSAXIS_RSTICK_X = 0,
-			GPAD_PHYSAXIS_RSTICK_Y,
-			GPAD_PHYSAXIS_LSTICK_X,
-			GPAD_PHYSAXIS_LSTICK_Y,
-			GPAD_PHYSAXIS_RTRIGGER,
-			GPAD_PHYSAXIS_LTRIGGER,
-			GPAD_PHYSAXIS_COUNT
-		};
-
-		enum gamepad_virtual_axis
-		{
-			GPAD_VIRTAXIS_NONE = -1,
-			GPAD_VIRTAXIS_SIDE = 0,
-			GPAD_VIRTAXIS_FORWARD,
-			GPAD_VIRTAXIS_UP,
-			GPAD_VIRTAXIS_YAW,
-			GPAD_VIRTAXIS_PITCH,
-			GPAD_VIRTAXIS_ATTACK,
-			GPAD_VIRTAXIS_COUNT
-		};
-
-		enum gamepad_mapping
-		{
-			GPAD_MAP_NONE = 0,
-			GPAD_MAP_LINEAR,
-			GPAD_MAP_SQUARED
-		};
-
-		struct gamepad_axis_binding
-		{
-			gamepad_physical_axis physical_axis;
-			gamepad_mapping map_type;
-		};
-
-		constexpr gamepad_physical_axis axis_same_stick[GPAD_PHYSAXIS_COUNT]
-		{
-			GPAD_PHYSAXIS_RSTICK_Y,
-			GPAD_PHYSAXIS_RSTICK_X,
-			GPAD_PHYSAXIS_LSTICK_Y,
-			GPAD_PHYSAXIS_LSTICK_X,
-			GPAD_PHYSAXIS_NONE,
-			GPAD_PHYSAXIS_NONE
-		};
-
-		constexpr gamepad_axis_binding virtual_axis_bindings[GPAD_VIRTAXIS_COUNT]
-		{
-			{ GPAD_PHYSAXIS_LSTICK_X, GPAD_MAP_SQUARED },
-			{ GPAD_PHYSAXIS_LSTICK_Y, GPAD_MAP_SQUARED },
-			{ GPAD_PHYSAXIS_NONE, GPAD_MAP_NONE },
-			{ GPAD_PHYSAXIS_RSTICK_X, GPAD_MAP_LINEAR },
-			{ GPAD_PHYSAXIS_RSTICK_Y, GPAD_MAP_LINEAR },
-			{ GPAD_PHYSAXIS_NONE, GPAD_MAP_NONE }
-		};
-
-		float get_physical_axis_value(const gamepad_physical_axis axis)
-		{
-			switch (axis)
-			{
-			case GPAD_PHYSAXIS_RSTICK_X:
-				return pad.right_stick_x;
-			case GPAD_PHYSAXIS_RSTICK_Y:
-				return pad.right_stick_y;
-			case GPAD_PHYSAXIS_LSTICK_X:
-				return pad.left_stick_x;
-			case GPAD_PHYSAXIS_LSTICK_Y:
-				return pad.left_stick_y;
-			case GPAD_PHYSAXIS_RTRIGGER:
-				return pad.right_trigger;
-			case GPAD_PHYSAXIS_LTRIGGER:
-				return pad.left_trigger;
-			default:
-				return 0.0f;
-			}
-		}
-
-		float CL_GamepadAxisValue(const gamepad_virtual_axis virtual_axis)
-		{
-			assert(virtual_axis > GPAD_VIRTAXIS_NONE && virtual_axis < GPAD_VIRTAXIS_COUNT);
-
-			const auto& [physical_axis, map_type] = virtual_axis_bindings[virtual_axis];
-
-			if (physical_axis <= GPAD_PHYSAXIS_NONE || physical_axis >= GPAD_PHYSAXIS_COUNT)
-			{
-				return 0.0f;
-			}
-
-			auto axis_deflection = get_physical_axis_value(physical_axis);
-
-			if (map_type == GPAD_MAP_SQUARED)
-			{
-				const auto other_axis_same_stick = axis_same_stick[physical_axis];
-
-				float other_axis_deflection;
-				if (other_axis_same_stick <= GPAD_PHYSAXIS_NONE || other_axis_same_stick >= GPAD_PHYSAXIS_COUNT)
-				{
-					other_axis_deflection = 0.0f;
-				}
-				else
-				{
-					other_axis_deflection = get_physical_axis_value(other_axis_same_stick);
-				}
-
-				axis_deflection = std::sqrt(axis_deflection * axis_deflection + other_axis_deflection * other_axis_deflection) * axis_deflection;
-			}
-
-			return axis_deflection;
-		}
-
-		struct analog_move
-		{
-			float side;
-			float forward;
-			float magnitude;
-		};
-
-		std::int8_t encode_cmd_axis(const float value)
-		{
-			const auto scaled = std::round(value * 127.0f);
-			return static_cast<std::int8_t>(std::clamp(static_cast<int>(scaled), -127, 127));
-		}
-
 		char clamp_char(const int value)
 		{
 			return static_cast<char>(std::clamp(value, static_cast<int>(std::numeric_limits<char>::min()), static_cast<int>(std::numeric_limits<char>::max())));
 		}
 
-		int msg_read_bit(game::msg_t* msg)
+		int stick_to_move(const float value)
 		{
-			int value = 0;
-			__asm
-			{
-				xor ecx, ecx
-				mov edx, msg
-				mov eax, 0x103EEDE0
-				call eax
-				mov value, eax
-			}
-			return value;
-		}
-
-		int msg_read_bits(game::msg_t* msg, int bits)
-		{
-			int value = 0;
-			__asm
-			{
-				push esi
-				mov esi, msg
-				push bits
-				mov eax, 0x103EEE50
-				call eax
-				add esp, 4
-				mov value, eax
-				pop esi
-			}
-
-			return value;
-		}
-
-		void CL_Gamepad_ReadHighPrecision(game::msg_t* msg, int key, game::usercmd_t* to)
-		{
-			if (!msg || !to)
-			{
-				return;
-			}
-
-			if (!msg_read_bit(msg))
-			{
-				return;
-			}
-
-			const auto packed = static_cast<std::uint16_t>(msg_read_bits(msg, 16));
-			to->forwardmove = static_cast<std::int8_t>(packed & 0xFF);
-			to->rightmove = static_cast<std::int8_t>((packed >> 8) & 0xFF);
-		}
-
-		game::msg_t* pending_delta_msg = nullptr;
-		int pending_delta_key = 0;
-		game::usercmd_t* pending_delta_to = nullptr;
-
-		__declspec(naked) void MSG_ReadDeltaUsercmdKey_stub()
-		{
-			__asm
-			{
-				mov [pending_delta_msg], eax
-				mov [pending_delta_key], ecx
-				mov [pending_delta_to], edi
-
-				mov edx, 0x103F0170
-				call edx
-
-				push [pending_delta_to]
-				push [pending_delta_key]
-				push [pending_delta_msg]
-				call CL_Gamepad_ReadHighPrecision
-				add esp, 12
-				ret
-			}
-		}
-
-		float apply_move_response_curve(const float magnitude)
-		{
-			constexpr auto curve = 1.0f;
-			if (magnitude <= 0.0f)
-			{
-				return 0.0f;
-			}
-
-			return std::pow(magnitude, curve);
-		}
-
-		analog_move get_left_stick_move()
-		{
-			// pad.left_stick_x and pad.left_stick_y have already been run through
-			// radial deadzone processing in normalize_stick_pair(), so we receive
-			// a directional intent mapped to [0.0f, 1.0f], or so.
-      //
-			const auto stick_x = pad.left_stick_x;
-			const auto stick_y = pad.left_stick_y;
-
-			const auto length = std::sqrt((stick_x * stick_x) + (stick_y * stick_y));
-			if (length <= 0.0f)
-			{
-				return { 0.0f, 0.0f, 0.0f };
-			}
-
-			const auto curved_magnitude = apply_move_response_curve(length);
-
-			const auto dir_x = stick_x / length;
-			const auto dir_y = stick_y / length;
-
-			return { dir_x * curved_magnitude, dir_y * curved_magnitude, curved_magnitude };
+			return std::clamp(static_cast<int>(value * 127.0f), -127, 127);
 		}
 
 		float get_view_sensitivity()
@@ -972,8 +707,8 @@ namespace xinput
 				return;
 			}
 
-			const auto yaw_axis = -CL_GamepadAxisValue(GPAD_VIRTAXIS_YAW);
-			auto pitch_axis = CL_GamepadAxisValue(GPAD_VIRTAXIS_PITCH);
+			auto yaw_axis = -pad.right_stick_x;
+			auto pitch_axis = pad.right_stick_y;
 
 			if (!dvars::input_invertPitch || !dvars::input_invertPitch->current.enabled)
 			{
@@ -1008,54 +743,48 @@ namespace xinput
 				return;
 			}
 
-			const auto forward = CL_GamepadAxisValue(GPAD_VIRTAXIS_FORWARD);
-			const auto side = CL_GamepadAxisValue(GPAD_VIRTAXIS_SIDE);
-			auto moveScale = static_cast<float>(std::numeric_limits<char>::max());
+			const auto forward_move = stick_to_move(pad.left_stick_y);
+			const auto right_move = stick_to_move(pad.left_stick_x);
 
-			if (std::fabs(side) > 0.0f || std::fabs(forward) > 0.0f)
+			if (forward_move != 0)
 			{
-				const auto length = std::fabs(side) <= std::fabs(forward) ? side / forward : forward / side;
-				moveScale = std::sqrt((length * length) + 1.0f) * moveScale;
+				cmd->forwardmove = clamp_char(static_cast<int>(cmd->forwardmove) + forward_move);
 			}
 
-			const auto forwardMove = static_cast<int>(std::floor(forward * moveScale));
-			const auto rightMove = static_cast<int>(std::floor(side * moveScale));
-
-			cmd->rightmove = clamp_char(static_cast<int>(cmd->rightmove) + rightMove);
-			cmd->forwardmove = clamp_char(static_cast<int>(cmd->forwardmove) + forwardMove);
-		}
-
-		game::usercmd_t* __cdecl build_cmd_body(game::usercmd_t* cmd, const int local_client_num)
-		{
-			// This is the stock QoS usercmd builder reached from 0x102FFCD4.
-			// Let the game build its normal command first.
-			const auto func_loc = static_cast<int>(game::game_offset(0x102FFB80));
-			game::usercmd_t* result = nullptr;
-
-			__asm
+			if (right_move != 0)
 			{
-				push local_client_num
-				mov eax, cmd
-				call func_loc
-				add esp, 4
-				mov result, eax
+				cmd->rightmove = clamp_char(static_cast<int>(cmd->rightmove) + right_move);
 			}
 
-			apply_native_gamepad_to_cmd(result);
-			patches::enforce_ads_sprint_interrupt(result);
+			if (pad.right_trigger > 0.20f)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_ATTACK);
+			}
 
-			return result;
+			if (pad.left_trigger > 0.20f)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_ADS);
+			}
+
+			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_SPRINT);
+			}
+
+			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_B) != 0)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_CROUCH);
+			}
+
+			if ((pad.state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB) != 0)
+			{
+				cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons | game::BUTTON_SPRINT);
+			}
 		}
 
 		void __cdecl native_look_body(game::usercmd_t* cmd, const int local_client_num)
 		{
 			const auto func_loc = static_cast<int>(game::game_offset(0x102FC4D0));
-
-			if (should_drive_native_cmd())
-			{
-				apply_native_view_input();
-				return;
-			}
 
 			__asm
 			{
@@ -1064,18 +793,12 @@ namespace xinput
 				call func_loc
 				add esp, 4
 			}
-		}
 
-		__declspec(naked) void build_cmd_stub()
-		{
-			__asm
+			if (should_drive_native_cmd())
 			{
-				mov edx, [esp + 4]
-				push edx
-				push eax
-				call build_cmd_body
-				add esp, 8
-				ret
+				apply_native_view_input();
+				apply_native_gamepad_to_cmd(cmd);
+				patches::enforce_ads_sprint_interrupt(cmd);
 			}
 		}
 
@@ -1090,22 +813,6 @@ namespace xinput
 				add esp, 8
 				ret
 			}
-		}
-
-		void install_native_cmd_hook()
-		{
-			if (create_cmd_callsite_patched)
-			{
-				return;
-			}
-
-			for (auto i = 0u; i < original_create_cmd_call.size(); ++i)
-			{
-				original_create_cmd_call[i] = *reinterpret_cast<std::uint8_t*>(game::game_offset(0x102FFCD4 + i));
-			}
-
-			utils::hook::call(game::game_offset(0x102FFCD4), build_cmd_stub);
-			create_cmd_callsite_patched = true;
 		}
 
 		void install_native_look_hook()
@@ -1140,32 +847,6 @@ namespace xinput
 			draw_crosshair_callsite_patched = true;
 		}
 
-		void install_usercmd_movement_patch()
-		{
-			if (usercmd_movement_patched)
-			{
-				return;
-			}
-			utils::hook::call(game::game_offset(0x102F0DBC), MSG_ReadDeltaUsercmdKey_stub);
-
-			usercmd_movement_patched = true;
-		}
-
-		void restore_native_cmd_hook()
-		{
-			if (!create_cmd_callsite_patched)
-			{
-				return;
-			}
-
-			for (auto i = 0u; i < original_create_cmd_call.size(); ++i)
-			{
-				utils::hook::set<std::uint8_t>(game::game_offset(0x102FFCD4 + static_cast<int>(i)), original_create_cmd_call[i]);
-			}
-
-			create_cmd_callsite_patched = false;
-		}
-
 		void restore_native_look_hook()
 		{
 			if (!native_look_callsite_patched)
@@ -1194,16 +875,6 @@ namespace xinput
 			}
 
 			draw_crosshair_callsite_patched = false;
-		}
-
-		void restore_usercmd_movement_patch()
-		{
-			if (!usercmd_movement_patched)
-			{
-				return;
-			}
-
-			usercmd_movement_patched = false;
 		}
 
 		void poll_controller()
@@ -1301,11 +972,6 @@ namespace xinput
 				update_activity(time);
 			}
 
-			if (!usercmd_movement_patched && !is_menu_mode())
-			{
-				install_usercmd_movement_patch();
-			}
-
 			update_cursor_visibility(time);
 
 			debug_print("gpad: buttons=0x%04X lx=%.3f ly=%.3f rx=%.3f ry=%.3f lt=%.3f rt=%.3f menu=%d in_use=%d\n",
@@ -1344,7 +1010,6 @@ namespace xinput
 		public:
 			void post_load() override
 			{
-				install_native_cmd_hook();
 				install_native_look_hook();
 				install_draw_crosshair_hook();
 
@@ -1361,10 +1026,8 @@ namespace xinput
 				{
 					set_cursor_visible(true);
 				}
-				restore_native_cmd_hook();
 				restore_native_look_hook();
 				restore_draw_crosshair_hook();
-				restore_usercmd_movement_patch();
 				set_bool_dvar(dvars::gpad_present, false);
 				set_bool_dvar(dvars::gpad_in_use, false);
 			});
@@ -1373,10 +1036,8 @@ namespace xinput
 			void pre_destroy() override
 			{
 				shutdown_requested = true;
-				restore_native_cmd_hook();
 				restore_native_look_hook();
 				restore_draw_crosshair_hook();
-				restore_usercmd_movement_patch();
 			}
 	};
 }

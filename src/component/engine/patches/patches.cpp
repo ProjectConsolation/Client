@@ -213,14 +213,28 @@ namespace patches
 		bool UI_ReplaceDirective_self_test()
 		{
 			char oversized[0x110]{};
-			char output[0x110]{};
 			std::memset(oversized, 'A', sizeof(oversized) - 1);
-			oversized[sizeof(oversized) - 1] = '\0';
 
-			const auto result = UI_ReplaceDirective_guard(reinterpret_cast<int>(oversized), output, 0, 0);
+			volatile std::uint32_t canary_before = 0xDEADBEEF;
+			char output[0x110]{};
+			volatile std::uint32_t canary_after = 0xCAFEBABE;
+
+			const auto result = UI_ReplaceDirective_guard(reinterpret_cast<std::uintptr_t>(oversized), output, 0, 0);
 			if (result != output)
 			{
-				game::Com_Printf(0, "UI_ReplaceDirective self-test failed\n");
+				game::Com_Printf(0, "UI_ReplaceDirective self-test failed: Wrong return pointer\n");
+				return false;
+			}
+
+			if (canary_before != 0xDEADBEEF || canary_after != 0xCAFEBABE)
+			{
+				game::Com_Printf(0, "UI_ReplaceDirective self-test failed: Stack overflow detected!\n");
+				return false;
+			}
+
+			if (output[sizeof(output) - 1] != '\0')
+			{
+				game::Com_Printf(0, "UI_ReplaceDirective self-test failed: Output not null-terminated\n");
 				return false;
 			}
 
