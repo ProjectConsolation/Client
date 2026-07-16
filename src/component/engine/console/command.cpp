@@ -25,10 +25,81 @@ namespace command
 		constexpr auto LIVE_CLAN_TARGET_PRIMARY = 0x111CF170;
 		constexpr auto LIVE_CLAN_TARGET_SECONDARY = 0x111F1C00;
 		constexpr auto CLAN_DIRTY_FLAGS = 0x1149E6BC;
+		constexpr auto GAMETYPES_RAWFILE = "maps/mp/gametypes/_gametypes.txt";
 
 		std::unordered_map<std::string, std::function<void(params&)>> handlers;
 		int next_bot_number = 1;
 		std::vector<std::string> bot_names;
+
+		std::string normalize_rawfile_path(std::string path)
+		{
+			for (auto& ch : path)
+			{
+				if (ch == '\\')
+				{
+					ch = '/';
+				}
+			}
+
+			return path;
+		}
+
+		std::string get_rawfile_buffer(const game::RawFile* rawfile)
+		{
+			if (!rawfile || !rawfile->buffer)
+			{
+				return {};
+			}
+
+			if (rawfile->len > 0)
+			{
+				const auto size = rawfile->buffer[rawfile->len - 1] == '\0'
+					? rawfile->len - 1
+					: rawfile->len;
+				return { rawfile->buffer, rawfile->buffer + size };
+			}
+
+			return rawfile->buffer;
+		}
+
+		void dump_rawfile(const char* rawfile_name, const char* output_name = nullptr)
+		{
+			if (!rawfile_name || rawfile_name[0] == '\0')
+			{
+				console::info("dumpRawFile <rawfile> [output]: dump a rawfile asset to consolation/rawfile_dump\n");
+				return;
+			}
+
+			const auto normalized_name = normalize_rawfile_path(rawfile_name);
+			const auto header = game::DB_FindXAssetHeader(game::ASSET_TYPE_RAWFILE, normalized_name.c_str());
+			const auto data = get_rawfile_buffer(header.rawfile);
+			if (data.empty())
+			{
+				console::warn("dumpRawFile: rawfile '%s' was empty or unavailable\n", normalized_name.c_str());
+				return;
+			}
+
+			std::string output_path;
+			if (output_name && output_name[0] != '\0')
+			{
+				output_path = "consolation/";
+				output_path.append(output_name);
+			}
+			else
+			{
+				output_path = "consolation/rawfile_dump/";
+				output_path.append(normalized_name);
+			}
+
+			if (utils::io::write_file(output_path, data))
+			{
+				console::info("dumpRawFile: dumped %s to %s\n", normalized_name.c_str(), output_path.c_str());
+			}
+			else
+			{
+				console::error("dumpRawFile: failed to write %s\n", output_path.c_str());
+			}
+		}
 
 		std::uintptr_t get_clients_base()
 		{
@@ -534,6 +605,22 @@ namespace command
 							}
 							console::info("\n%i commands\n", i);
 							console::info("================================ END COMMAND DUMP =================================\n");
+						});
+
+					add("dumpRawFile", [](const params& argument)
+						{
+							if (argument.size() < 2)
+							{
+								dump_rawfile(nullptr);
+								return;
+							}
+
+							dump_rawfile(argument.get(1), argument.get(2));
+						});
+
+					add("dumpGametypes", [](const params&)
+						{
+							dump_rawfile(GAMETYPES_RAWFILE);
 						});
 
 					add("listassetpool", [](const params& params)

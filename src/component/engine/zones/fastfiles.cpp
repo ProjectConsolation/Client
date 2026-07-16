@@ -15,6 +15,7 @@ namespace fastfiles
 	namespace
 	{
 		utils::hook::detour db_link_xasset_entry_hook;
+		utils::hook::detour create_file_a_hook;
 
 		bool common_fastfiles_seen = false;
 		bool patch_consolation_loaded = false;
@@ -32,6 +33,122 @@ namespace fastfiles
 		bool zone_name_equals(const char* lhs, const char* rhs)
 		{
 			return lhs != nullptr && rhs != nullptr && _stricmp(lhs, rhs) == 0;
+		}
+
+		bool ends_with_ignore_case(const std::string& value, const std::string& suffix)
+		{
+			if (value.size() < suffix.size())
+			{
+				return false;
+			}
+
+			return _stricmp(value.c_str() + value.size() - suffix.size(), suffix.c_str()) == 0;
+		}
+
+		bool is_zone_fastfile_path(const char* file_name)
+		{
+			if (file_name == nullptr || file_name[0] == '\0')
+			{
+				return false;
+			}
+
+			auto path = std::string(file_name);
+			std::replace(path.begin(), path.end(), '/', '\\');
+
+			return ends_with_ignore_case(path, ".ff") && path.find("\\zone\\") != std::string::npos;
+		}
+
+		std::filesystem::path get_executable_folder()
+		{
+			char path[MAX_PATH]{};
+			GetModuleFileNameA(nullptr, path, sizeof(path));
+
+			return std::filesystem::path(path).parent_path();
+		}
+
+		std::array<std::filesystem::path, 6> zone_lookup_roots()
+		{
+			const auto host_folder = std::filesystem::path(utils::nt::get_host_module().get_folder());
+			const auto exe_folder = get_executable_folder();
+			const auto root_folder = std::filesystem::current_path();
+
+			return
+			{
+				host_folder / "zone",
+				host_folder / "consolation" / "zone",
+				exe_folder / "zone",
+				exe_folder / "consolation" / "zone",
+				root_folder / "zone",
+				root_folder / "consolation" / "zone",
+			};
+		}
+
+		std::optional<std::filesystem::path> find_zone_file(const std::string& zone_file_name)
+		{
+			for (const auto& root : zone_lookup_roots())
+			{
+				std::error_code ec{};
+				if (!std::filesystem::exists(root, ec))
+				{
+					continue;
+				}
+
+				const auto direct_path = root / zone_file_name;
+				if (std::filesystem::exists(direct_path, ec))
+				{
+					return direct_path;
+				}
+
+				for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end && !ec; it.increment(ec))
+				{
+					if (!it->is_regular_file(ec))
+					{
+						continue;
+					}
+
+					const auto filename = it->path().filename().string();
+					if (_stricmp(filename.c_str(), zone_file_name.c_str()) == 0)
+					{
+						return it->path();
+					}
+				}
+			}
+
+			return std::nullopt;
+		}
+
+		using create_file_a_t = HANDLE(WINAPI*)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
+
+		HANDLE WINAPI create_file_a_stub(const LPCSTR file_name, const DWORD desired_access, const DWORD share_mode,
+			const LPSECURITY_ATTRIBUTES security_attributes, const DWORD creation_disposition,
+			const DWORD flags_and_attributes, const HANDLE template_file)
+		{
+			const auto original = reinterpret_cast<create_file_a_t>(create_file_a_hook.get_original());
+			auto handle = original(file_name, desired_access, share_mode, security_attributes, creation_disposition,
+				flags_and_attributes, template_file);
+
+			if (handle != INVALID_HANDLE_VALUE || !is_zone_fastfile_path(file_name))
+			{
+				return handle;
+			}
+
+			const auto original_error = GetLastError();
+			const auto zone_file_name = std::filesystem::path(file_name).filename().string();
+			const auto fallback_path = find_zone_file(zone_file_name);
+			if (!fallback_path)
+			{
+				SetLastError(original_error);
+				return INVALID_HANDLE_VALUE;
+			}
+
+			handle = original(fallback_path->string().c_str(), desired_access, share_mode, security_attributes,
+				creation_disposition, flags_and_attributes, template_file);
+			if (handle == INVALID_HANDLE_VALUE)
+			{
+				SetLastError(original_error);
+			}
+
+			return handle;
 		}
 
 		bool has_zone(const game::XZoneInfo* zone_info, const int zone_count, const char* name)
@@ -59,42 +176,7 @@ namespace fastfiles
 				return false;
 			}
 
-			const auto zone_file_name = std::string(zone_name) + ".ff";
-			const std::array roots
-			{
-				std::filesystem::path(utils::nt::get_host_module().get_folder()) / "zone",
-				std::filesystem::current_path() / "zone",
-			};
-
-			for (const auto& root : roots)
-			{
-				std::error_code ec{};
-				if (!std::filesystem::exists(root, ec))
-				{
-					continue;
-				}
-
-				if (std::filesystem::exists(root / zone_file_name, ec))
-				{
-					return true;
-				}
-
-				for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end && !ec; it.increment(ec))
-				{
-					if (!it->is_regular_file(ec))
-					{
-						continue;
-					}
-
-					const auto filename = it->path().filename().string();
-					if (_stricmp(filename.c_str(), zone_file_name.c_str()) == 0)
-					{
-						return true;
-					}
-				}
-			}
-
-			return false;
+			return find_zone_file(std::string(zone_name) + ".ff").has_value();
 		}
 
 		game::XZoneInfo make_override_zone(const char* zone_name)
@@ -354,6 +436,7 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
+			create_file_a_hook.create(reinterpret_cast<void*>(CreateFileA), create_file_a_stub);
 			db_link_xasset_entry_hook.create(game::DB_LinkXAssetEntry, db_link_xasset_entry_stub);
 			scheduler::schedule([]()
 			{
