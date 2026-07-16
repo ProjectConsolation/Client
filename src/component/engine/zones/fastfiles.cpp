@@ -97,6 +97,22 @@ namespace fastfiles
 			return zone_info;
 		}
 
+		std::string join_zone_names(const std::vector<game::XZoneInfo>& zones)
+		{
+			std::string names{};
+			for (const auto& zone : zones)
+			{
+				if (!names.empty())
+				{
+					names += ", ";
+				}
+
+				names += zone.name;
+			}
+
+			return names;
+		}
+
 		int db_load_xassets_stub(game::XZoneInfo* zone_info, const int zone_count, const int sync)
 		{
 			patch_consolation_loaded = patch_consolation_loaded || has_zone(zone_info, zone_count, "patch_consolation");
@@ -148,8 +164,18 @@ namespace fastfiles
 
 			if (!patch_zones.empty())
 			{
-				game::Com_Printf(16, "Loading patch fastfiles with override priority\n");
-				db_load_xassets_hook.invoke<int>(patch_zones.data(), static_cast<int>(patch_zones.size()), sync);
+				const auto patch_zone_names = join_zone_names(patch_zones);
+				game::Com_Printf(16, "Loading patch fastfiles with override priority: %s\n", patch_zone_names.c_str());
+
+				const auto patch_result = db_load_xassets_hook.invoke<int>(patch_zones.data(), static_cast<int>(patch_zones.size()), sync);
+				if (patch_result)
+				{
+					game::Com_Printf(16, "Loaded patch fastfiles with override priority: %s\n", patch_zone_names.c_str());
+				}
+				else
+				{
+					game::Com_Printf(16, "Failed to load patch fastfiles with override priority: %s\n", patch_zone_names.c_str());
+				}
 			}
 
 			return result;

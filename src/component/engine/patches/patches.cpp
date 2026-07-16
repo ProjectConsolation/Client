@@ -35,7 +35,7 @@ namespace patches
 	namespace
 	{
 		constexpr std::size_t k_huffman_max_decoded_bytes = 0x20000;
-		constexpr std::size_t k_huffman_max_compressed_bytes = k_huffman_max_decoded_bytes / 8;
+		constexpr std::size_t k_huffman_max_compressed_bytes = k_huffman_max_decoded_bytes;
 		constexpr std::size_t k_ui_replace_directive_max_len = 0x100;
 		constexpr std::size_t k_party_member_join_max_message_bytes = 0x4000;
 
@@ -140,9 +140,9 @@ namespace patches
 					(int)".\\cl_parse_mp.cpp",
 					1243,
 					1,
-					(char*)"Huffman compressed msg exceeded safe decode limit (%zu > %zu)\n",
-					compressed_bytes,
-					k_huffman_max_compressed_bytes);
+					(char*)"Huffman compressed msg exceeded safe decode limit (%u > %u)\n",
+					static_cast<unsigned int>(compressed_bytes),
+					static_cast<unsigned int>(k_huffman_max_compressed_bytes));
 				return 0;
 			}
 
