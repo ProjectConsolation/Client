@@ -121,8 +121,15 @@ namespace fastfiles
 			if (should_load_patch_mp)
 			{
 				patch_mp_attempted = true;
-				patch_zones.push_back(make_override_zone("patch_mp"));
-				patch_mp_loaded = true;
+				if (zone_file_exists("patch_mp"))
+				{
+					patch_zones.push_back(make_override_zone("patch_mp"));
+					patch_mp_loaded = true;
+				}
+				else
+				{
+					game::Com_Printf(16, "Skipping override fastfile 'patch_mp' because it was not found\n");
+				}
 			}
 
 			if (should_load_patch_consolation)
