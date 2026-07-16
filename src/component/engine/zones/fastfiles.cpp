@@ -412,10 +412,14 @@ namespace fastfiles
 
 			const auto patch_mp_expected = has_zone(patch_zones.data(), static_cast<int>(patch_zones.size()), "patch_mp");
 			const auto patch_consolation_expected = has_zone(patch_zones.data(), static_cast<int>(patch_zones.size()), "patch_consolation");
+			if (patch_consolation_expected)
+			{
+				gametypes::refresh_ui_gametype_list();
+			}
+
 			if ((!patch_mp_expected || patch_mp_loaded) && (!patch_consolation_expected || patch_consolation_loaded))
 			{
 				print_zone_load_state("Loaded", patch_zones);
-				gametypes::refresh_ui_gametype_list();
 			}
 			else
 			{

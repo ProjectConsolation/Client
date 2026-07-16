@@ -279,9 +279,16 @@ namespace gametypes
 		void rebuild_ui_gametype_cache()
 		{
 			const auto gametype_list = read_gametype_rawfile(GAMETYPES_LIST);
+			if (gametype_list.empty())
+			{
+				console::warn("gametypes: cannot refresh UI list because %s was empty or unavailable\n", GAMETYPES_LIST);
+				return;
+			}
+
 			const auto gametype_ids = parse_gametype_ids(gametype_list);
 			if (gametype_ids.empty())
 			{
+				console::warn("gametypes: cannot refresh UI list because %s parsed no entries\n", GAMETYPES_LIST);
 				return;
 			}
 
