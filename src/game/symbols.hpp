@@ -22,6 +22,8 @@ namespace game
 	WEAK symbol<Font_s*> con_font{ game_offset(0x1125C5B4) };
 
 	WEAK symbol<int(XZoneInfo* zoneInfo, int zoneCount, int sync)> DB_LoadXAssets{ game_offset(0x103E1CF0) };
+	WEAK symbol<int()> DB_WaitXAssets{ game_offset(0x103DFD80) };
+	WEAK symbol<XAssetEntry* (XAssetEntry* entry, int allowOverride)> DB_LinkXAssetEntry{ game_offset(0x103E0640) };
 	WEAK symbol<void(XAssetType type, void(*)(XAssetHeader, void*), const void* userdata, bool overrides)> DB_EnumXAssets_FastFile{ game_offset(0x103DFCA0) };
 	WEAK symbol<XAssetHeader(XAssetType type, const char* name)> DB_FindXAssetHeader{ game_offset(0x103E2260) };
 	WEAK symbol<XAssetHeader(XAssetType type, const char* name, int create_default)> DB_FindXAssetHeader_Internal{ game_offset(0x103E1EE0) };
@@ -71,6 +73,7 @@ namespace game
 	WEAK symbol<scrMemTreePub_t> scrMemTreePub{ game_offset(0x116357CC) };
 	WEAK symbol<unsigned short> db_hashTable{ game_offset(0x1082ED60) };
 	WEAK symbol<XAssetEntryPoolEntry> g_assetEntryPool{ game_offset(0x108CB5C0) };
+	WEAK symbol<XZone> g_zones{ game_offset(0x10AB8188) };
 	WEAK symbol<int(char* dvar)> generateHashValue{ game_offset(0x10275260) };
 	WEAK symbol<dvar_s*> dvarHashTable{ game_offset(0x1149FCE0) };
 	WEAK symbol<const char*> g_assetNames{ game_offset(0x1055E3D8) };

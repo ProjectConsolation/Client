@@ -8,6 +8,7 @@
 #include "game/game.hpp"
 
 #include <utils/hook.hpp>
+#include <utils/io.hpp>
 #include <utils/string.hpp>
 #include <utils/thread.hpp>
 
@@ -25,6 +26,67 @@ namespace console
 		utils::hook::detour com_printf_hook;
 
 		std::recursive_mutex print_mutex;
+		std::mutex log_mutex;
+		bool log_initialized = false;
+		std::string log_path;
+		thread_local bool skip_dispatch_log = false;
+
+		std::vector<std::filesystem::path> get_log_paths()
+		{
+			std::vector<std::filesystem::path> paths{};
+			paths.emplace_back(std::filesystem::current_path() / "consolation" / "console.log");
+
+			if (const auto* local_app_data = std::getenv("LOCALAPPDATA"))
+			{
+				paths.emplace_back(std::filesystem::path(local_app_data) / "Project-Consolation" / "console.log");
+			}
+
+			if (const auto* temp = std::getenv("TEMP"))
+			{
+				paths.emplace_back(std::filesystem::path(temp) / "Project-Consolation-console.log");
+			}
+
+			return paths;
+		}
+
+		void write_log(const std::string& message)
+		{
+			std::lock_guard _0(log_mutex);
+
+			if (!log_initialized)
+			{
+				for (const auto& path : get_log_paths())
+				{
+					const auto path_string = path.string();
+					if (utils::io::write_file(path_string, "", false))
+					{
+						log_path = path_string;
+						break;
+					}
+				}
+
+				log_initialized = true;
+
+				if (log_path.empty())
+				{
+					OutputDebugStringA("console: failed to open console.log\n");
+					return;
+				}
+
+				utils::io::write_file(log_path, utils::string::va("console: logging to %s\n", log_path.c_str()), true);
+			}
+
+			if (log_path.empty())
+			{
+				return;
+			}
+
+			utils::io::write_file(log_path, message, true);
+			if (message.empty() || message.back() != '\n')
+			{
+				utils::io::write_file(log_path, "\n", true);
+			}
+		}
 
 		std::string build_display_version()
 		{
@@ -194,6 +256,11 @@ namespace console
 		int dispatch_message(const int type, const std::string& message)
 		{
 			std::lock_guard _0(print_mutex);
+			if (!skip_dispatch_log)
+			{
+				write_log(message);
+			}
+
 			game_console::append_output(message);
 
 			clear_output();
@@ -215,6 +282,11 @@ namespace console
 		int dispatch_split_debug_message(const std::string& message)
 		{
 			std::lock_guard _0(print_mutex);
+			if (!skip_dispatch_log)
+			{
+				write_log("debug:" + message);
+			}
+
 			game_console::append_output(message);
 
 			clear_output();
@@ -364,6 +436,7 @@ namespace console
 
 				clear_output();
 				SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_info));
+				write_log(utils::string::va("]%s\n", con.buffer));
 				invoke_printf("]%s\r\n", con.buffer);
 				SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_info));
 				strncpy_s(con.buffer, "", sizeof(con.buffer));
@@ -423,6 +496,7 @@ namespace console
 			const auto result = format(&ap, fmt);
 			va_end(ap);
 
+			write_log(result);
 			game_console::append_output(result);
 			game::CL_ConsolePrint(0, 6, result.c_str(), 0, 0, 0);
 
@@ -436,14 +510,19 @@ namespace console
 			const auto result = format(&ap, fmt);
 			va_end(ap);
 
+			write_log(result);
+
 			if (com_printf_hook.get_original())
 			{
 				com_printf_hook.invoke<void>(channel, "%s", result.c_str());
 			}
 
+			skip_dispatch_log = true;
+
 			if (result.rfind("^1debug:^3 ", 0) == 0)
 			{
 				dispatch_split_debug_message(result.substr(10));
+				skip_dispatch_log = false;
 				return;
 			}
 
@@ -500,6 +579,7 @@ namespace console
 				auto g_debugVelocity = game::Dvar_FindVar("g_debugVelocity");
 				if (g_debugVelocity && g_debugVelocity->current.enabled)
 					dispatch_message(con_type_debug, result);
+				skip_dispatch_log = false;
 				return;
 			}
 
@@ -514,10 +594,12 @@ namespace console
 					if (!utils::string::string_contains(result, "took 0ms"))
 						dispatch_message(con_type_debug, result);
 				}
+				skip_dispatch_log = false;
 				return;
 			}
 
 			dispatch_message(type, display);
+			skip_dispatch_log = false;
 		}
 
 		/*

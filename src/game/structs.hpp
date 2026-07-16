@@ -648,6 +648,13 @@ namespace game
 	};
 	static_assert(sizeof(XZoneInfo) == 12);
 
+	struct XZone
+	{
+		char name[64];
+		int flags;
+	};
+	static_assert(sizeof(XZone) == 68);
+
 	struct XAssetEntry
 	{
 		XAsset asset;
