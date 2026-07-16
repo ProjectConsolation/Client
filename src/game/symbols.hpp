@@ -21,6 +21,7 @@ namespace game
 	WEAK symbol<void()> ConDrawInput_DrawInput{ game_offset(0x103175D0) };
 	WEAK symbol<Font_s*> con_font{ game_offset(0x1125C5B4) };
 
+	WEAK symbol<int(XZoneInfo* zoneInfo, int zoneCount, int sync)> DB_LoadXAssets{ game_offset(0x103E1CF0) };
 	WEAK symbol<void(XAssetType type, void(*)(XAssetHeader, void*), const void* userdata, bool overrides)> DB_EnumXAssets_FastFile{ game_offset(0x103DFCA0) };
 	WEAK symbol<XAssetHeader(XAssetType type, const char* name)> DB_FindXAssetHeader{ game_offset(0x103E2260) };
 	WEAK symbol<XAssetHeader(XAssetType type, const char* name, int create_default)> DB_FindXAssetHeader_Internal{ game_offset(0x103E1EE0) };
