@@ -59,6 +59,25 @@ namespace fastfiles
 			return ends_with_ignore_case(path, ".ff") && path.find("\\zone\\") != std::string::npos;
 		}
 
+		bool is_read_open_request(const DWORD desired_access, const DWORD creation_disposition)
+		{
+			return (desired_access & (GENERIC_READ | FILE_GENERIC_READ)) != 0
+				&& (creation_disposition == OPEN_EXISTING || creation_disposition == OPEN_ALWAYS);
+		}
+
+		bool is_scaleform_gfx_path(const char* file_name)
+		{
+			if (file_name == nullptr || file_name[0] == '\0')
+			{
+				return false;
+			}
+
+			auto path = std::string(file_name);
+			std::replace(path.begin(), path.end(), '/', '\\');
+			return ends_with_ignore_case(path, ".gfx")
+				&& (path.find("\\scaleform\\") != std::string::npos || path.find("\\ui_mp\\") != std::string::npos);
+		}
+
 		std::filesystem::path get_executable_folder()
 		{
 			char path[MAX_PATH]{};
@@ -118,6 +137,41 @@ namespace fastfiles
 			return std::nullopt;
 		}
 
+		std::array<std::filesystem::path, 3> scaleform_lookup_roots()
+		{
+			const auto host_folder = std::filesystem::path(utils::nt::get_host_module().get_folder());
+			const auto exe_folder = get_executable_folder();
+			const auto root_folder = std::filesystem::current_path();
+
+			return
+			{
+				host_folder / "consolation" / "ui_mp" / "scaleform",
+				exe_folder / "consolation" / "ui_mp" / "scaleform",
+				root_folder / "consolation" / "ui_mp" / "scaleform",
+			};
+		}
+
+		std::optional<std::filesystem::path> find_scaleform_file(const char* file_name)
+		{
+			const auto scaleform_file_name = std::filesystem::path(file_name).filename().string();
+			if (scaleform_file_name.empty())
+			{
+				return std::nullopt;
+			}
+
+			for (const auto& root : scaleform_lookup_roots())
+			{
+				std::error_code ec{};
+				const auto direct_path = root / scaleform_file_name;
+				if (std::filesystem::exists(direct_path, ec))
+				{
+					return direct_path;
+				}
+			}
+
+			return std::nullopt;
+		}
+
 		using create_file_a_t = HANDLE(WINAPI*)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
 
 		HANDLE WINAPI create_file_a_stub(const LPCSTR file_name, const DWORD desired_access, const DWORD share_mode,
@@ -125,6 +179,26 @@ namespace fastfiles
 			const DWORD flags_and_attributes, const HANDLE template_file)
 		{
 			const auto original = reinterpret_cast<create_file_a_t>(create_file_a_hook.get_original());
+
+			if (is_read_open_request(desired_access, creation_disposition) && is_scaleform_gfx_path(file_name))
+			{
+				const auto fallback_path = find_scaleform_file(file_name);
+				if (fallback_path)
+				{
+					const auto handle = original(fallback_path->string().c_str(), desired_access, share_mode, security_attributes,
+						creation_disposition, flags_and_attributes, template_file);
+					if (handle != INVALID_HANDLE_VALUE)
+					{
+						if (debug_xasset())
+						{
+							game::Com_Printf(16, "^5Loading Scaleform override %s\n", fallback_path->string().c_str());
+						}
+
+						return handle;
+					}
+				}
+			}
+
 			auto handle = original(file_name, desired_access, share_mode, security_attributes, creation_disposition,
 				flags_and_attributes, template_file);
 

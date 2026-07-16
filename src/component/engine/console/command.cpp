@@ -4,6 +4,7 @@
 #include "command.hpp"
 #include "console.hpp"
 #include "component/utils/scheduler.hpp"
+#include "component/engine/scripting/gametypes.hpp"
 
 #include <utils/memory.hpp>
 #include <utils/string.hpp>
@@ -30,6 +31,314 @@ namespace command
 		std::unordered_map<std::string, std::function<void(params&)>> handlers;
 		int next_bot_number = 1;
 		std::vector<std::string> bot_names;
+
+		bool parse_integer(const char* value, std::uintptr_t* result)
+		{
+			if (!value || value[0] == '\0' || !result)
+			{
+				return false;
+			}
+
+			auto base = 10;
+			auto text = value;
+			if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+			{
+				base = 16;
+			}
+			else
+			{
+				for (auto* ch = text; *ch; ++ch)
+				{
+					if ((*ch >= 'a' && *ch <= 'f') || (*ch >= 'A' && *ch <= 'F'))
+					{
+						base = 16;
+						break;
+					}
+				}
+			}
+
+			char* end = nullptr;
+			const auto parsed = std::strtoull(text, &end, base);
+			if (!end || *end != '\0')
+			{
+				return false;
+			}
+
+			*result = static_cast<std::uintptr_t>(parsed);
+			return true;
+		}
+
+		std::uintptr_t resolve_address(std::uintptr_t parsed)
+		{
+			if (parsed >= 0x10000000 && parsed < 0x20000000)
+			{
+				return game::game_offset(parsed);
+			}
+
+			return parsed;
+		}
+
+		void append_format(std::string& output, const char* format, ...)
+		{
+			char buffer[256]{};
+			va_list ap;
+			va_start(ap, format);
+			vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, format, ap);
+			va_end(ap);
+			output.append(buffer);
+		}
+
+		std::string get_exe_directory()
+		{
+			char path[MAX_PATH]{};
+			const auto length = GetModuleFileNameA(nullptr, path, sizeof(path));
+			if (length == 0 || length >= sizeof(path))
+			{
+				return {};
+			}
+
+			std::string result = path;
+			const auto separator = result.find_last_of("/\\");
+			if (separator == std::string::npos)
+			{
+				return {};
+			}
+
+			result.resize(separator);
+			return result;
+		}
+
+		std::string resolve_game_path(const std::string& path)
+		{
+			if (path.size() > 2 && path[1] == ':')
+			{
+				return path;
+			}
+
+			const auto base = get_exe_directory();
+			if (base.empty())
+			{
+				return path;
+			}
+
+			return base + "\\" + path;
+		}
+
+		bool create_directory_tree(const std::string& path, DWORD* error)
+		{
+			if (path.empty())
+			{
+				return true;
+			}
+
+			auto create_one = [error](const std::string& directory)
+			{
+				if (directory.empty() || (directory.size() == 2 && directory[1] == ':'))
+				{
+					return true;
+				}
+
+				if (CreateDirectoryA(directory.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS)
+				{
+					return true;
+				}
+
+				if (error)
+				{
+					*error = GetLastError();
+				}
+
+				return false;
+			};
+
+			for (std::size_t i = 0; i < path.size(); ++i)
+			{
+				if (path[i] != '/' && path[i] != '\\')
+				{
+					continue;
+				}
+
+				if (!create_one(path.substr(0, i)))
+				{
+					return false;
+				}
+			}
+
+			return create_one(path);
+		}
+
+		bool write_file_noexcept(const std::string& path, const std::string& data, DWORD* error)
+		{
+			const auto resolved_path = resolve_game_path(path);
+			const auto separator = resolved_path.find_last_of("/\\");
+			if (separator != std::string::npos && !create_directory_tree(resolved_path.substr(0, separator), error))
+			{
+				return false;
+			}
+
+			const auto file = CreateFileA(resolved_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+			if (file == INVALID_HANDLE_VALUE)
+			{
+				if (error)
+				{
+					*error = GetLastError();
+				}
+
+				return false;
+			}
+
+			DWORD written = 0;
+			const auto size = static_cast<DWORD>(std::min<std::size_t>(data.size(), MAXDWORD));
+			const auto ok = WriteFile(file, data.data(), size, &written, nullptr) && written == size;
+			if (!ok && error)
+			{
+				*error = GetLastError();
+			}
+
+			CloseHandle(file);
+			return ok;
+		}
+
+		bool is_readable_memory(const void* address, const std::size_t length)
+		{
+			if (!address || length == 0)
+			{
+				return false;
+			}
+
+			MEMORY_BASIC_INFORMATION info{};
+			if (!VirtualQuery(address, &info, sizeof(info)))
+			{
+				return false;
+			}
+
+			const auto protection = info.Protect & 0xFF;
+			const auto readable = protection == PAGE_READONLY
+				|| protection == PAGE_READWRITE
+				|| protection == PAGE_WRITECOPY
+				|| protection == PAGE_EXECUTE_READ
+				|| protection == PAGE_EXECUTE_READWRITE
+				|| protection == PAGE_EXECUTE_WRITECOPY;
+
+			const auto start = reinterpret_cast<std::uintptr_t>(address);
+			const auto region_start = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
+			const auto region_end = region_start + info.RegionSize;
+			return info.State == MEM_COMMIT && readable && start + length <= region_end;
+		}
+
+		bool safe_read_byte(const std::uintptr_t address, unsigned char* value)
+		{
+			if (!value)
+			{
+				return false;
+			}
+
+			SIZE_T bytes_read = 0;
+			return ReadProcessMemory(
+				GetCurrentProcess(),
+				reinterpret_cast<const void*>(address),
+				value,
+				sizeof(*value),
+				&bytes_read) && bytes_read == sizeof(*value);
+		}
+
+		void dump_memory(const char* address_text, const char* length_text, const char* output_name)
+		{
+			if (!address_text || address_text[0] == '\0')
+			{
+				console::info("dumpMemory <address> [length] [output]: dump readable memory to consolation/memory_dump\n");
+				console::info("dumpMemory accepts IDA addresses like 0x113D1684 or runtime pointers\n");
+				return;
+			}
+
+			std::uintptr_t address = 0;
+			std::size_t length = 0x100;
+			std::uintptr_t parsed = 0;
+			if (!parse_integer(address_text, &parsed))
+			{
+				console::error("dumpMemory: invalid address\n");
+				return;
+			}
+
+			address = resolve_address(parsed);
+			if (length_text && length_text[0] != '\0')
+			{
+				std::uintptr_t parsed_length = 0;
+				if (!parse_integer(length_text, &parsed_length))
+				{
+					console::error("dumpMemory: invalid length\n");
+					return;
+				}
+
+				length = static_cast<std::size_t>(parsed_length);
+			}
+
+			length = std::clamp<std::size_t>(length, 1, 0x4000);
+			if (!is_readable_memory(reinterpret_cast<const void*>(address), 1))
+			{
+				console::error("dumpMemory: address %p is not readable\n", reinterpret_cast<void*>(address));
+				return;
+			}
+
+			std::string output{};
+			output.reserve((length / 16 + 1) * 80);
+			for (std::size_t offset = 0; offset < length; offset += 16)
+			{
+				append_format(output, "%08X  ", static_cast<unsigned int>(address + offset));
+				char ascii[17]{};
+				for (std::size_t column = 0; column < 16; ++column)
+				{
+					if (offset + column < length)
+					{
+						unsigned char byte = 0;
+						if (safe_read_byte(address + offset + column, &byte))
+						{
+							append_format(output, "%02X ", byte);
+							ascii[column] = byte >= 32 && byte < 127 ? static_cast<char>(byte) : '.';
+						}
+						else
+						{
+							output.append("?? ");
+							ascii[column] = '?';
+						}
+					}
+					else
+					{
+						output.append("   ");
+					}
+				}
+
+				output.append(" ");
+				for (std::size_t column = 0; column < 16 && offset + column < length; ++column)
+				{
+					output.push_back(ascii[column]);
+				}
+
+				output.append("\r\n");
+			}
+
+			std::string output_path = "consolation/memory_dump/";
+			if (output_name && output_name[0] != '\0')
+			{
+				output_path.append(output_name);
+			}
+			else
+			{
+				char filename[32]{};
+				sprintf_s(filename, "%08X.txt", static_cast<unsigned int>(address));
+				output_path.append(filename);
+			}
+
+			DWORD error = ERROR_SUCCESS;
+			if (write_file_noexcept(output_path, output, &error))
+			{
+				console::info("dumpMemory: wrote %s\n", output_path.c_str());
+			}
+			else
+			{
+				console::error("dumpMemory: failed to write %s (GetLastError=%lu)\n", output_path.c_str(), error);
+			}
+		}
 
 		std::string normalize_rawfile_path(std::string path)
 		{
@@ -621,6 +930,48 @@ namespace command
 					add("dumpGametypes", [](const params&)
 						{
 							dump_rawfile(GAMETYPES_RAWFILE);
+						});
+
+					add("dumpGametypesDebug", [](const params&)
+						{
+							try
+							{
+								gametypes::dump_debug_state();
+							}
+							catch (...)
+							{
+								console::error("dumpGametypesDebug: unhandled exception\n");
+							}
+						});
+
+					add("refreshGametypes", [](const params&)
+						{
+							try
+							{
+								gametypes::force_refresh_ui_gametype_list();
+							}
+							catch (...)
+							{
+								console::error("refreshGametypes: unhandled exception\n");
+							}
+						});
+
+					add("dumpMemory", [](const params& argument)
+						{
+							try
+							{
+								if (argument.size() < 2)
+								{
+									dump_memory(nullptr, nullptr, nullptr);
+									return;
+								}
+
+								dump_memory(argument.get(1), argument.get(2), argument.get(3));
+							}
+							catch (...)
+							{
+								console::error("dumpMemory: unhandled exception\n");
+							}
 						});
 
 					add("listassetpool", [](const params& params)
