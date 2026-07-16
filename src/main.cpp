@@ -142,7 +142,9 @@ namespace
 		{
 #ifdef DEBUG
 			configure_debug_crt();
-			xlive::apply_early(); // Patch xlive before attaching a debugger.
+			// xlive early patching is still unstable during bring-up.
+			// Keep it disabled until the xlive port is proven safe again.
+			// xlive::apply_early();
 			//MessageBoxA(NULL, "ATTACH DEBUGGER NOW", "DEBUG", MB_DEFBUTTON1);
 #endif
 
