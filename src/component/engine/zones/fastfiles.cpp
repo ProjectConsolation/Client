@@ -4,6 +4,7 @@
 #include "game/game.hpp"
 
 #include "component/utils/scheduler.hpp"
+#include "component/engine/scripting/gametypes.hpp"
 #include "fastfiles.hpp"
 
 #include <utils/hook.hpp>
@@ -369,7 +370,7 @@ namespace fastfiles
 				}
 				else
 				{
-					game::Com_Printf(16, "Skipping override fastfile 'patch_mp' because it was not found\n");
+					game::Com_Printf(16, "^1Skipping override fastfile 'patch_mp' because it was not found\n");
 				}
 			}
 
@@ -382,7 +383,7 @@ namespace fastfiles
 				}
 				else
 				{
-					game::Com_Printf(16, "Skipping override fastfile 'patch_consolation' because it was not found\n");
+					game::Com_Printf(16, "^1Skipping override fastfile 'patch_consolation' because it was not found\n");
 				}
 			}
 
@@ -414,6 +415,7 @@ namespace fastfiles
 			if ((!patch_mp_expected || patch_mp_loaded) && (!patch_consolation_expected || patch_consolation_loaded))
 			{
 				print_zone_load_state("Loaded", patch_zones);
+				gametypes::refresh_ui_gametype_list();
 			}
 			else
 			{

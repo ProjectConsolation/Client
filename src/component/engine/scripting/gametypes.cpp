@@ -4,6 +4,7 @@
 #include "component/engine/console/command.hpp"
 #include "component/engine/console/console.hpp"
 #include "filesystem.hpp"
+#include "gametypes.hpp"
 
 #include "game/game.hpp"
 
@@ -18,12 +19,15 @@ namespace gametypes
 {
 	namespace
 	{
+		utils::hook::detour db_find_xasset_header_internal_hook;
+
 		constexpr auto GAMETYPES_LIST = "maps/mp/gametypes/_gametypes.txt";
 		constexpr auto GAMETYPE_PREFIX = "maps/mp/gametypes/";
 		constexpr auto GAMETYPE_ENTRY_SIZE = 0x2C;
 		constexpr auto UI_GAMETYPE_MAX = 0x20;
 
 		std::unordered_map<std::string, game::RawFile*> loaded_gametype_rawfiles;
+		bool ui_gametype_list_refreshed = false;
 
 		std::string normalize_gametype_path(const char* name)
 		{
@@ -37,6 +41,28 @@ namespace gametypes
 			}
 
 			return normalized;
+		}
+
+		std::string trim(std::string value)
+		{
+			const auto first = value.find_first_not_of(" \t\r\n");
+			if (first == std::string::npos)
+			{
+				return {};
+			}
+
+			const auto last = value.find_last_not_of(" \t\r\n");
+			return value.substr(first, last - first + 1);
+		}
+
+		void copy_ui_gametype_string(char* dest, const std::size_t dest_size, const std::string& value)
+		{
+			if (dest == nullptr || dest_size == 0)
+			{
+				return;
+			}
+
+			strncpy_s(dest, dest_size, value.c_str(), _TRUNCATE);
 		}
 
 		bool is_gametype_rawfile(const game::XAssetType type, const char* name)
@@ -64,29 +90,54 @@ namespace gametypes
 			return zone_name != nullptr && _strnicmp(zone_name, "patch_", 6) == 0;
 		}
 
-		bool rawfile_is_from_patch_zone(const game::RawFile* rawfile)
+		bool rawfile_name_equals(const game::RawFile* rawfile, const std::string& name)
 		{
-			if (!rawfile)
+			if (!rawfile || !rawfile->name)
 			{
 				return false;
 			}
 
-			auto found_patch_zone = false;
+			return _stricmp(normalize_gametype_path(rawfile->name).c_str(), name.c_str()) == 0;
+		}
+
+		game::RawFile* find_patch_gametype_rawfile(const std::string& name)
+		{
+			game::RawFile* fallback_patch_rawfile = nullptr;
+
 			game::DB_EnumXAssetEntries(game::ASSET_TYPE_RAWFILE, [&](game::XAssetEntryPoolEntry* pool_entry)
 			{
-				if (found_patch_zone || pool_entry == nullptr)
+				if (pool_entry == nullptr)
 				{
 					return;
 				}
 
 				const auto& entry = pool_entry->entry;
-				if (entry.asset.header.rawfile == rawfile && is_patch_zone(get_zone_name(static_cast<unsigned char>(entry.zoneIndex))))
+				auto* const rawfile = entry.asset.header.rawfile;
+				if (!rawfile_has_data(rawfile) || !rawfile_name_equals(rawfile, name))
 				{
-					found_patch_zone = true;
+					return;
+				}
+
+				const auto* const zone_name = get_zone_name(static_cast<unsigned char>(entry.zoneIndex));
+				if (!is_patch_zone(zone_name))
+				{
+					return;
+				}
+
+				// Prefer the project patch if multiple patch zones carry the same rawfile.
+				if (_stricmp(zone_name, "patch_consolation") == 0)
+				{
+					fallback_patch_rawfile = rawfile;
+					return;
+				}
+
+				if (!fallback_patch_rawfile)
+				{
+					fallback_patch_rawfile = rawfile;
 				}
 			}, true);
 
-			return found_patch_zone;
+			return fallback_patch_rawfile;
 		}
 
 		game::RawFile* make_rawfile(const std::string& name, const std::string& data)
@@ -128,14 +179,16 @@ namespace gametypes
 			return rawfile;
 		}
 
-		game::XAssetHeader DB_FindXAssetHeader_Internal_gametype_stub(const game::XAssetType type, const char* name, const int create_default)
+		game::XAssetHeader db_find_xasset_header_internal_stub(const game::XAssetType type, const char* name, const int create_default)
 		{
 			if (is_gametype_rawfile(type, name))
 			{
-				const auto fastfile_header = game::DB_FindXAssetHeader_Internal(type, normalize_gametype_path(name).c_str(), create_default);
-				if (rawfile_has_data(fastfile_header.rawfile) && rawfile_is_from_patch_zone(fastfile_header.rawfile))
+				const auto normalized_name = normalize_gametype_path(name);
+				if (auto* patch_rawfile = find_patch_gametype_rawfile(normalized_name))
 				{
-					return fastfile_header;
+					game::XAssetHeader header{};
+					header.rawfile = patch_rawfile;
+					return header;
 				}
 
 				if (auto* rawfile = load_custom_gametype_rawfile(name))
@@ -145,13 +198,14 @@ namespace gametypes
 					return header;
 				}
 
+				const auto fastfile_header = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, normalized_name.c_str(), create_default);
 				if (rawfile_has_data(fastfile_header.rawfile))
 				{
 					return fastfile_header;
 				}
 			}
 
-			return game::DB_FindXAssetHeader_Internal(type, name, create_default);
+			return db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, name, create_default);
 		}
 
 		std::string get_rawfile_buffer(const game::RawFile* rawfile)
@@ -170,6 +224,92 @@ namespace gametypes
 			}
 
 			return rawfile->buffer;
+		}
+
+		std::string read_gametype_rawfile(const std::string& name)
+		{
+			const auto header = game::DB_FindXAssetHeader_Internal(game::ASSET_TYPE_RAWFILE, name.c_str(), 1);
+			return get_rawfile_buffer(header.rawfile);
+		}
+
+		std::vector<std::string> parse_gametype_ids(const std::string& data)
+		{
+			std::vector<std::string> ids{};
+			std::istringstream stream(data);
+			std::string line{};
+
+			while (std::getline(stream, line) && ids.size() < UI_GAMETYPE_MAX)
+			{
+				if (const auto comment = line.find("//"); comment != std::string::npos)
+				{
+					line.erase(comment);
+				}
+
+				line = trim(line);
+				if (!line.empty())
+				{
+					ids.push_back(line);
+				}
+			}
+
+			return ids;
+		}
+
+		std::string parse_gametype_display_name(const std::string& data, const std::string& fallback)
+		{
+			auto text = trim(data);
+			if (text.empty())
+			{
+				return fallback;
+			}
+
+			if (const auto comment = text.find("//"); comment != std::string::npos)
+			{
+				text = trim(text.substr(0, comment));
+			}
+
+			if (text.size() >= 2 && text.front() == '"' && text.back() == '"')
+			{
+				text = text.substr(1, text.size() - 2);
+			}
+
+			return text.empty() ? fallback : text;
+		}
+
+		void rebuild_ui_gametype_cache()
+		{
+			const auto gametype_list = read_gametype_rawfile(GAMETYPES_LIST);
+			const auto gametype_ids = parse_gametype_ids(gametype_list);
+			if (gametype_ids.empty())
+			{
+				return;
+			}
+
+			auto* const count = reinterpret_cast<int*>(game::game_offset(0x113D1684));
+			auto* const entries = reinterpret_cast<char*>(game::game_offset(0x113D1688));
+			std::memset(entries, 0, GAMETYPE_ENTRY_SIZE * UI_GAMETYPE_MAX);
+
+			auto written_count = 0;
+			for (const auto& gametype_id : gametype_ids)
+			{
+				const auto display_file = std::format("{}{}.txt", GAMETYPE_PREFIX, gametype_id);
+				const auto display_data = read_gametype_rawfile(display_file);
+				if (display_data.empty())
+				{
+					continue;
+				}
+
+				const auto display_name = parse_gametype_display_name(display_data, gametype_id);
+				auto* const entry = entries + (written_count * GAMETYPE_ENTRY_SIZE);
+
+				copy_ui_gametype_string(entry, 12, gametype_id);
+				copy_ui_gametype_string(entry + 0x0C, GAMETYPE_ENTRY_SIZE - 0x0C, display_name);
+				++written_count;
+			}
+
+			*count = written_count;
+			ui_gametype_list_refreshed = true;
+			console::info("gametypes: refreshed UI gametype list with %i entries\n", written_count);
 		}
 
 		void dump_loaded_gametypes_rawfile()
@@ -239,22 +379,28 @@ namespace gametypes
 		public:
 			void post_load() override
 			{
-				// Script metadata gametype list.
-				utils::hook::call(game::game_offset(0x101A253E), DB_FindXAssetHeader_Internal_gametype_stub);
-				utils::hook::call(game::game_offset(0x101A25FB), DB_FindXAssetHeader_Internal_gametype_stub);
-
-				// Frontend UI gametype list.
-				utils::hook::call(game::game_offset(0x102DB705), DB_FindXAssetHeader_Internal_gametype_stub);
-				utils::hook::call(game::game_offset(0x102DB7E3), DB_FindXAssetHeader_Internal_gametype_stub);
+				db_find_xasset_header_internal_hook.create(game::DB_FindXAssetHeader_Internal, db_find_xasset_header_internal_stub);
 
 				// Keep command registration in command.cpp if this dump helper is needed later.
 			}
 
 			void pre_destroy() override
 			{
+				db_find_xasset_header_internal_hook.clear();
 				loaded_gametype_rawfiles.clear();
+				ui_gametype_list_refreshed = false;
 			}
 		};
+	}
+
+	void refresh_ui_gametype_list()
+	{
+		if (ui_gametype_list_refreshed)
+		{
+			return;
+		}
+
+		rebuild_ui_gametype_cache();
 	}
 }
 
