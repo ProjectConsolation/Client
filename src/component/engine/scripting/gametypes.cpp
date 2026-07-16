@@ -361,12 +361,15 @@ namespace gametypes
 			std::memset(alt_entries, 0, GAMETYPE_ENTRY_SIZE * UI_GAMETYPE_MAX);
 
 			auto written_count = 0;
+			auto visible_count = 0;
+			std::vector<std::string> hidden_gametype_ids{};
 			for (const auto& gametype_id : gametype_ids)
 			{
 				const auto display_file = std::format("{}{}.txt", GAMETYPE_PREFIX, gametype_id);
 				const auto display_data = read_gametype_rawfile(display_file);
 				if (display_data.empty())
 				{
+					hidden_gametype_ids.push_back(gametype_id);
 					continue;
 				}
 
@@ -379,13 +382,31 @@ namespace gametypes
 				copy_ui_gametype_string(alt_entry, 12, gametype_id);
 				copy_ui_gametype_string(alt_entry + 0x0C, GAMETYPE_ENTRY_SIZE - 0x0C, display_name);
 				++written_count;
+				++visible_count;
+			}
+
+			for (const auto& gametype_id : hidden_gametype_ids)
+			{
+				if (written_count >= UI_GAMETYPE_MAX)
+				{
+					break;
+				}
+
+				auto* const entry = entries + (written_count * GAMETYPE_ENTRY_SIZE);
+				auto* const alt_entry = alt_entries + (written_count * GAMETYPE_ENTRY_SIZE);
+
+				copy_ui_gametype_string(entry, 12, gametype_id);
+				copy_ui_gametype_string(entry + 0x0C, GAMETYPE_ENTRY_SIZE - 0x0C, gametype_id);
+				copy_ui_gametype_string(alt_entry, 12, gametype_id);
+				copy_ui_gametype_string(alt_entry + 0x0C, GAMETYPE_ENTRY_SIZE - 0x0C, gametype_id);
+				++written_count;
 			}
 
 			*count = written_count;
 			*alt_count = written_count;
-			fit_gametype_menu_listbox(written_count);
+			fit_gametype_menu_listbox(visible_count);
 			ui_gametype_list_refreshed = true;
-			console::info("gametypes: refreshed UI gametype lists with %i entries\n", written_count);
+			console::info("gametypes: refreshed UI gametype lists with %i visible entries, %i total entries\n", visible_count, written_count);
 		}
 
 		void dump_loaded_gametypes_rawfile()
