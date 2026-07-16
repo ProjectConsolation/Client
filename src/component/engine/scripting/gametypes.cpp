@@ -29,6 +29,8 @@ namespace gametypes
 		constexpr auto UI_GAMETYPE_ENTRIES = 0x113D1688;
 		constexpr auto UI_GAMETYPE_ALT_COUNT = 0x113D31EC;
 		constexpr auto UI_GAMETYPE_ALT_ENTRIES = 0x113D31F0;
+		constexpr auto ITEM_TYPE_LISTBOX = 6;
+		constexpr auto FEEDER_GAMETYPE = 271;
 
 		std::unordered_map<std::string, game::RawFile*> loaded_gametype_rawfiles;
 		bool ui_gametype_list_refreshed = false;
@@ -280,6 +282,60 @@ namespace gametypes
 			return text.empty() ? fallback : text;
 		}
 
+		void fit_gametype_menu_listbox(const int gametype_count)
+		{
+			if (gametype_count <= 0)
+			{
+				return;
+			}
+
+			struct adjustment_state
+			{
+				int gametype_count;
+				int adjusted_count;
+			};
+
+			adjustment_state state{ gametype_count, 0 };
+			game::DB_EnumXAssets_FastFile(game::ASSET_TYPE_MENU, [](game::XAssetHeader header, void* data)
+			{
+				auto* const state = static_cast<adjustment_state*>(data);
+				auto* const menu = header.menu;
+				if (!menu || !menu->items)
+				{
+					return;
+				}
+
+				for (auto item_index = 0; item_index < menu->itemCount; ++item_index)
+				{
+					auto* const item = menu->items[item_index];
+					if (!item || item->type != ITEM_TYPE_LISTBOX || item->feeder != FEEDER_GAMETYPE || !item->typeData.listBox)
+					{
+						continue;
+					}
+
+					auto* const listbox = item->typeData.listBox;
+					if (item->window.rect.h <= 0.0f || listbox->elementHeight <= 0.0f)
+					{
+						continue;
+					}
+
+					const auto visible_count = static_cast<int>(item->window.rect.h / listbox->elementHeight);
+					if (visible_count >= state->gametype_count)
+					{
+						continue;
+					}
+
+					listbox->elementHeight = item->window.rect.h / static_cast<float>(state->gametype_count);
+					++state->adjusted_count;
+				}
+			}, &state, true);
+
+			if (state.adjusted_count > 0)
+			{
+				console::info("gametypes: adjusted %i menu listbox viewport(s) for %i entries\n", state.adjusted_count, gametype_count);
+			}
+		}
+
 		void rebuild_ui_gametype_cache()
 		{
 			const auto gametype_list = read_gametype_rawfile(GAMETYPES_LIST);
@@ -327,6 +383,7 @@ namespace gametypes
 
 			*count = written_count;
 			*alt_count = written_count;
+			fit_gametype_menu_listbox(written_count);
 			ui_gametype_list_refreshed = true;
 			console::info("gametypes: refreshed UI gametype lists with %i entries\n", written_count);
 		}
