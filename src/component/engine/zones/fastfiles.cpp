@@ -65,7 +65,7 @@ namespace fastfiles
 				&& (creation_disposition == OPEN_EXISTING || creation_disposition == OPEN_ALWAYS);
 		}
 
-		bool is_scaleform_gfx_path(const char* file_name)
+		bool is_scaleform_file_path(const char* file_name)
 		{
 			if (file_name == nullptr || file_name[0] == '\0')
 			{
@@ -74,8 +74,33 @@ namespace fastfiles
 
 			auto path = std::string(file_name);
 			std::replace(path.begin(), path.end(), '/', '\\');
-			return ends_with_ignore_case(path, ".gfx")
+			return (ends_with_ignore_case(path, ".gfx") || ends_with_ignore_case(path, ".swf"))
 				&& (path.find("\\scaleform\\") != std::string::npos || path.find("\\ui_mp\\") != std::string::npos);
+		}
+
+		bool is_scaleform_asset_name(const char* asset_name)
+		{
+			if (asset_name == nullptr || asset_name[0] == '\0')
+			{
+				return false;
+			}
+
+			auto name = std::string(asset_name);
+			std::replace(name.begin(), name.end(), '\\', '/');
+			std::transform(name.begin(), name.end(), name.begin(), [](const unsigned char c)
+			{
+				return static_cast<char>(std::tolower(c));
+			});
+
+			return name.find(".gfx") != std::string::npos
+				|| name.find(".swf") != std::string::npos
+				|| name.find("scaleform") != std::string::npos
+				|| name.find("mpsysmodeselect") != std::string::npos
+				|| name.find("mpxbplaylistselect") != std::string::npos
+				|| name.find("cmsharedplatform") != std::string::npos
+				|| name.find("gfxfontlib") != std::string::npos
+				|| name.find("pcsharedlibrary") != std::string::npos
+				|| name.find("cmsharedlibrary") != std::string::npos;
 		}
 
 		std::filesystem::path get_executable_folder()
@@ -180,8 +205,10 @@ namespace fastfiles
 		{
 			const auto original = reinterpret_cast<create_file_a_t>(create_file_a_hook.get_original());
 
-			if (is_read_open_request(desired_access, creation_disposition) && is_scaleform_gfx_path(file_name))
+			if (is_read_open_request(desired_access, creation_disposition) && is_scaleform_file_path(file_name))
 			{
+				game::Com_Printf(16, "^5Opening Scaleform file %s\n", file_name);
+
 				const auto fallback_path = find_scaleform_file(file_name);
 				if (fallback_path)
 				{
@@ -189,10 +216,7 @@ namespace fastfiles
 						creation_disposition, flags_and_attributes, template_file);
 					if (handle != INVALID_HANDLE_VALUE)
 					{
-						if (debug_xasset())
-						{
-							game::Com_Printf(16, "^5Loading Scaleform override %s\n", fallback_path->string().c_str());
-						}
+						game::Com_Printf(16, "^5Loading Scaleform override %s\n", fallback_path->string().c_str());
 
 						return handle;
 					}
@@ -400,9 +424,26 @@ namespace fastfiles
 				const auto* const incoming_zone_name = get_zone_name(incoming_zone_index);
 				const auto zone_index = get_asset_zone_index(log_entry);
 				const auto* const zone_name = get_zone_name(zone_index);
+				const auto* const linked_name = get_asset_name(log_entry);
 				common_fastfiles_seen = common_fastfiles_seen || zone_name_equals(incoming_zone_name, "common_mp") || zone_name_equals(zone_name, "common_mp");
 				patch_mp_loaded = patch_mp_loaded || zone_name_equals(incoming_zone_name, "patch_mp") || zone_name_equals(zone_name, "patch_mp");
 				patch_consolation_loaded = patch_consolation_loaded || zone_name_equals(incoming_zone_name, "patch_consolation") || zone_name_equals(zone_name, "patch_consolation");
+
+				if (is_scaleform_asset_name(incoming_name) || is_scaleform_asset_name(linked_name))
+				{
+					game::Com_Printf(16, "^5[scaleform-xasset] ent=%p, link=%p, t=%d, n=%s, lN=%s, eZ=%u:%s, lZ=%u:%s, lZF=0x%X, allowOverride=%d)\n",
+						entry,
+						linked_entry,
+						static_cast<int>(log_entry->asset.type),
+						incoming_name,
+						linked_name,
+						incoming_zone_index,
+						incoming_zone_name,
+						zone_index,
+						zone_name,
+						get_zone_flags(zone_index),
+						allow_override);
+				}
 
 				if (debug_xasset())
 				{
@@ -411,7 +452,7 @@ namespace fastfiles
 						linked_entry,
 						static_cast<int>(log_entry->asset.type),
 						incoming_name,
-						get_asset_name(log_entry),
+						linked_name,
 						incoming_zone_index,
 						incoming_zone_name,
 						zone_index,

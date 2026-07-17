@@ -353,6 +353,48 @@ namespace command
 			return path;
 		}
 
+		std::string get_file_name(std::string path)
+		{
+			path = normalize_rawfile_path(std::move(path));
+			const auto separator = path.find_last_of('/');
+			if (separator == std::string::npos)
+			{
+				return path;
+			}
+
+			return path.substr(separator + 1);
+		}
+
+		std::string make_dump_safe_path(std::string path)
+		{
+			path = normalize_rawfile_path(std::move(path));
+			while (!path.empty() && path.front() == '/')
+			{
+				path.erase(path.begin());
+			}
+
+			return path;
+		}
+
+		bool is_scaleform_asset_candidate(const char* asset_name)
+		{
+			if (!asset_name || asset_name[0] == '\0')
+			{
+				return false;
+			}
+
+			auto name = utils::string::to_lower(normalize_rawfile_path(asset_name));
+			return name.find(".gfx") != std::string::npos
+				|| name.find(".swf") != std::string::npos
+				|| name.find("scaleform") != std::string::npos
+				|| name.find("mpsysmodeselect") != std::string::npos
+				|| name.find("mpxbplaylistselect") != std::string::npos
+				|| name.find("cmsharedplatform") != std::string::npos
+				|| name.find("gfxfontlib") != std::string::npos
+				|| name.find("pcsharedlibrary") != std::string::npos
+				|| name.find("cmsharedlibrary") != std::string::npos;
+		}
+
 		std::string get_rawfile_buffer(const game::RawFile* rawfile)
 		{
 			if (!rawfile || !rawfile->buffer)
@@ -369,6 +411,16 @@ namespace command
 			}
 
 			return rawfile->buffer;
+		}
+
+		std::string get_rawfile_binary_buffer(const game::RawFile* rawfile)
+		{
+			if (!rawfile || !rawfile->buffer || rawfile->len == 0)
+			{
+				return {};
+			}
+
+			return { rawfile->buffer, rawfile->buffer + rawfile->len };
 		}
 
 		void dump_rawfile(const char* rawfile_name, const char* output_name = nullptr)
@@ -408,6 +460,147 @@ namespace command
 			{
 				console::error("dumpRawFile: failed to write %s\n", output_path.c_str());
 			}
+		}
+
+		bool dump_rawfile_binary(const game::RawFile* rawfile, const char* output_prefix)
+		{
+			if (!rawfile || !rawfile->name)
+			{
+				return false;
+			}
+
+			const auto data = get_rawfile_binary_buffer(rawfile);
+			if (data.empty())
+			{
+				console::warn("dumpSwf: rawfile '%s' was empty or unavailable\n", rawfile->name);
+				return false;
+			}
+
+			std::string output_path = output_prefix;
+			output_path.append(make_dump_safe_path(rawfile->name));
+
+			DWORD error = ERROR_SUCCESS;
+			if (write_file_noexcept(output_path, data, &error))
+			{
+				console::info("dumpSwf: dumped %s to %s\n", rawfile->name, output_path.c_str());
+				return true;
+			}
+
+			console::error("dumpSwf: failed to write %s (GetLastError=%lu)\n", output_path.c_str(), error);
+			return false;
+		}
+
+		int dump_swf_by_name(const char* swf_name)
+		{
+			if (!swf_name || swf_name[0] == '\0')
+			{
+				console::info("dumpSwf <name.swf|name.gfx>: dump a loaded Scaleform rawfile to consolation/scaleform_dump\n");
+				return 0;
+			}
+
+			const auto wanted = utils::string::to_lower(get_file_name(swf_name));
+			auto fallback_wanted = wanted;
+			if (fallback_wanted.ends_with(".swf"))
+			{
+				fallback_wanted.resize(fallback_wanted.size() - 4);
+				fallback_wanted.append(".gfx");
+			}
+
+			auto dumped = 0;
+
+			fastfiles::enum_assets(game::ASSET_TYPE_RAWFILE, [&](const game::XAssetHeader header)
+			{
+				const auto* const rawfile = header.rawfile;
+				if (!rawfile || !rawfile->name)
+				{
+					return;
+				}
+
+				const auto file_name = utils::string::to_lower(get_file_name(rawfile->name));
+				if (file_name != wanted && file_name != fallback_wanted)
+				{
+					return;
+				}
+
+				if (dump_rawfile_binary(rawfile, "consolation/scaleform_dump/"))
+				{
+					++dumped;
+				}
+			}, true);
+
+			if (dumped == 0)
+			{
+				console::warn("dumpSwf: '%s' was not found in loaded Scaleform rawfile assets\n", swf_name);
+			}
+
+			return dumped;
+		}
+
+		void dump_scaleform_shared_files()
+		{
+			static constexpr const char* scaleform_names[]
+			{
+				"cmsharedplatform.gfx",
+				"cmsharedlibrary.gfx",
+				"pcsharedlibrary.gfx",
+				"mpsharedlibrary.gfx",
+				"cmfont1_glyphs.gfx",
+				"cmfont2_glyphs.gfx",
+				"cmfont3_glyphs.gfx",
+				"cmfont4_glyphs.gfx",
+				"cmfont5_glyphs.gfx",
+			};
+
+			auto total = 0;
+			for (const auto* const scaleform_name : scaleform_names)
+			{
+				total += dump_swf_by_name(scaleform_name);
+			}
+
+			console::info("dumpScaleformSharedFiles: dumped %i file(s)\n", total);
+		}
+
+		void find_scaleform_assets(const char* filter)
+		{
+			const auto normalized_filter = filter && filter[0] != '\0'
+				? utils::string::to_lower(normalize_rawfile_path(filter))
+				: std::string{};
+
+			auto total = 0;
+			for (auto type_index = 0; type_index < game::ASSET_TYPE_COUNT; ++type_index)
+			{
+				const auto type = static_cast<game::XAssetType>(type_index);
+				fastfiles::enum_assets(type, [type, type_index, &normalized_filter, &total](const game::XAssetHeader header)
+				{
+					game::XAsset asset{ type, header };
+					const auto* const asset_name = game::DB_GetXAssetName(&asset);
+					if (!asset_name || asset_name[0] == '\0')
+					{
+						return;
+					}
+
+					const auto normalized_name = utils::string::to_lower(normalize_rawfile_path(asset_name));
+					if (!normalized_filter.empty())
+					{
+						if (normalized_name.find(normalized_filter) == std::string::npos)
+						{
+							return;
+						}
+					}
+					else if (!is_scaleform_asset_candidate(asset_name))
+					{
+						return;
+					}
+
+					console::info("findScaleformAssets: type=%d:%s name=%s\n",
+						type_index,
+						game::g_assetNames[type_index],
+						asset_name);
+					++total;
+				}, true);
+			}
+
+			console::info("findScaleformAssets: found %i asset(s)\n", total);
 		}
 
 		std::uintptr_t get_clients_base()
@@ -925,6 +1118,27 @@ namespace command
 							}
 
 							dump_rawfile(argument.get(1), argument.get(2));
+						});
+
+					add("dumpSwf", [](const params& argument)
+						{
+							if (argument.size() < 2)
+							{
+								dump_swf_by_name(nullptr);
+								return;
+							}
+
+							dump_swf_by_name(argument.get(1));
+						});
+
+					add("dumpScaleformSharedFiles", [](const params&)
+						{
+							dump_scaleform_shared_files();
+						});
+
+					add("findScaleformAssets", [](const params& argument)
+						{
+							find_scaleform_assets(argument.get(1));
 						});
 
 					add("dumpGametypes", [](const params&)

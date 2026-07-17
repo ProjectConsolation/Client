@@ -33,6 +33,7 @@ namespace gametypes
 		constexpr auto UI_GAMETYPE_ALT_ENTRIES = 0x113D31F0;
 
 		std::unordered_map<std::string, game::RawFile*> loaded_gametype_rawfiles;
+		std::unordered_map<std::string, game::RawFile*> loaded_scaleform_rawfiles;
 		bool ui_gametype_list_refreshed = false;
 
 		std::string normalize_gametype_path(const char* name)
@@ -95,6 +96,14 @@ namespace gametypes
 			return type == game::ASSET_TYPE_RAWFILE
 				&& !normalized.empty()
 				&& _strnicmp(normalized.c_str(), GAMETYPE_PREFIX, std::strlen(GAMETYPE_PREFIX)) == 0;
+		}
+
+		bool is_scaleform_rawfile(const game::XAssetType type, const char* name)
+		{
+			const auto normalized = normalize_gametype_path(name);
+			return type == game::ASSET_TYPE_RAWFILE
+				&& normalized.starts_with("scaleform/")
+				&& normalized.ends_with(".gfx");
 		}
 
 		bool rawfile_has_data(const game::RawFile* rawfile)
@@ -181,6 +190,22 @@ namespace gametypes
 			return rawfile;
 		}
 
+		game::RawFile* make_binary_rawfile(const std::string& name, const std::string& data)
+		{
+			auto* rawfile = utils::memory::allocate<game::RawFile>();
+			auto* rawfile_name = static_cast<char*>(utils::memory::allocate(name.size() + 1));
+			auto* buffer = static_cast<char*>(utils::memory::allocate(data.size()));
+
+			std::memcpy(rawfile_name, name.data(), name.size());
+			std::memcpy(buffer, data.data(), data.size());
+			rawfile_name[name.size()] = '\0';
+
+			rawfile->name = rawfile_name;
+			rawfile->len = static_cast<unsigned int>(data.size());
+			rawfile->buffer = buffer;
+			return rawfile;
+		}
+
 		game::RawFile* load_custom_gametype_rawfile(const char* name)
 		{
 			const auto normalized_name = normalize_gametype_path(name);
@@ -201,6 +226,73 @@ namespace gametypes
 
 			console::info("gametypes: loaded raw fallback %s from %s\n", normalized_name.c_str(), real_path.c_str());
 			return rawfile;
+		}
+
+		game::RawFile* find_patch_scaleform_rawfile(const std::string& name)
+		{
+			game::RawFile* fallback_patch_rawfile = nullptr;
+
+			game::DB_EnumXAssetEntries(game::ASSET_TYPE_RAWFILE, [&](game::XAssetEntryPoolEntry* pool_entry)
+			{
+				if (pool_entry == nullptr)
+				{
+					return;
+				}
+
+				const auto& entry = pool_entry->entry;
+				auto* const rawfile = entry.asset.header.rawfile;
+				if (!rawfile_has_data(rawfile) || !rawfile_name_equals(rawfile, name))
+				{
+					return;
+				}
+
+				const auto* const zone_name = get_zone_name(static_cast<unsigned char>(entry.zoneIndex));
+				if (!is_patch_zone(zone_name))
+				{
+					return;
+				}
+
+				if (_stricmp(zone_name, "patch_consolation") == 0)
+				{
+					fallback_patch_rawfile = rawfile;
+					return;
+				}
+
+				if (!fallback_patch_rawfile)
+				{
+					fallback_patch_rawfile = rawfile;
+				}
+			}, true);
+
+			return fallback_patch_rawfile;
+		}
+
+		game::RawFile* load_custom_scaleform_rawfile(const char* name)
+		{
+			const auto normalized_name = normalize_gametype_path(name);
+			if (const auto existing = loaded_scaleform_rawfiles.find(normalized_name); existing != loaded_scaleform_rawfiles.end())
+			{
+				return existing->second;
+			}
+
+			const auto ui_mp_name = std::string("ui_mp/") + normalized_name;
+			for (const auto& candidate_name : { ui_mp_name, normalized_name })
+			{
+				std::string data{};
+				std::string real_path{};
+				if (!filesystem::read_file(candidate_name, &data, &real_path))
+				{
+					continue;
+				}
+
+				auto* rawfile = make_binary_rawfile(normalized_name, data);
+				loaded_scaleform_rawfiles[normalized_name] = rawfile;
+
+				console::info("scaleform: loaded raw override %s from %s\n", normalized_name.c_str(), real_path.c_str());
+				return rawfile;
+			}
+
+			return nullptr;
 		}
 
 		game::XAssetHeader db_find_xasset_header_internal_stub(const game::XAssetType type, const char* name, const int create_default)
@@ -226,6 +318,24 @@ namespace gametypes
 				if (rawfile_has_data(fastfile_header.rawfile))
 				{
 					return fastfile_header;
+				}
+			}
+
+			if (is_scaleform_rawfile(type, name))
+			{
+				const auto normalized_name = normalize_gametype_path(name);
+				if (auto* patch_rawfile = find_patch_scaleform_rawfile(normalized_name))
+				{
+					game::XAssetHeader header{};
+					header.rawfile = patch_rawfile;
+					return header;
+				}
+
+				if (auto* rawfile = load_custom_scaleform_rawfile(normalized_name.c_str()))
+				{
+					game::XAssetHeader header{};
+					header.rawfile = rawfile;
+					return header;
 				}
 			}
 
@@ -728,6 +838,7 @@ namespace gametypes
 			{
 				db_find_xasset_header_internal_hook.clear();
 				loaded_gametype_rawfiles.clear();
+				loaded_scaleform_rawfiles.clear();
 				ui_gametype_list_refreshed = false;
 			}
 		};
