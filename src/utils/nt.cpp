@@ -179,6 +179,12 @@ namespace utils::nt
 		auto* header = this->get_optional_header();
 		if (!header) return nullptr;
 
+		const auto& import_directory = header->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+		if (!import_directory.VirtualAddress)
+		{
+			return nullptr;
+		}
+
 		auto* import_descriptor = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(this->get_ptr() + header->DataDirectory
 			[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
 
@@ -186,21 +192,32 @@ namespace utils::nt
 		{
 			if (!_stricmp(reinterpret_cast<char*>(this->get_ptr() + import_descriptor->Name), module_name.data()))
 			{
-				auto* original_thunk_data = reinterpret_cast<PIMAGE_THUNK_DATA>(import_descriptor->
-					OriginalFirstThunk + this->get_ptr());
+				const auto lookup_table = import_descriptor->OriginalFirstThunk
+					? import_descriptor->OriginalFirstThunk
+					: import_descriptor->FirstThunk;
+				auto* original_thunk_data = reinterpret_cast<PIMAGE_THUNK_DATA>(lookup_table + this->get_ptr());
 				auto* thunk_data = reinterpret_cast<PIMAGE_THUNK_DATA>(import_descriptor->FirstThunk + this->
 					get_ptr());
 
 				while (original_thunk_data->u1.AddressOfData)
 				{
-					const size_t ordinal_number = original_thunk_data->u1.AddressOfData & 0xFFFFFFF;
-
-					if (ordinal_number > 0xFFFF) continue;
-
-					if (GetProcAddress(other_module.module_, reinterpret_cast<char*>(ordinal_number)) ==
-						target_function)
+					if (IMAGE_SNAP_BY_ORDINAL(original_thunk_data->u1.Ordinal))
 					{
-						return reinterpret_cast<void**>(&thunk_data->u1.Function);
+						const auto ordinal_number = IMAGE_ORDINAL(original_thunk_data->u1.Ordinal);
+						if (GetProcAddress(other_module.module_, reinterpret_cast<char*>(ordinal_number)) ==
+							target_function)
+						{
+							return reinterpret_cast<void**>(&thunk_data->u1.Function);
+						}
+					}
+					else
+					{
+						const auto* import = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(
+							original_thunk_data->u1.AddressOfData + this->get_ptr());
+						if (!_stricmp(reinterpret_cast<const char*>(import->Name), proc_name.data()))
+						{
+							return reinterpret_cast<void**>(&thunk_data->u1.Function);
+						}
 					}
 
 					++original_thunk_data;
