@@ -15,7 +15,16 @@ REM    PREMAKE_NO_PROMPT - Download premake5 without prompting
 cd /d "%~dp0"
 
 git submodule sync --recursive
+if errorlevel 1 (
+    echo Failed to sync git submodules. >&2
+    exit /b 1
+)
+
 git submodule update --init --recursive
+if errorlevel 1 (
+    echo Failed to update git submodules. >&2
+    exit /b 1
+)
 
 if exist "deps\SDL\include\SDL.h" (
     echo Using SDL source from deps\SDL
@@ -34,11 +43,13 @@ if "%PREMAKE_NO_GLOBAL%"=="" (
 )
 
 if exist "tools\premake5.exe" (
-    tools\premake5.exe --version >NUL 2>&1
+    call :verifypremake "tools\premake5.exe"
     if not errorlevel 1 (
         set "PREMAKE_BIN=tools\premake5.exe"
         goto runpremake
     )
+
+    echo Existing tools\premake5.exe does not match the pinned Premake build.
 )
 
 if not "%PREMAKE_NO_PROMPT%"=="" (
@@ -88,7 +99,7 @@ if errorlevel 1 (
 del /q "tools\premake.zip" >NUL 2>&1
 
 echo Verifying premake5 hash...
-%POWERSHELL_BIN% -NoProfile -NonInteractive -Command "if ((Get-FileHash -LiteralPath 'tools\premake5.exe' -Algorithm SHA256).Hash -eq '%PREMAKE_HASH%') { exit 0 } else { exit 1 }"
+call :verifypremake "tools\premake5.exe"
 if errorlevel 1 (
     echo Hash verification failed. >&2
     del /q "tools\premake5.exe" >NUL 2>&1
@@ -97,8 +108,25 @@ if errorlevel 1 (
 
 exit /b 0
 
+:verifypremake
+if "%POWERSHELL_BIN%"=="" (
+    where /q "pwsh"
+    if not errorlevel 1 (
+        set "POWERSHELL_BIN=pwsh"
+    ) else (
+        set "POWERSHELL_BIN=powershell"
+    )
+)
+
+%POWERSHELL_BIN% -NoProfile -NonInteractive -Command "if ((Get-FileHash -LiteralPath '%~1' -Algorithm SHA256).Hash -eq '%PREMAKE_HASH%') { exit 0 } else { exit 1 }"
+exit /b %ERRORLEVEL%
+
 :runpremake
 %PREMAKE_BIN% %* vs2022
+if errorlevel 1 (
+    echo Premake generation failed. >&2
+    exit /b 1
+)
 
 if not exist "build" (
     mkdir build
