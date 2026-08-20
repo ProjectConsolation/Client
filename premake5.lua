@@ -270,8 +270,8 @@ dependencies.load()
 workspace "consolation-client"
 	startproject "consolation-client"
 	location "./build"
-	objdir "%{wks.location}/obj/%{cfg.buildcfg}"
-	targetdir(_OPTIONS["target-dir"] or "C:/Program Files (x86)/Activision/Quantum of Solace(TM)/")
+	objdir "%{wks.location}/obj/%{cfg.architecture}/%{cfg.buildcfg}/%{prj.name}"
+	targetdir(_OPTIONS["target-dir"] or "%{wks.location}/bin/%{cfg.buildcfg}")
 
 	-- i guess ill keep this for anyone wanting it lol
 	buildlog "%{wks.location}/obj/%{cfg.architecture}/%{cfg.buildcfg}/%{prj.name}/%{prj.name}.log"
@@ -292,7 +292,7 @@ workspace "consolation-client"
 	warnings "Extra"
 	characterset "ASCII"
 
-	buildoptions "/std:c++latest"
+	buildoptions { "/std:c++latest", "/FS" }
 	
 	defines { "_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS" }
 
@@ -323,6 +323,8 @@ workspace "consolation-client"
 	project "d3d9" -- dll we are using to hook into the game
 		kind "SharedLib"
 		language "C++"
+		links { "hid", "setupapi" }
+		buildoptions { "/utf-8" }
 
 		files 
 		{
@@ -334,7 +336,7 @@ workspace "consolation-client"
 
 		vpaths
 		{
-			["component/gamepad"] = { "./src/component/gamepad/*.cpp", "./src/component/gamepad/*.hpp", "./src/component/gamepad/*.h" },
+			["component/gamepad/*"] = { "./src/component/gamepad/**.cpp", "./src/component/gamepad/**.hpp", "./src/component/gamepad/**.h" },
 			["component/engine"] = { "./src/component/engine/*.cpp", "./src/component/engine/*.hpp", "./src/component/engine/*.h" },
 			["component/engine/console"] = { "./src/component/engine/console/*.cpp", "./src/component/engine/console/*.hpp", "./src/component/engine/console/*.h" },
 			["component/engine/mouse_input"] = { "./src/component/engine/mouse_input/*.cpp", "./src/component/engine/mouse_input/*.hpp", "./src/component/engine/mouse_input/*.h" },
