@@ -1,0 +1,26 @@
+---
+generated_at: 2026-08-31T15:22:49.184Z
+content_hash: da45df7f60359b4baa72474f105f1b3b1c4eee305927cd1ea4336eea914675f4
+purpose: xinput-module.hpp does runtime XInput DLL loading and safe controller API forwarding.
+---
+**xinput-module.hpp does runtime XInput DLL loading and safe controller API forwarding.**
+
+## Interface
+
+- `xinput_module(const context&)` loads the highest-capability available XInput variant.
+- `~xinput_module()` releases the owned `HMODULE`.
+- `xinput_module` is non-copyable and non-movable; resolved function pointers remain valid only while `handle_` is mapped.
+- `bool loaded() const noexcept` reports `handle_ != nullptr`.
+- `const char* dll_name() const noexcept` returns the loaded DLL name or `"none"`.
+- `bool has_guide_button() const noexcept` reports `get_state_ex_ != nullptr`.
+- `DWORD get_state(DWORD, XINPUT_STATE&) const noexcept` forwards state queries.
+- `DWORD get_capabilities(DWORD, DWORD, XINPUT_CAPABILITIES&) const noexcept` forwards capability queries.
+- `DWORD set_state(DWORD, XINPUT_VIBRATION&) const noexcept` forwards vibration commands.
+
+## Runtime Contracts
+
+`xinput_module::load` resolves XInput entry points by name at runtime, avoiding import-library process-load failure; unavailable runtimes return `ERROR_DEVICE_NOT_CONNECTED`. `get_state_ex_` resolves ordinal `100`, preserving the guide button masked by public `XInputGetState`; `get_state_`, `get_capabilities_`, and `set_state_` use WINAPI-compatible signatures.
+
+## Coupling
+
+`xinput_module` depends on `context`, `support/types.hpp`, `support/utility.hpp`, Windows `HMODULE`, `DWORD`, `XINPUT_STATE`, `XINPUT_CAPABILITIES`, and `XINPUT_VIBRATION`.

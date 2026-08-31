@@ -1,0 +1,25 @@
+---
+generated_at: 2026-08-31T15:22:34.501Z
+content_hash: bb2d6089490a3689d5b94d851eca2c6d064e73dddde9fb4e99c965b084441e13
+purpose: stick-layout.hpp maps physical gamepad sticks to logical movement and view axes.
+---
+**stick-layout.hpp maps physical gamepad sticks to logical movement and view axes.**
+
+## Interface
+
+- `enum class virtual_axis : uint8_t`: `side`, `forward`, `yaw`, `pitch`.
+- `const char* to_string(virtual_axis) noexcept`: converts `virtual_axis` to its stable name.
+- `enum class stick_layout : uint8_t`: `standard`, `southpaw`, `legacy`, `legacy_southpaw`.
+- `const char* to_string(stick_layout) noexcept`: converts `stick_layout` to its stable name.
+- `stick_layout stick_layout_from_name(string_view) noexcept`: parses `gpad_sticksConfig`; unknown names resolve to `stick_layout::standard`.
+- `virtual_axis axis_for(stick_layout, stick which, bool horizontal) noexcept`: resolves a physical stick component; `horizontal=true` selects the horizontal axis.
+- `struct resolved_axes`: normalized scalar fields `float side`, `forward`, `yaw`, `pitch`, each defaulting to `0.0f`.
+- `resolved_axes resolve(stick_layout, stick_vector left, stick_vector right) noexcept`: permutes calibrated canonical vectors into logical axes with sign handling.
+
+## Design Contracts
+
+`resolve` performs only layout permutation and sign handling; deadzones, response curves, turn rates, and usercmd byte scaling remain downstream. `resolved_axes` carries raw movement deflections and aim-processing view values, never angles. `virtual_axis` separates logical meaning from physical stick placement.
+
+## Dependencies
+
+`types.hpp` supplies `string_view`, `stick`, and `stick_vector`; `utility.hpp` supplies shared controller utilities; `sample/axis.hpp` supplies axis-related definitions.

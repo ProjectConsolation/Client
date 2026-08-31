@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:22:41.419Z
+content_hash: b794cdec12d01aed79395be2533abf945dae68087aa1e539e5f926ddc4747bc0
+purpose: trigger.cpp does trigger_side-to-string conversion.
+---
+**trigger.cpp does trigger_side-to-string conversion.**
+
+## Interface
+
+`to_string(trigger_side s) noexcept -> const char*`: returns `"left"`/`"right"`; unknown values default to `"left"`.

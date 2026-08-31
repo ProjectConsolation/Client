@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:22:06.013Z
+content_hash: 3d68f930e033b78b52825dae3140e7a0ae644553d55702ca90e46288a71c2432
+purpose: driver.hpp defines the polymorphic native gamepad-driver boundary and its poll/output contracts.
+---
+**driver.hpp defines the polymorphic native gamepad-driver boundary and its poll/output contracts.**
+
+## Interface
+
+- `max_reports_per_poll` — `inline constexpr size_t`, fixed at `32`; bounds reports consumed per device per poll, deferring overflow to the next frame.
+- `driver` — abstract per-physical-device Strategy-pattern base; owns family-specific decoding/output across one transport.
+- `driver::~driver() = default` — virtual destructor.
+- `driver::family() const noexcept -> controller::family` — identifies the decoded native controller family.
+- `driver::device() const noexcept -> device_id` — identifies the bound physical device.
+- `driver::poll(raw_sample& raw, canonical_sample& canonical) noexcept -> bool` — fills native `raw_sample` and game-facing `canonical_sample`; returns `false` for unchanged XInput packet/no HID report and `true` for new state. Caller supplies acquisition timestamp and per-device sequence.
+- `driver::submit(const output_request&) noexcept -> void` — honors supported output requests and reports unsupported ones as `output_rejected`; never emits uncertain reports.
+
+## Integration and Contracts
+
+`types.hpp` supplies controller-family/sample-related types; `utility.hpp`, `device/id.hpp`, `device/identity.hpp`, `sample/sample.hpp`, and `driver/output.hpp` supply utility, identity, sampling, and output dependencies. `driver::poll` and `driver::submit` must not throw across the ABI boundary or allocate; hot per-sample decoding remains non-virtual. `max_reports_per_poll` supports draining high-rate HID queues while retaining the newest reading without frame stalls. `driver` uses dynamic dispatch only once per connected device per engine frame.

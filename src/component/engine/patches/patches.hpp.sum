@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:22:45.979Z
+content_hash: 0699b54d208fea7a63586fa44e70d6ddb6009b269dfdce0526303c7a483bc096
+purpose: patches.hpp declares the ADS sprint-interrupt patch.
+---
+**patches.hpp declares the ADS sprint-interrupt patch.**
+
+## API
+
+`enforce_ads_sprint_interrupt(game::usercmd_t* cmd)` mutates `cmd`; returns `void`.

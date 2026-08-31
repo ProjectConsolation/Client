@@ -1,0 +1,12 @@
+---
+generated_at: 2026-08-31T15:23:30.279Z
+content_hash: 765878a8962863f88445f4e596d83ff9ced7eadf8c1cc084c1afa8ad6219bbe3
+purpose: scheduler.hpp defines scheduler pipeline dispatch and shutdown hooks.
+---
+**scheduler.hpp defines scheduler pipeline dispatch and shutdown hooks.**
+
+## API
+
+`scheduler::pipeline`: `async`, `renderer`, `main`, `count`; `cond_continue=false`, `cond_end=true`.
+
+`scheduler::on_shutdown(const std::function<void()>&)`; `schedule`, `loop`, `once` accept callbacks, `pipeline`, `std::chrono::milliseconds delay=0ms`; `schedule` returns `void` but callback returns `bool`.

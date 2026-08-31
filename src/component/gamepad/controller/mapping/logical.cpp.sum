@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:22:36.026Z
+content_hash: 7e7a525f357784779ffc0bb7c262b36160014f3f126d642a073a235a86908e71
+purpose: logical.cpp maps gamepad `action` values to logical names and engine commands.
+---
+**logical.cpp maps gamepad `action` values to logical names and engine commands.**
+
+## Interface
+
+`gamepad::unstable::controller::mapping::to_string(action a) noexcept -> const char*` returns canonical action names; unknown values fall back to `"none"`.
+
+`gamepad::unstable::controller::mapping::command(action a) noexcept -> const char*` returns engine command strings; unknown values fall back to `""`.
+
+## Behavioral Contracts
+
+`to_string` maps `none`, `fire`, `ads`, `jump_stand`, `stance`, `melee`, `use_reload`, `sprint`, `next_weapon`, `frag`, `special_grenade`, `menu`, `scoreboard`, and `action_slot_1..4` to `"none"`, `"fire"`, `"ads"`, `"jump-stand"`, `"stance"`, `"melee"`, `"use-reload"`, `"sprint"`, `"next-weapon"`, `"frag"`, `"special-grenade"`, `"menu"`, `"scoreboard"`, and `"action-slot-1..4"`.
+
+`command` maps actions to `""`, `"+attack"`, `"+speed_throw"`, `"+gostand"`, `"+stance"`, `"+melee"`, `"+usereload"`, `"+breath_sprint"`, `"weapnext"`, `"+frag"`, `"+smoke"`, `"togglemenu"`, `"+scores"`, and `"+actionslot 1..4"`.
+
+`std_include.hpp` supplies shared project includes; `logical.hpp` declares `action` and the mapping API.

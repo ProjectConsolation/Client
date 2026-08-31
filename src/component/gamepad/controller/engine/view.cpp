@@ -71,12 +71,6 @@ namespace gamepad::unstable::controller::engine
       return nullptr;
     }
 
-    void store_melee_output (usercmd_s& cmd, const AimOutput& output) noexcept
-    {
-      std::memcpy (reinterpret_cast<std::uint8_t*> (&cmd) + 0x24,
-                   &output.meleeChargeYaw, sizeof (output.meleeChargeYaw));
-      *(reinterpret_cast<std::uint8_t*> (&cmd) + 0x28) = output.meleeChargeDist;
-    }
   }
 
   view_driver::view_driver (const context& ctx, const dvars& d) : ctx_ (ctx), dvars_ (d) {}
@@ -149,27 +143,6 @@ namespace gamepad::unstable::controller::engine
     if (!view_active (client) || !ensure_processor ()) return;
 
     frame_time = std::clamp (frame_time, 0.0f, 0.05f);
-
-    AimInput input {};
-    AimOutput output {};
-    input.deltaTime = frame_time;
-    input.pitch = view_pitch ();
-    input.pitchAxis = axes_.pitch;
-    input.yaw = view_yaw ();
-    input.yawAxis = axes_.yaw;
-    input.forwardAxis = axes_.forward;
-    input.rightAxis = axes_.side;
-    input.buttons = static_cast<int> (cmd.buttons);
-    input.localClientNum = client;
-    input.playerState = reinterpret_cast<void*> (game::game_offset (0x12A4CDFC));
-
-    // QoS refreshes targets and applies its surviving auto-aim/auto-melee here.
-    AimAssist_UpdateGamePadInput (&input, &output);
-    if (std::isfinite (output.pitch))
-      view_pitch () = std::clamp (output.pitch, -85.0f, 85.0f);
-    if (std::isfinite (output.yaw))
-      view_yaw () = output.yaw;
-    store_melee_output (cmd, output);
 
     stick_vector look {axes_.yaw, axes_.pitch};
     if (read (dvars_.scale_view_axis, true)) look = scale_dominant_axis (look);

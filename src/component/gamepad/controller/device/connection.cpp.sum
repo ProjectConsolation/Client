@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:21:46.001Z
+content_hash: f2fe27e60c2255c60753718976add6fb4f95af43b435cf82561651edc90f7391
+purpose: connection.cpp does gamepad transport-binding identity comparison.
+---
+**connection.cpp does gamepad transport-binding identity comparison.**
+
+## Interface
+
+`same_binding(const transport_binding&, const transport_binding&) noexcept -> bool` compares `xinput_binding::index` or `hid_binding::path`; differing alternatives and `std::monostate` return false.

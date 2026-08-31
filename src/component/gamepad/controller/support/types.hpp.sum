@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:22:52.203Z
+content_hash: dbbd93eba59456fb9157705ccad5d09816badf94d0beae8222cca676d31ed003
+purpose: types.hpp does standard-library type re-exporting for `gamepad::unstable`.
+---
+**types.hpp does standard-library type re-exporting for `gamepad::unstable`.**
+
+## Exports
+
+`chrono=std::chrono`, `filesystem=std::filesystem`, `path=std::filesystem::path`; aliases: `array`, `atomic`, `byte`, `ifstream`, `ios`, `map`, `mutex`, `lock_guard`, `nullopt`, `optional`, `ofstream`, `ostream`, `pair`, `queue`, `runtime_error`, `set`, `span`, `string`, `string_view`, `unique_ptr`, `variant`, `vector`, `wstring`; utilities: `forward`, `make_unique`, `move`.

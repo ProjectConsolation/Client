@@ -1,0 +1,40 @@
+---
+generated_at: 2026-08-31T15:22:14.665Z
+content_hash: 7eff28b34055d5900e14718a5999ae6fa76bedce3d7b41a8c5ca6ba805b65b88
+purpose: view.cpp does gamepad view/movement processing, aim calibration, target assistance, and user-command mutation.
+---
+**view.cpp does gamepad view/movement processing, aim calibration, target assistance, and user-command mutation.**
+
+## Interface
+
+- `view_driver::view_driver(const context& ctx, const dvars& d)` stores `ctx_` and `dvars_`.
+- `bool view_driver::ensure_processor()` rebuilds cached aim calibration and processor state when dvar tuning changes.
+- `void view_driver::observe(const canonical_sample& sample) noexcept` resolves calibrated left/right sticks through `mapping::stick_layout_from_name`, `mapping::resolve`, and resets invalid axes.
+- `void view_driver::idle() noexcept` clears `axes_` and resets `processor_`.
+- `bool view_driver::view_active(int) const noexcept` returns `!menu_or_console_active()`.
+- `void view_driver::apply_move(int client, usercmd_s& cmd, float frame_time) noexcept` applies movement, aim processing, slowdown, lock-on, and clamped view deltas.
+- `void view_driver::apply_remote_move(int, usercmd_s&) noexcept` intentionally performs no work.
+
+## Aim Processor Lifecycle
+
+- `tuning_signature(const dvars& d)` hashes yaw/pitch turn rates, deadzones, acceleration, and `accel_enabled` using `result = result * 31u + std::hash<float>{}(value)`.
+- `make_profile(const dvars& d, float yaw, float pitch)` creates linear `aim_profile` values with `deg_per_s` rates, `deadzone_params`, and `response_curve{curve_kind::linear, 1.0f}`.
+- `ensure_processor()` uses hip defaults `260.0f/90.0f`, ADS defaults `90.0f/55.0f`, deadzone defaults `0.2f/0.01f`, acceleration default `1200.0f`, and disables acceleration when `accel_enabled` is false.
+- `ensure_processor()` clamps `view_sensitivity` to `[0.01f, 30.0f]`, `sensitivity_level` to `[1, 10]`, and scales level by `/ 5.0f`.
+- `ensure_processor()` deliberately clears `settings.graph_knots` and sets `settings.graph_monotonic = false` because QoS stores dvar pointers at `0x1149E108`; invalid calibration reports `severity::warning`, `facility::aim`, `errc::graph_invalid`, and `"aim configuration rejected (" + reason + ")"`.
+
+## Movement and View Behavior
+
+- `clamp_move(int value) noexcept` clamps command axes to `[-128, 127]`; `move_scale` is `127.0f`.
+- `apply_move()` adds rounded `axes_.forward` and `axes_.side` contributions to `cmd.forwardmove` and `cmd.rightmove`, then exits when `view_active(client)` or `ensure_processor()` fails.
+- `apply_move()` clamps `frame_time` to `[0.0f, 0.05f]`, optionally applies `scale_dominant_axis`, and constructs `aim_frame_input` with `adsLerp`, `sensitivity_scale`, `invert_pitch`, and `seconds{frame_time}`.
+- `apply_move()` enables slowdown only when aim assist, initialized globals, `slowdown_enabled`, and `best_target()` all succeed; slowdown uses `slowdown_scale(true, 0.4f, 0.5f, globals.adsLerp)`.
+- `best_target()` rejects `screenTargetCount` outside `[0, 64]`, requires finite positive `distSqr`, checks range `8192.0f * max(range_scale, 0.0f)`, and tests `clipMins`/`clipMaxs` with `in_region()`.
+- `apply_move()` enables lock-on only when `lockon_enabled` is true and `hypot(look.x, look.y) <= lockon_deflection` (default `0.05f`); strengths default to yaw `0.6f` and pitch `0.0f`.
+- `apply_move()` accepts only finite `lock_on()` corrections and processor deltas, subtracts deltas from `view_yaw()`/`view_pitch()`, and clamps pitch to `[-85.0f, 85.0f]`.
+
+## Integration and Safety
+
+- `view_driver` couples `context`, `dvars`, `canonical_sample`, `usercmd_s`, `aim_globals`, `AimAssistGlobals`, `aim_calibration`, `turn_integrator`, `mapping`, `slowdown_scale`, and `lock_on`.
+- `reported_invalid_` suppresses repeated invalid-configuration warnings; `processor_` and `calibration_` are reset before failed rebuilds.
+- `observe()` and `apply_move()` use finite-value guards; `apply_move()` is synchronous and `noexcept` at its command-processing boundary.

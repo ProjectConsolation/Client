@@ -1,0 +1,24 @@
+---
+generated_at: 2026-08-31T15:23:41.839Z
+content_hash: 7f810513e87d460807ec108cffa382766f1467ecb128cc656b6a9b7764811932
+purpose: entities.cpp serializes, parses, filters, and mutates map entity dictionaries for entity conversion workflows.
+---
+**entities.cpp serializes, parses, filters, and mutates map entity dictionaries for entity conversion workflows.**
+
+## Public interface
+
+- `std::string Entities::Build()` emits each entity as `{\n`, followed by `"key" "value"\n` pairs, and `}\n`.
+- `std::vector<std::string> Entities::GetModels()` returns unique nonempty `model` values, excluding brushmodels whose first character is `*` or `?` and excluding exact `"com_plasticcase_green_big_us_dirt"`.
+- `bool Entities::ConvertVehicles()` rewrites entities with `targetname == "destructible"` and `utils::string::starts_with(entity["destructible_type"], "vehicle")`, setting `targetname = "destructible_vehicle"` and `sound_csv_include = "vehicle_car_exp"`; returns whether any entity changed.
+- `bool Entities::ConvertTurrets()` rewrites `classname == "misc_turret"` with `weaponinfo = "turret_minigun_mp"` and `model = "weapon_minigun"`; returns whether any turret changed.
+- `void Entities::DeleteOldSchoolPickups()` erases entities containing `weaponinfo` or `targetname == "oldschool_pickup"`, except `classname == "misc_turret"`, logging `Erased weapon %s from map ents\n`.
+- `void Entities::AddRemovedSModels()` is currently a no-op; commented code sketches restoration of removed static models as `script_model` entities.
+- `void Entities::parse(std::string buffer)` parses quoted key/value pairs into `this->entities`, lowercases keys via `utils::string::to_lower`, and throws `std::runtime_error("Parsing error!")` on invalid quote-state transitions.
+
+## Parsing and coupling
+
+`Entities::parse` uses `PARSE_AWAIT_KEY`, `PARSE_READ_KEY`, `PARSE_AWAIT_VALUE`, and `PARSE_READ_VALUE` state sentinels, treating `{` as entity start and `}` as entity termination; malformed structural input outside quote transitions is not generally validated. `Entities::Build` and `Entities::parse` implement the map entity text format but do not escape embedded quotes or backslashes.
+
+`Entities::GetModels`, `Entities::ConvertVehicles`, `Entities::ConvertTurrets`, and `Entities::DeleteOldSchoolPickups` mutate or inspect `std::unordered_map<std::string, std::string>` entries held by `Entities::entities`. `console::info`, `utils::string::starts_with`, `game/game.hpp`, and `game/structs.hpp` support logging, matching, and planned engine integration.
+
+`ConvertVehicles` indexes `entity["destructible_type"]` after checking only `classname`, potentially inserting a missing key; `DeleteOldSchoolPickups` similarly indexes `(*i)["model"]` during logging, potentially inserting missing data.

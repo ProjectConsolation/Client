@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:23:16.602Z
+content_hash: e163ccbb4f091f7792815a55418f6b42ef87e5f7e59426a7b59779b2c94373ca
+purpose: context.cpp does gamepad controller diagnostic forwarding.
+---
+**context.cpp does gamepad controller diagnostic forwarding.**
+
+## API
+
+`context::report(severity, facility, errc, device_id, string) const -> void`; `context::report(severity, facility, errc, string) const -> void` call `controller::report` with `diagnostics_`, moving `message`.

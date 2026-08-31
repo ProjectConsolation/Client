@@ -1,0 +1,29 @@
+---
+generated_at: 2026-08-31T15:22:30.069Z
+content_hash: 49217c1f04564e75c71d52cf9af52e5c2d2b717ac665f0fb0336ab697b72f0c4
+purpose: binding.cpp does controller binding storage and button-layout application for gamepad mappings.
+---
+**binding.cpp does controller binding storage and button-layout application for gamepad mappings.**
+
+## Exported interface
+
+- `binding_table::bind(engine_key k, string command)` stores a command at `key_index(k)`.
+- `binding_table::bind(engine_key k, action a)` converts `action` through `command(a)` and stores it.
+- `binding_table::unbind(engine_key k) noexcept` clears the `engine_key` slot.
+- `binding_table::clear() noexcept` clears every command in `commands_`.
+- `binding_table::command_for(engine_key k) const noexcept` returns `const string*`, or `nullptr` for an unbound key.
+- `binding_table::for_each(function_ref<void (engine_key, const string&)>) const` visits non-empty bindings using `all_engine_keys`.
+- `binding_table::size() const noexcept` counts non-empty bindings.
+- `apply_button_layout(binding_table& t, string_view name)` clears and repopulates `t` from layout-name flags.
+
+## Layout behavior
+
+`apply_button_layout` lowercases `name`, then detects substring flags `tactical`, `lefty`, `nomad`, and `_alt`; `tactical` swaps `action::melee` to `button_b` and `action::stance` to `button_rstick`, while the default reverses those assignments.
+
+`lefty` maps `button_ltrig`/`button_rtrig` to fire/ADS, `button_lshldr` to nomad sprint or frag, `button_rshldr` to special grenade, and `button_rstick` to sprint; the default maps triggers conventionally, swaps shoulder actions under `_alt`, and maps `button_lstick` to nomad jump/stand or sprint.
+
+Shared mappings always assign start/menu, back/scoreboard, X/use-reload, Y/next-weapon, D-pad directions/action slots 1–4, and A/jump-stand.
+
+## Coupling and contracts
+
+`index_of` delegates to `key_index`; `lowercase` uses `std::tolower` with unsigned-char conversion; `contains` uses `string::find` and `string::npos`. `commands_`, `count`, `all_engine_keys`, `engine_key`, `action`, `command`, `function_ref`, `string`, and `string_view` are required mapping-layer types/constants.

@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:24:13.210Z
+content_hash: 1fa267baa31fa9a5625017699683fd43f74d03080215b63bc10a1139412d8d97
+purpose: Directory.Build.props configures C++ compilation defaults.
+---
+**Directory.Build.props configures C++ compilation defaults.**
+
+## Build
+
+`ClCompile` adds external GSL include path and disables warnings `4067,4121,4244,4189,4996,4409,4459`.
+
+## Exports
+
+`Directory.Build.props` exports no symbols.

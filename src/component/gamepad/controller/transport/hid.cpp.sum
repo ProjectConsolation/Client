@@ -1,0 +1,62 @@
+---
+generated_at: 2026-08-31T15:23:17.749Z
+content_hash: 1484514d4a0c4d510b59ae68dd2a8f3db2afb6f5cf0a681720ab4c05adc495cf
+purpose: hid.cpp does Windows HID enumeration, capability classification, overlapped I/O, and feature-report transport for sup...
+---
+**hid.cpp does Windows HID enumeration, capability classification, overlapped I/O, and feature-report transport for supported PlayStation gamepads.**
+
+## Public interface
+
+Namespace: `gamepad::unstable::controller::transport`.
+
+- `connection classify_link (size_t input_length) noexcept` maps `78` to `connection::bluetooth`, `64` to `connection::usb`, and every other length to `connection::unknown`.
+- `vector<hid_enumeration_entry> enumerate (const context& ctx)` discovers present HID game-pad collections, filters supported PlayStation vendor/product identities, classifies USB/Bluetooth framing, and reports unsupported framing through `ctx.report`.
+- `unique_ptr<hid_device> open (const context& ctx, const wstring& path)` opens a HID interface with overlapped I/O, retries read-only access after read/write failure, re-queries capabilities, validates controller identity/framing, and returns a configured `windows_hid_device` through the `hid_device` interface.
+
+## HID device implementation
+
+- `windows_hid_device` implements `hid_device` with `HANDLE handle_`, `hid_attributes attributes_`, `connection link_`, `size_t input_length_`, `size_t feature_length_`, `OVERLAPPED overlapped_`, and fixed `array<byte, max_report_size> buf_`.
+- `windows_hid_device::link () const noexcept` returns the `connection` selected by `classify_link`.
+- `windows_hid_device::attributes () const noexcept` returns the cached `hid_attributes`.
+- `windows_hid_device::feature_report_length () const noexcept` returns the clamped `feature_length_`.
+- `windows_hid_device::read (span<byte> out) noexcept` maintains one outstanding overlapped `ReadFile`, returns `size_t(0)` for `ERROR_IO_INCOMPLETE`, copies completed bytes from `buf_` into `out`, truncates to `out.size()`, and re-arms the next read.
+- `windows_hid_device::write (span<const byte> buf) noexcept` returns `nullopt` when `writable_` or `buf` is invalid, otherwise submits overlapped `WriteFile` with a per-call manual-reset event and returns the completed byte count.
+- `windows_hid_device::get_feature (span<byte> buf) noexcept` requires `buf.size() >= feature_length_` and calls `HidD_GetFeature`; `HidD_GetFeature` sizes transfers from the supplied buffer and rejects shorter buffers with `ERROR_INVALID_USER_BUFFER`.
+- `windows_hid_device::set_feature (span<const byte> buf) noexcept` requires writable access and a non-empty buffer, then calls `HidD_SetFeature` through `const_cast<byte*>`.
+- `windows_hid_device::writable (bool w) noexcept` updates the output/feature-write permission flag.
+- `windows_hid_device::issue_read () noexcept` resets `overlapped_.hEvent`, clears `OVERLAPPED::Internal` and `OVERLAPPED::InternalHigh`, starts `ReadFile`, and treats synchronous completion or `ERROR_IO_PENDING` as an active read.
+- `~windows_hid_device ()` cancels active reads with `CancelIoEx`, blocks through `GetOverlappedResult`, closes `overlapped_.hEvent`, and closes `handle_`; `CancelIo` is intentionally avoided because teardown may run on a different thread.
+
+## Enumeration pipeline
+
+- `enumerate` obtains the HID interface class GUID through `HidD_GetHidGuid` and enumerates `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE` entries via `SetupDiGetClassDevsW` and `SetupDiEnumDeviceInterfaces`.
+- `interface_path (HDEVINFO set, SP_DEVICE_INTERFACE_DATA& iface)` performs the `SetupDiGetDeviceInterfaceDetailW` two-call size/query idiom and returns an `optional<wstring>` device path.
+- `open_for_query (const wstring& path) noexcept` calls `CreateFileW` with desired access `0` and sharing `FILE_SHARE_READ | FILE_SHARE_WRITE`, allowing capability inspection without contending for exclusive controller handles.
+- `query_caps (HANDLE h) noexcept` obtains `PHIDP_PREPARSED_DATA` through `HidD_GetPreparsedData`, extracts `HIDP_CAPS` via `HidP_GetCaps`, frees preparsed data with `HidD_FreePreparsedData`, and returns `collection_caps`.
+- `collection_caps` stores `size_t input_report_length`, `size_t feature_report_length`, `uint16_t usage_page`, and `uint16_t usage`.
+- `usage_page_generic_desktop` equals `0x01`; `usage_game_pad` equals `0x05`, so only the Generic Desktop/Game Pad top-level collection is accepted.
+- `enumerate` caches `HIDD_ATTRIBUTES::VendorID`, `HIDD_ATTRIBUTES::ProductID`, and `HIDD_ATTRIBUTES::VersionNumber`, rejects `classify(vendor, product) == family::unknown`, and emits `hid_enumeration_entry {move(*path), hid_attributes {vendor, product, attrs.VersionNumber}, link, caps->input_report_length}`.
+- `enumerate` reports `errc::transport_failure` with `"unable to enumerate HID device interfaces"` when `SetupDiGetClassDevsW` fails.
+- `enumerate` reports `errc::ambiguous_identity` with `"HID device " + to_string(classify(vendor, product)) + " reports an input report of " + std::to_string(caps->input_report_length) + " bytes; the drivers decode 64-byte (USB) and 78-byte (Bluetooth) framing, so no driver is bound"` for recognized controllers with unknown report lengths.
+- `enumerate` always calls `SetupDiDestroyDeviceInfoList (set)` before returning discovered entries.
+
+## Open and validation behavior
+
+- `open` first requests `GENERIC_READ | GENERIC_WRITE` with `FILE_FLAG_OVERLAPPED` and sharing `FILE_SHARE_READ | FILE_SHARE_WRITE`; failure triggers a `GENERIC_READ` retry and sets `writable = false`.
+- `open` reports `errc::transport_failure` with `"unable to open a HID device interface"` when both `CreateFileW` attempts fail.
+- `open` re-queries `HidD_GetAttributes` and `query_caps` after opening because the device may detach or change between enumeration and activation.
+- `open` reports `errc::transport_failure` with `"opened HID device does not answer its capabilities"` when capability acquisition fails.
+- `open` rejects `classify(vendor, product) == family::unknown` or `classify_link(caps->input_report_length) == connection::unknown`, reports `errc::ambiguous_identity` with `"opened HID device is not a controller we can decode"`, and closes the handle.
+- `open` reports `severity::info`, `facility::transport`, `errc::none`, and `"HID device opened read-only; output reports unavailable"` after successful read-only fallback.
+- `windows_hid_device` clamps `input_length` and `feature_length` with `std::min(..., max_report_size)` before any transfer.
+
+## Behavioral contracts and constants
+
+- `max_report_size` is `128`, fixing the non-allocating input buffer capacity and limiting both HID report lengths.
+- `usb_input_report_length` is `64`; `bluetooth_input_report_length` is `78`; `classify_link` uses report-descriptor lengths rather than interface-path or physical-bus detection.
+- `connection::usb` and `connection::bluetooth` identify report framing/layout, including report ID position, common-block offset, and optional trailing CRC-32; they do not independently guarantee the physical transport bus.
+- `read` returns `nullopt` for a missing event, failed read, or invalid transport state; `read` returns `size_t(0)` while a read remains in flight.
+- `write` and `set_feature` are disabled after read-only opening; `get_feature` remains available when `feature_length_` is satisfied.
+- `windows_hid_device` is non-copyable through deleted `windows_hid_device (const windows_hid_device&)` and `operator=`.
+- `HANDLE`, `HDEVINFO`, `SP_DEVICE_INTERFACE_DATA`, `HIDD_ATTRIBUTES`, `HIDP_CAPS`, `OVERLAPPED`, `HidD_*`, `HidP_GetCaps`, `SetupDi*`, `CreateFileW`, `ReadFile`, `WriteFile`, `CancelIoEx`, and `GetOverlappedResult` couple the implementation to Windows HID, SetupAPI, and overlapped kernel I/O.
+- `std_include.hpp` supplies project aliases such as `optional`, `nullopt`, `span`, `array`, `vector`, `wstring`, `unique_ptr`, `byte`, and `move`; `hid.hpp` supplies `hid_device`, `hid_enumeration_entry`, `hid_attributes`, `connection`, `context`, `vendor_id`, `product_id`, `family`, `severity`, `facility`, and `errc`.

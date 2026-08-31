@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:24:10.771Z
+content_hash: 8a55495c45c76e047e85a89295151cab323df7703a3a0ea3b1625498703372c9
+purpose: README.md documents Local XLive offline storage layout and profile-import behavior.
+---
+**README.md documents Local XLive offline storage layout and profile-import behavior.**
+
+## Storage
+
+`storage/profiles/<16-digit XUID>/settings/41560829/{63E83FFD,63E83FFE,63E83FFF}.bin` stores raw title settings; `title_storage/<facility>/<item name>` stores `XStorageUploadFromMemory`/`XStorageDownloadToMemory` payloads.
+
+## Import
+
+`%LOCALAPPDATA%\Microsoft\Xlive\Content\41560829.gpd` is validated as little-endian `FBDX`/`XDBF`; namespace 3 settings import only when absent locally.
+
+## Profile Selection
+
+`name` dvar, CLI `name`/`-set name`, deterministically generates XUID; changing `name` selects another profile.

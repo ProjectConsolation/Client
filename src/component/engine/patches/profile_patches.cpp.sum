@@ -1,0 +1,92 @@
+---
+generated_at: 2026-08-31T15:23:16.090Z
+content_hash: 7772cf28cb74f52a41eddc44c95574007ec2444d209192214453c2fccfd1a665
+purpose: profile_patches.cpp does profile-config migration, decryption, deduplication, synchronization, and lifecycle integrat...
+---
+**profile_patches.cpp does profile-config migration, decryption, deduplication, synchronization, and lifecycle integration for Quantum of Solace multiplayer profiles.**
+
+## Role and Integration
+
+`profile_patches::component` implements `component_interface` and registers through `REGISTER_COMPONENT(profile_patches::component)`; `post_load()` installs commands, scheduler callbacks, and shutdown synchronization.
+
+`game::game_offset`, `game::dvar_s`, and `game::Com_Printf` couple profile handling to engine memory, dvars, and console output; `utils::io::read_file`, `write_file`, and `file_exists` handle filesystem access; `SHGetFolderPathA` resolves `%APPDATA%`; `command::add` exposes console commands; `scheduler::once`, `scheduler::loop`, and `scheduler::on_shutdown` control lifecycle execution.
+
+## Public Interface
+
+`profile_patches::component::post_load() override` schedules initialization on `scheduler::main`, polls profile changes every `250ms`, and exports stock configuration back to the custom file during shutdown.
+
+`REGISTER_COMPONENT(profile_patches::component)` makes `profile_patches::component` discoverable by the component loader.
+
+## Paths, Dvars, and Constants
+
+`default_profile_config_name` is `"config_mp.cfg"`; `custom_profile_config_name` is `"consolation_mp.cfg"`; `decrypted_profile_config_name` is `"consolation_mp_decrypted.cfg"`.
+
+`get_dvar_string(std::size_t dvar_ptr_address)` reads a `game::dvar_s*` through `game::game_offset`; offsets `0x114E7068` and `0x10806824` represent the players-root dvar and profile-name dvar.
+
+`get_players_directory()` prefers the configured players-root dvar, otherwise resolves `CSIDL_APPDATA` and appends `"Activision\\Quantum of Solace\\players"`; `get_profile_name()` returns the configured profile string or `""`.
+
+`join_path(const std::string& base, const std::string& leaf)` preserves existing trailing `\\` or `/`, returns `leaf` for an empty base, and otherwise inserts `\\`.
+
+`build_profile_file_path(const char* filename)` returns `<players-directory>\\<profile-name>\\<filename>` or `{}` when either directory or profile name is unavailable.
+
+`build_profile_config_path()` targets `"config_mp.cfg"`; `build_custom_profile_config_path()` targets `"consolation_mp.cfg"`; `build_legacy_shared_config_path()` targets the custom filename directly under the players directory.
+
+`build_runtime_config_path()` aliases the profile-scoped custom config; `build_decrypted_output_path()` targets the profile-scoped decrypted filename, falling back to the players directory when necessary.
+
+## Config Recognition and Normalization
+
+`looks_like_plaintext_config(const std::string& data)` rejects empty data and data with fewer than `85%` printable characters, then requires `"seta "`, `"set "`, or `"unbindall"`.
+
+`to_lower(std::string value)` lowercases keys using unsigned-character-safe `std::tolower`; `trim_copy(const std::string& value)` removes leading and trailing spaces, tabs, carriage returns, and newlines.
+
+`find_canonical_dvar_name(const std::string& key)` canonicalizes case-insensitive spellings for `con_outputHeightScale`, `cg_fovScale`, `input_viewSensitivity`, `ui_smallFont`, `ui_bigFont`, `ui_extraBigFont`, `r_lodScale`, `m_rawInput`, `bot_maxHealth`, `g_debugVelocity`, and `g_debugLocalization`.
+
+`try_parse_dvar_assignment(std::string& line, std::string* key)` recognizes only lines beginning with exact prefixes `"seta "` or `"set "`, extracts and lowercases the dvar key, and rewrites recognized names to canonical casing.
+
+`should_strip_runtime_only_dvar(const std::string& key)` removes `r_aspectratiocustom`, `r_aspectratiocustomenable`, `r_custommode`, and `r_ultrawidecustommode`.
+
+`dedupe_config_text(const std::string& data)` preserves non-assignment lines, normalizes recognized assignments, removes runtime-only dvars, and retains only the last assignment for each lowercased key; output uses `"\r\n"` when input contains CRLF, otherwise `"\n"`.
+
+`dedupe_custom_profile_config()` operates only when `should_use_custom_profile_config()` detects an existing plaintext-like custom config, rewriting it only when deduplication changes content.
+
+## Decryption and Conversion
+
+`decrypt_in_place(std::string& data)` invokes the engine `__stdcall` transform at `game::game_offset(0x103ECCA0)` with the mutable data pointer and `int` byte length.
+
+`try_decode_config_to_plaintext(std::string& data)` accepts recognized plaintext unchanged, otherwise decrypts in place and validates with `looks_like_plaintext_config`.
+
+`convert_config_to_path(const std::string& source_path, const std::string& fallback_path, const std::string& output_path, const char* command_name)` loads `source_path` first, falls back to `fallback_path`, decrypts non-plaintext input, validates the result, writes `output_path`, and emits diagnostic messages through `print_profile_message`; empty output paths, missing sources, invalid decrypted data, and write failures return `false`.
+
+`migrate_config()` converts the profile-scoped stock config, or runtime custom config as fallback, into `consolation_mp_decrypted.cfg`.
+
+`convert_config()` converts legacy shared custom config, or stock profile config as fallback, into the profile-scoped custom config.
+
+`import_custom_profile_config_into_stock()` reads the profile-scoped custom config or legacy shared config, decodes and deduplicates plaintext, writes custom plaintext, re-encrypts a copy with `decrypt_in_place`, and writes encrypted stock config.
+
+`export_stock_profile_config_to_custom()` reads and decodes stock config, deduplicates plaintext, and writes the custom profile config.
+
+## Console Commands
+
+`profile_decrypt_config` invokes `migrate_config()`.
+
+`profile_convert_config` invokes `convert_config()`, `dedupe_custom_profile_config()`, `import_custom_profile_config_into_stock()`, and `print_runtime_config_path()`.
+
+`profile_sync_config` invokes `import_custom_profile_config_into_stock()` and reports `^3profile:config synced %s into %s\n` or `^1profile:config failed to sync plaintext config into stock profile config\n`.
+
+`profile_show_config_path` invokes `print_runtime_config_path()`.
+
+`profile_dedupe_config` invokes `dedupe_custom_profile_config()` and then prints the runtime path.
+
+`print_profile_message(const char* fmt, ...)` formats into a fixed `1024`-byte buffer via `vsnprintf` and sends channel `16` output through `game::Com_Printf`.
+
+`print_runtime_config_path()` emits `^3profile:config runtime config path is unavailable\n` for unavailable paths or `^3profile:config %s\n` for resolved paths.
+
+## Lifecycle Behavior
+
+`post_load()` uses `scheduler::once(..., scheduler::main)` to register commands and perform initial deduplication.
+
+`post_load()` uses `scheduler::loop(..., scheduler::main, 250ms)` with static `imported_profile` and `missing_profile` sentinels to avoid repeated work; profile changes trigger `import_custom_profile_config_into_stock()`, while missing sources suppress retries until the profile name changes.
+
+`post_load()` uses `scheduler::on_shutdown(...)` to call `export_stock_profile_config_to_custom()` followed by `dedupe_custom_profile_config()`.
+
+`post_load()` deliberately leaves the game’s active config filename and save path unchanged, so automatic engine-path patching remains disabled while signed-in startup-freeze behavior is investigated.

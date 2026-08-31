@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:21:34.181Z
+content_hash: a3a429c0073d987f72bf03a08100bfb1bcc57b6dd4247f388c4364c9612be5bb
+purpose: curve.cpp maps, validates, and evaluates aim response curves.
+---
+**curve.cpp maps, validates, and evaluates aim response curves.**
+
+## Interface
+
+`to_string(curve_kind k) noexcept -> const char*` returns `"linear"`/`"power"`; unknown kinds fall back to `"linear"`.
+
+`validate(const response_curve& c, string& why) noexcept -> bool` rejects power curves unless `exponent` is finite and `> 0.0f`, setting `"power curve exponent must be finite and greater than zero"`.
+
+`evaluate(const response_curve& c, float t) noexcept -> float` clamps `t` to `[0.0f, 1.0f]`, then applies identity or `std::pow(t, c.exponent)`.
+
+## Dependencies
+
+`std::isfinite`, `std::clamp`, and `std::pow` implement validation and evaluation.

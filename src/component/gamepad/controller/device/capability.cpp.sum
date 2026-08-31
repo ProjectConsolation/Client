@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:21:44.865Z
+content_hash: a07ffed3099f7c5024391fa1cca1c84eaed22a4662dd8f419a1c03471cd20a61
+purpose: capability.cpp renders controller capabilities as diagnostic text.
+---
+**capability.cpp renders controller capabilities as diagnostic text.**
+
+## Interface
+
+`gamepad::unstable::controller::operator<<(ostream&, capabilities) -> ostream&` serializes capability masks via `capabilities::has`.
+
+## Behavior
+
+`operator<<` emits `{}` or `{name, name}` in fixed order: `gyroscope`, `accelerometer`, `touchpad`, `battery`, `microphone-button`, `back-buttons`, `rumble`, `haptics`, `adaptive-triggers`, `light-bar`, `player-leds`; `capability` bits are omitted when unset.

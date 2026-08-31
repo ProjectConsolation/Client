@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:21:45.051Z
+content_hash: 9ec6b74112463b4dc51ea96f1d15272507c4184bf6a6f4557775476abaaabbde
+purpose: validate.hpp validates external calibration profiles before application.
+---
+**validate.hpp validates external calibration profiles before application.**
+
+## Interface
+
+`gamepad::unstable::controller::calibration::validate(const profile&, string&) noexcept -> bool` checks version, finiteness, positive stick/trigger ranges, fractional drift threshold, and non-negative motion/smoothing values; failure sets `why` and returns `false`.
+
+## Dependencies
+
+`profile` comes from `calibration/profile.hpp`; `string` and utility types come from `support/types.hpp` and `support/utility.hpp`.

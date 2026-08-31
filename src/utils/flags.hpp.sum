@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:23:48.825Z
+content_hash: b38d7971b4ab5e076177bfc72e459c51e9256336591ba680ebfe695f1b7eadb5
+purpose: flags.hpp does flag lookup.
+---
+**flags.hpp does flag lookup.**
+
+## Exported
+
+`bool has_flag(const std::string& flag);` — checks flag presence in `utils::flags`.

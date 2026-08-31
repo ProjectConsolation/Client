@@ -1,0 +1,29 @@
+---
+generated_at: 2026-08-31T15:22:44.669Z
+content_hash: 850b2db945d09e50e1a33ebfc2b2b94ae9e1bbb261e8016f33293aefd909a3c4
+purpose: ring.hpp bounds lock-free input-frame transfer between one producer and one consumer.
+---
+**ring.hpp bounds lock-free input-frame transfer between one producer and one consumer.**
+
+## Interface
+
+- `frame_ring<Capacity>` — templated SPSC bounded queue in `gamepad::unstable::controller`; exports `static constexpr size_t capacity`.
+- `push(const input_frame& f) noexcept -> bool` — enqueues `input_frame`; returns `false` on full capacity and increments `dropped()`.
+- `try_pop(input_frame& out) noexcept -> bool` — dequeues oldest `input_frame`; returns `false` when empty.
+- `occupancy() const noexcept -> size_t` — reports queued frames, potentially stale to external observers.
+- `dropped() const noexcept -> uint64_t` — reports lifetime overflow drops.
+
+## Invariants
+
+- `Capacity` requires `Capacity >= 2`; otherwise static assertion emits `"a ring needs at least two slots to distinguish states"`.
+- `Capacity` requires power-of-two alignment via `(Capacity & (Capacity - 1)) == 0`; otherwise emits `"ring capacity must be a power of two"`.
+- `mask` equals `Capacity - 1`; `head_` and `tail_` are free-running counters, with slots addressed by `counter & mask`.
+- `head_` is producer-owned; `tail_` is consumer-owned; `buf_` is fixed inline `array<input_frame, Capacity>` and performs no allocation.
+- `push` drops newest frames when `h - t >= Capacity`; `try_pop` distinguishes empty state with `t == h`.
+- `push` asserts `f.sequence > last_sequence_ || h == 0`; `last_sequence_` is producer-only monotonic-sequence bookkeeping.
+
+## Concurrency and Coupling
+
+- `atomic<size_t> head_`, `tail_` use acquire/release publication and relaxed owner access for SPSC synchronization.
+- `atomic<uint64_t> dropped_` uses relaxed increments/loads.
+- `types.hpp` supplies `array`, `atomic`, `memory_order_*`, and integer types; `utility.hpp` supplies support utilities; `frame.hpp` defines `input_frame`.

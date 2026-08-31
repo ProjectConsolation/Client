@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:24:16.056Z
+content_hash: e00af761f2efd36c8ccab54106e19acaebfc641b65987b07892429fc132f67a0
+purpose: .gitmodules maps Git submodules to dependency paths and repositories.
+---
+**.gitmodules maps Git submodules to dependency paths and repositories.**
+
+## Submodules
+
+`deps/minhook→TsudaKageyu/minhook`; `deps/GSL→microsoft/GSL`; `deps/asmjit→asmjit/asmjit`; `deps/libtomcrypt→libtom/libtomcrypt`; `deps/libtommath→libtom/libtommath`; `deps/rapidjson→Tencent/rapidjson`; `deps/zlib→madler/zlib`; `deps/zstd→facebook/zstd`; `deps/SDL→libsdl-org/SDL`, `branch=SDL2`.
+
+## Exports
+
+No exported symbols or signatures.

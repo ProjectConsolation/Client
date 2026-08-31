@@ -1,0 +1,55 @@
+---
+generated_at: 2026-08-31T15:24:42.606Z
+content_hash: 017aa1e1fbe9ff890ddd43f71a302f6c553f9dbcbe51a92e8dd7433600000888
+purpose: premake5.lua defines Premake build configuration, Git-derived version generation, dependency loading, and Windows DLL...
+---
+**premake5.lua defines Premake build configuration, Git-derived version generation, dependency loading, and Windows DLL projects.**
+
+## Public symbols
+
+- `gitVersioningCommand = "git describe --tags --dirty --always"` and `gitCurrentBranchCommand = "git symbolic-ref -q --short HEAD"` store Git command strings; only `gitVersioningCommand` is used.
+- `cstrquote(value) -> string` escapes `\`, `"`, newline, tab, carriage return, bell, and backspace, returns quoted C-string text, and maps `nil` to `""`.
+- `vertonumarr(value, vernumber, partscount) -> table<number>` extracts at most three numeric components, pads missing components with `0`, and appends `tonumber(vernumber)` until length reaches `partscount` (normally `3` or `4`).
+- `getbaseversion(tagName) -> string` converts `[vV]?major.minor.patch` tags to `major.minor.patch`, defaulting invalid, empty, or `nil` input to `"0.0.1"`.
+- `readbuildcounter(path) -> number` reads and whitespace-strips a counter file, returning numeric content or `0` for missing/invalid files.
+- `dependencies = { basePath = "./deps" }` models dependency modules discovered from `./deps/premake/*.lua`.
+- `dependencies.load() -> nil` requires each discovered dependency Lua file.
+- `dependencies.imports() -> nil` invokes numeric dependency entries’ `import()` methods.
+- `dependencies.projects() -> nil` invokes numeric dependency entries’ `project()` methods.
+
+## Premake actions and options
+
+- `newoption("copy-to")` accepts `PATH` and enables post-build DLL copying for `d3d9` and `xlive`.
+- `newoption("target-dir")` accepts `PATH` and overrides Premake’s workspace target directory.
+- `newaction("version")` runs `git rev-list --count HEAD`, prints the revision count, then calls `os.exit(0)`.
+- `newaction("generate-buildinfo")` scans `src/version.h`, runs Git metadata commands, increments `src/build_counter.txt`, writes `version.txt`, and regenerates `src/version.h` plus `src/version.hpp` when generated values change.
+
+## Version-generation contract
+
+`generate-buildinfo` uses `git describe --tags --dirty --always`, `git describe --tags --abbrev=0`, `git rev-list --count HEAD`, `git rev-parse HEAD`, `git status --porcelain`, and `git branch --show-current`; detached-HEAD fallback parses `git show -s --pretty=%d HEAD`, then defaults `GIT_BRANCH` to `"develop"`.
+
+`generate-buildinfo` recognizes existing definitions with exact patterns `#define GIT_DESCRIBE (.+)%s*$`, `#define VERSION_PRODUCT \"([^\"]*)\"%s*$`, and `#define VERSION_BUILD \"([^\"]*)\"%s*$`.
+
+`src/version.h` receives `GIT_DESCRIBE`, `GIT_DIRTY` (`0`/`1`), `GIT_HASH`, `GIT_TAG`, `GIT_BRANCH`, `VERSION_PRODUCT_RC`, `VERSION_PRODUCT`, `VERSION_BUILD`, `VERSION_FILE_RC`, `VERSION_FILE`, `VERSION`, and `SHORTVERSION`; `src/version.hpp` includes `".\\version.h"`.
+
+`VERSION_PRODUCT_RC` uses `vertonumarr(baseVersion, revNumber, 3)`, while `VERSION_FILE_RC` and `VERSION_FILE` use `vertonumarr(baseVersion, buildNumber, 4)`; missing Git tags resolve through `getbaseversion` to `"0.0.1"`.
+
+`buildCounter` increments `src/build_counter.txt` only when `GIT_DESCRIBE`, `VERSION_PRODUCT`, or `VERSION_BUILD` differs from the existing header; `version.txt` stores the raw `gitCommitHash`.
+
+## Workspace and projects
+
+`workspace "consolation-client"` selects `startproject "consolation-client"`, emits files under `./build`, uses `targetdir(_OPTIONS["target-dir"] or "%{wks.location}/bin/%{cfg.buildcfg}")`, and logs to `%{wks.location}/obj/%{cfg.architecture}/%{cfg.buildcfg}/%{prj.name}/%{prj.name}.log`.
+
+`workspace "consolation-client"` targets C++20, `x86`/`Win32`, `v143`, `systemversion "latest"`, static runtime, ASCII charset, symbols, extra warnings, `/std:c++latest`, `/FS`, `_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS`, and flags `NoIncrementalLink`, `NoMinimalRebuild`, `MultiProcessorCompile`, `No64BitChecks`.
+
+`d3d9` is a `SharedLib` hooking the game, links `hid` and `setupapi`, compiles `src/**.h`, `src/**.hpp`, `src/**.cpp`, and `src/**.rc`, uses `std_include.hpp` PCH from `src/std_include.cpp`, and runs `tools\\premake5 generate-buildinfo` as a prebuild command.
+
+`xlive` is a `SharedLib` with target name `"xlive"`, links `ws2_32` and `shell32`, compiles `src_xlive/**.cpp`, `src_xlive/**.hpp`, `src_xlive/**.h`, and `src_xlive/**.def`, includes the Microsoft Games for Windows - LIVE SDK path, and links `../src_xlive/xlive.def` via `/DEF`.
+
+`d3d9` and `xlive` conditionally execute `copy /y "$(TargetPath)" "<copy-to>"`; `dependencies.imports()` attaches dependency imports to `d3d9`, while `dependencies.projects()` adds dependency projects under group `"Dependencies"`.
+
+## Configuration behavior
+
+`Debug` enables `DEBUG` and `_DEBUG` with debug optimization; `Release` enables `NDEBUG`, `/Os`, full optimization, `FatalCompileWarnings`, and `LinkTimeOptimization`.
+
+`filter "platforms:Win*"` defines `_WINDOWS` and `WIN32`; `architecture "x86"`, `platforms { "Win32" }`, and `toolset "v143"` make the configuration Windows-specific.

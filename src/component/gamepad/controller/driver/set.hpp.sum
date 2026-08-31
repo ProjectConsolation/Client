@@ -1,0 +1,23 @@
+---
+generated_at: 2026-08-31T15:22:26.342Z
+content_hash: 34f19f34055984d72bce5fa85386b5b4a074bfbc6aafdc7cc3006f35d8a4a5bd
+purpose: set.hpp manages live gamepad drivers and their HID/XInput resources.
+---
+**set.hpp manages live gamepad drivers and their HID/XInput resources.**
+
+## Interface
+
+- `set(const context&, const transport::xinput_module&)` initializes non-owning runtime dependencies; `~set()` destroys bound entries.
+- `set` is non-copyable via deleted `set(const set&)` and `operator=(const set&)`.
+- `reconcile(const registry&) -> void` creates drivers for new devices and removes departed devices; unchanged registry membership returns after one atomic generation check.
+- `for_each(function_ref<void(driver&, const device_connection&)>) -> void` visits each bound driver/device pair.
+- `submit(device_id, const output_request&) -> void` forwards output to a bound device; unbound IDs are ignored.
+- `size() const noexcept -> size_t` returns `entries_.size()`.
+
+## Design
+
+`entry` stores `device_connection device`, optional `unique_ptr<transport::hid_device> hid`, and `unique_ptr<driver> drv`; `drv` may reference `hid`, requiring destruction order `drv` then `hid` and prohibiting entry copying. `bind(const device_connection&, unique_ptr<transport::hid_device>&) -> unique_ptr<driver>` selects family-specific drivers: Xbox-class uses XInput, PlayStation families use dedicated drivers, and unknown/unlinked devices remain unbound without fallback decoding.
+
+## State and Coupling
+
+`ctx_` references `context`; `xinput_` references `transport::xinput_module`; `generation_` tracks registry changes, `reconciled_` gates initial synchronization, and `entries_` owns active bindings. Dependencies include `types.hpp`, `utility.hpp`, `context.hpp`, `registry.hpp`, `driver.hpp`, `hid.hpp`, and `xinput-module.hpp`.

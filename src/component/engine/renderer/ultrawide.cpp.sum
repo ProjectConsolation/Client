@@ -1,0 +1,50 @@
+---
+generated_at: 2026-08-31T15:23:12.964Z
+content_hash: 328b8da57cb2f4f60f970062ba48e6ac898bd664aaf52611090bc4b84aec1d8e
+purpose: ultrawide.cpp does runtime ultrawide/custom-aspect-ratio management through game dvars, renderer memory, console comm...
+---
+**ultrawide.cpp does runtime ultrawide/custom-aspect-ratio management through game dvars, renderer memory, console commands, and lifecycle hooks.**
+
+## Role and Integration
+
+`ultrawide::component` integrates with `component_interface` and registers through `REGISTER_COMPONENT(ultrawide::component)`. `post_load()` schedules initialization on `scheduler::main`; `pre_destroy()` clears `dvars::r_aspectRatioCustomEnable`, `dvars::r_aspectRatioCustom`, and `dvars::r_ultrawideCustomMode`.
+
+`game::game_offset()` resolves hard-coded renderer addresses; `game::Dvar_FindVar()` accesses `wideScreen`, `r_isWideScreen`, and diagnostic `cl_ingame`; `dvars::Dvar_RegisterBool`, `Dvar_RegisterFloat`, and `Dvar_RegisterString` create persistent configuration; `command::add` and `command::execute` implement console control; `console::info` reports usage, state, and errors.
+
+## Public Symbols
+
+- `ultrawide::component` — `final` component class derived from `component_interface`.
+- `ultrawide::component::post_load() override` — registers dvars and commands inside a one-shot main-thread scheduler callback.
+- `ultrawide::component::pre_destroy() override` — nulls the three ultrawide dvar pointers.
+
+## Configuration and Commands
+
+`r_aspectRatioCustomEnable` is a saved bool defaulting to `0`, controlling custom ratio activation.
+
+`r_aspectRatioCustom` is a saved float defaulting to `16.0f / 9.0f`, clamped to `4.0f / 3.0f` through `63.0f / 9.0f`; its documented ratio is width divided by height.
+
+`r_ultrawideCustomMode` is a saved string defaulting to `"disabled"` and stores a custom `WxH` resolution for Consolation.
+
+`setcustomres` requires `<width>x<height>`, writes `r_customMode`, `r_ultrawideCustomMode`, `r_aspectRatioCustomEnable`, and `r_aspectRatioCustom`, then queues `vid_restart`; invalid input prints `"usage: setcustomres <width>x<height>\n"`.
+
+`clearcustomres` resets sticky state, writes `"disabled"` to `r_customMode` and `r_ultrawideCustomMode`, disables `r_aspectRatioCustomEnable`, and queues `vid_restart`.
+
+`dumpultrawide` prints enabled/custom values, `cl_ingame`, `game::keyCatchers` as `0x%X`, scalar aspect, renderer ratio, monitor/render aspects, `wideScreen`, and `r_isWideScreen`; unavailable pointers serialize as `-1` or `0`.
+
+## Aspect-Ratio Algorithm
+
+`parse_resolution(const std::string& text, int& width, int& height) -> bool` parses exactly two positive integers with `std::sscanf(text.c_str(), "%ix%i", &width, &height) == 2`; malformed or non-positive dimensions fail.
+
+`sync_sticky_custom_resolution_state()` parses `r_ultrawideCustomMode->current.string`, enabling `sticky_custom_resolution_enabled` and computing `sticky_custom_ratio` when valid; invalid or absent state falls back to `false` and `16.0f / 9.0f`.
+
+`set_bool_dvar(game::dvar_s* dvar, bool value)` synchronizes `current.enabled`, `latched.enabled`, and `reset.enabled`; `set_float_dvar(game::dvar_s* dvar, float value)` synchronizes the corresponding `.value` fields.
+
+`apply_custom_aspect_ratio()` captures original values once, forces sticky custom settings, clamps the active ratio, preserves `aspect_ratio_scalar`, updates renderer/monitor/render aspect fields, and synchronizes `wideScreen` plus `r_isWideScreen` using the `1.5f` widescreen threshold.
+
+## Renderer Contracts
+
+`aspect_ratio_scalar` is `0x1127BAEC`; `custom_mode_fullscreen_gate` is `0x103BE1C9` but currently unused.
+
+`renderer_aspect_ratio`, `renderer_monitor_width`, `renderer_monitor_height`, `renderer_render_width`, `renderer_render_height`, `renderer_monitor_aspect`, and `renderer_render_aspect` resolve `0x10E271AC`, `0x10E27190`, `0x10E27194`, `0x10E27198`, `0x10E2719C`, `0x10E271B0`, and `0x10E271B4`.
+
+`apply_custom_aspect_ratio()` computes monitor aspect as `monitor_height * custom_ratio / monitor_width` and render aspect as `custom_ratio * render_height / render_width`; disabled mode restores captured renderer values.

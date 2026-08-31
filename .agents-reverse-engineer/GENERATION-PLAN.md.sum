@@ -1,0 +1,165 @@
+---
+generated_at: 2026-08-31T15:25:47.985Z
+content_hash: c8bdd1da04f608e718b3d453e9a906a479d46804f4736ee132ec59630943dda4
+purpose: GENERATION-PLAN.md records the post-order documentation-generation queue for `C:\Users\vamp\source\repos\ConsolationC...
+---
+**GENERATION-PLAN.md records the post-order documentation-generation queue for `C:\Users\vamp\source\repos\ConsolationClient`.**
+
+## Metadata
+
+- `Generated: 2026-08-31` records the plan creation date.
+- `Project: C:\Users\vamp\source\repos\ConsolationClient` identifies the repository root.
+- `Total Tasks: 2892` counts all planned documentation tasks.
+- `File Tasks: 2549` counts source-file summaries.
+- `Directory Tasks: 343` counts directory-level `AGENTS.md` summaries.
+- `Traversal: Post-order (children before parents)` defines execution order.
+
+## Workflow
+
+- `Phase 1: File Analysis (Post-Order Traversal)` analyzes every listed file before directory documentation.
+- `Depth 0: ./ (2549 files)` contains the complete file-analysis queue, represented as unchecked Markdown task items.
+- `Phase 2: Directory AGENTS.md (Post-Order Traversal, 343 directories)` generates directory guidance only after descendant files and directories.
+- `Depth 9` through `Depth 0` group directory tasks by path depth.
+- `[ ]` marks every task as pending; no task is marked `[x]`.
+- Directory paths use forward slashes in headings and backslashes in file-task entries.
+- `AGENTS.md` is generated for nested directories, while `.agents-reverse-engineer\GENERATION-PLAN.md` itself is also a Phase 1 target.
+
+## Phase 1 Inventory
+
+### Third-party cryptography
+
+- `deps\libtomcrypt\src\pk\asn1\der\bit` includes `der_decode_bit_string.c`, `der_decode_raw_bit_string.c`, `der_encode_bit_string.c`, `der_encode_raw_bit_string.c`, and `der_length_bit_string.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\boolean` includes `der_decode_boolean.c`, `der_encode_boolean.c`, and `der_length_boolean.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\choice` includes `der_decode_choice.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\custom_type` includes `der_decode_custom_type.c`, `der_encode_custom_type.c`, and `der_length_custom_type.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\ia5` includes `der_decode_ia5_string.c`, `der_encode_ia5_string.c`, and `der_length_ia5_string.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\generalizedtime` includes `der_decode_generalizedtime.c`, `der_encode_generalizedtime.c`, and `der_length_generalizedtime.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\general` includes `der_asn1_maps.c`, `der_decode_asn1_identifier.c`, `der_decode_asn1_length.c`, `der_encode_asn1_identifier.c`, `der_encode_asn1_length.c`, `der_length_asn1_identifier.c`, and `der_length_asn1_length.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\integer` includes `der_decode_integer.c`, `der_encode_integer.c`, and `der_length_integer.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\octet` includes `der_decode_octet_string.c`, `der_encode_octet_string.c`, and `der_length_octet_string.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\object_identifier` includes `der_decode_object_identifier.c`, `der_encode_object_identifier.c`, and `der_length_object_identifier.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\printable_string` includes `der_decode_printable_string.c`, `der_encode_printable_string.c`, and `der_length_printable_string.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\sequence` includes `der_decode_sequence_ex.c`, `der_decode_sequence_flexi.c`, `der_decode_sequence_multi.c`, `der_encode_sequence_ex.c`, `der_encode_sequence_multi.c`, `der_length_sequence.c`, `der_sequence_free.c`, and `der_sequence_shrink.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\set` includes `der_encode_set.c` and `der_encode_setof.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\teletex_string` includes `der_decode_teletex_string.c` and `der_length_teletex_string.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\short_integer` includes `der_decode_short_integer.c`, `der_encode_short_integer.c`, and `der_length_short_integer.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\utctime` includes `der_decode_utctime.c`, `der_encode_utctime.c`, and `der_length_utctime.c`.
+- `deps\libtomcrypt\src\pk\asn1\der\utf8` includes `der_decode_utf8_string.c`, `der_encode_utf8_string.c`, and `der_length_utf8_string.c`.
+- `deps\libtomcrypt\src\pk\asn1\oid` includes `pk_get_oid.c`, `pk_oid_cmp.c`, and `pk_oid_str.c`.
+- `deps\libtomcrypt\src\pk\asn1\pkcs8` includes `pkcs8_decode_flexi.c`.
+- `deps\libtomcrypt\src\pk\asn1\x509` includes `x509_decode_public_key_from_certificate.c`, `x509_decode_subject_public_key_info.c`, and `x509_encode_subject_public_key_info.c`.
+- `deps\libtomcrypt\src\ciphers` includes AES, Anubis, Blowfish, Camellia, CAST5, DES, IDEA, KASUMI, Khazad, KSEED, Multi2, Noekeon, RC2, RC5, RC6, SAFER, Serpent, Skipjack, TEA, Twofish, and XTEA implementations.
+- `deps\libtomcrypt\src\hashes` includes BLAKE2b, BLAKE2s, CHC, MD2, MD4, MD5, RIPEMD-128, RIPEMD-160, RIPEMD-256, RIPEMD-320, SHA-1, SHA-2, SHA-3, Tiger, and Whirlpool implementations.
+- `deps\libtomcrypt\src\hashes\helper` includes `hash_file.c`, `hash_filehandle.c`, `hash_memory.c`, and `hash_memory_multi.c`.
+- `deps\libtomcrypt\src\encauth\chachapoly` includes `chacha20poly1305_add_aad.c`, `chacha20poly1305_decrypt.c`, `chacha20poly1305_done.c`, `chacha20poly1305_encrypt.c`, `chacha20poly1305_init.c`, `chacha20poly1305_memory.c`, `chacha20poly1305_setiv.c`, and `chacha20poly1305_setiv_rfc7905.c`.
+- `deps\libtomcrypt\src\encauth\ccm`, `deps\libtomcrypt\src\encauth\gcm`, `deps\libtomcrypt\src\encauth\eax`, `deps\libtomcrypt\src\encauth\ocb`, and `deps\libtomcrypt\src\encauth\ocb3` contain authenticated-encryption lifecycle, streaming, memory, IV, AAD, multiplication, and verification implementations.
+- `deps\libtomcrypt\src\modes\cbc`, `cfb`, `ctr`, `ecb`, `f8`, `lrw`, `ofb`, and `xts` contain block-mode start, encrypt, decrypt, IV, process, and cleanup implementations.
+- `deps\libtomcrypt\src\mac\blake2`, `f9`, `hmac`, `omac`, `pelican`, `pmac`, `poly1305`, and `xcbc` contain MAC initialization, processing, file, memory, multi-memory, and finalization implementations.
+- `deps\libtomcrypt\src\stream\chacha`, `rabbit`, `rc4`, `salsa20`, `sober128`, and `sosemanuk` contain stream-cipher setup, keystream, encryption, memory, IV/counter, and cleanup implementations.
+- `deps\libtomcrypt\src\pk\dh`, `dsa`, `ecc`, `ec25519`, `ed25519`, `rsa`, `x25519`, and `pkcs1` contain key generation, import/export, encryption/decryption, signing, verification, shared-secret, curve, and padding operations.
+- `deps\libtomcrypt\src\misc` contains `base16`, `base32`, `base64`, `bcrypt`, `crypt`, `hkdf`, `padding`, `pbes`, `pkcs5`, `pkcs12`, and `ssh` implementations.
+- `deps\libtomcrypt\src\math` contains `gmp_desc.c`, `ltm_desc.c`, `multi.c`, `radix_to_bin.c`, `rand_bn.c`, `rand_prime.c`, and `tfm_desc.c`.
+- `deps\libtomcrypt\src\prngs` contains `chacha20.c`, `fortuna.c`, `rc4.c`, `rng_get_bytes.c`, `rng_make_prng.c`, `sober128.c`, `sprng.c`, and `yarrow.c`.
+- `deps\libtomcrypt\src\headers` contains `tomcrypt.h`, `tomcrypt_argchk.h`, `tomcrypt_cfg.h`, `tomcrypt_cipher.h`, `tomcrypt_custom.h`, `tomcrypt_hash.h`, `tomcrypt_mac.h`, `tomcrypt_macros.h`, `tomcrypt_math.h`, `tomcrypt_misc.h`, `tomcrypt_pk.h`, `tomcrypt_pkcs.h`, `tomcrypt_private.h`, and `tomcrypt_prng.h`.
+- `deps\libtomcrypt\src\misc\crypt` contains descriptor lookup, registration, validity, constants, initialization, sizing, and unregister functions such as `crypt_find_cipher.c`, `crypt_find_hash.c`, `crypt_find_prng.c`, `crypt_register_cipher.c`, `crypt_register_hash.c`, and `crypt_register_prng.c`.
+- `deps\libtomcrypt\tests`, `deps\libtomcrypt\demos`, `deps\libtomcrypt\notes`, `deps\libtomcrypt\.ci`, and `deps\libtomcrypt\hooks` contain test vectors, demos, CI scripts, documentation, and pre-commit automation.
+- `deps\libtommath` contains the multiprecision arithmetic implementation, including `mp_add.c`, `mp_mul.c`, `mp_div.c`, `mp_exptmod.c`, `mp_invmod.c`, `mp_prime_is_prime.c`, `mp_reduce.c`, `mp_sqrt.c`, `mp_to_radix.c`, `mp_from_ubin.c`, `mp_to_ubin.c`, and corresponding `s_mp_*` internals.
+- `deps\libtommath\tommath.h`, `tommath_private.h`, `tommath_class.h`, `tommath_superclass.h`, `tommath_cutoffs.h`, and `tommath_c89.h` define the multiprecision public and private interfaces.
+
+### Third-party parsing, compression, and code generation
+
+- `deps\rapidjson\include\rapidjson` contains `document.h`, `reader.h`, `writer.h`, `prettywriter.h`, `schema.h`, `pointer.h`, `uri.h`, `encodings.h`, `allocators.h`, `stream.h`, and related JSON DOM, SAX, schema, encoding, stream, and memory APIs.
+- `deps\rapidjson\include\rapidjson\internal` contains `biginteger.h`, `dtoa.h`, `strtod.h`, `itoa.h`, `regex.h`, `stack.h`, `meta.h`, `ieee754.h`, and low-level numeric, regex, allocation, and type machinery.
+- `deps\rapidjson\test\unittest` contains allocator, parser, writer, encoding, schema, URI, pointer, regex, numeric, and value tests.
+- `deps\rapidjson\test\perftest` contains parser, schema, platform, miscellaneous, and performance benchmarks.
+- `deps\rapidjson\example` contains `archiver`, `capitalize`, `condense`, `filterkey`, `filterkeydom`, `jsonx`, `lookaheadparser`, `parsebyparts`, `pretty`, `prettyauto`, `schemavalidator`, `serialize`, `simpledom`, `simplepullreader`, `simplereader`, `simplewriter`, `sortkeys`, `traverseaspointer`, and `tutorial`.
+- `deps\rapidjson\bin\jsonchecker`, `jsonschema`, `types`, `encodings`, `unittestschema`, `draft-04`, `data`, and `remotes` contain JSON conformance fixtures, schemas, remote references, and executable/test assets.
+- `deps\rapidjson\CMakeLists.txt`, `RapidJSONConfig.cmake.in`, `RapidJSONConfigVersion.cmake.in`, `RapidJSON.pc.in`, `library.json`, `package.json`, `include_dirs.js`, and `rapidjson.autopkg` define build and packaging integration.
+- `deps\rapidjson\thirdparty\gtest` contains GoogleTest and GoogleMock headers, sources, generators, samples, Xcode projects, Visual Studio projects, CMake/autotools files, CI scripts, documentation, and tests.
+- `deps\asmjit\src\asmjit\core` contains assembler, builder, compiler, emitter, formatter, instruction, register-allocation, JIT runtime, virtual-memory, target, CPU, logger, error-handler, zone allocator, and support APIs.
+- `deps\asmjit\src\asmjit\x86` contains x86 assembler, builder, compiler, formatter, instruction database, operands, instruction API, register allocation, and architecture traits.
+- `deps\asmjit\src\asmjit\arm` contains AArch64 assembler, builder, compiler, formatter, instruction database, operands, instruction API, register allocation, and architecture traits.
+- `deps\asmjit\db` contains ISA JSON files `isa_aarch32.json`, `isa_aarch64.json`, `isa_aarch64_sme.json`, and `isa_x86.json`, plus JavaScript table generators.
+- `deps\asmjit\tools` contains `tablegen.js`, `tablegen-a64.js`, `tablegen-x86.js`, `enumgen.js`, generator helpers, shell generators, and Visual Studio/Xcode/Ninja configuration scripts.
+- `deps\asmjit\test` contains assembler, compiler, emitter, execution, instruction-info, performance, unit, section, and broken-case tests.
+- `deps\minhook\src` contains `buffer.c`, `hook.c`, `trampoline.c`, `buffer.h`, and `trampoline.h`; `deps\minhook\include\MinHook.h` defines the public hook API; `deps\minhook\src\hde` contains 32-bit and 64-bit instruction decoders.
+- `deps\zstd\lib\common`, `compress`, `decompress`, `dictBuilder`, `legacy`, and `deprecated` contain core compression, decompression, entropy, dictionary, legacy-format, memory-pool, threading, and compatibility implementations.
+- `deps\zstd\lib\zstd.h`, `zdict.h`, `zstd_errors.h`, `zstd_internal.h`, and `zstd_deps.h` define public and internal compression interfaces.
+- `deps\zstd\programs` contains the `zstd` CLI, `zstdcli.c`, `fileio.c`, `benchzstd.c`, `datagen.c`, `zstdgrep`, `zstdless`, manpages, tracing, and platform helpers.
+- `deps\zstd\tests` contains fuzzing, regression, CLI, gzip-compatibility, dictionary, benchmark, round-trip, frame, legacy, pool, parameter, and version tests.
+- `deps\zstd\contrib` contains pzstd, seekable format, Linux-kernel integration, recovery, external sequence producer, dictionary stress, match-finder, HTML generation, Docker, Snap, Premake, and benchmarking projects.
+- `deps\zstd\zlibWrapper` contains zlib-compatible `gzclose.c`, `gzlib.c`, `gzread.c`, `gzwrite.c`, `zstd_zlibwrapper.c`, and wrapper headers.
+- `deps\zlib` contains Deflate, Inflate, gzip stream, checksum, tree, utility, configuration, examples, tests, Minizip, DotZLib, Ada, Delphi, Pascal, Visual Studio, OS/2, QNX, Watcom, Amiga, and legacy build integrations.
+- `deps\GSL\include\gsl` contains `algorithm`, `assert`, `byte`, `gsl`, `narrow`, `pointers`, `span`, `span_ext`, `string_span`, `util`, and `zstring`.
+- `deps\GSL\tests` contains algorithm, assertion, byte, `span`, `span_ext`, `notnull`, `owner`, death-test, exception, and utility tests.
+
+### Gamepad controller subsystem
+
+- `src\component\gamepad\controller\aim` contains `assist`, `calibration`, `curve`, `deadzone`, `filter`, `graph`, `integrator`, and `types` source/header pairs for aim processing.
+- `src\component\gamepad\controller\calibration` contains `measure`, `normalize`, `profile`, `store`, and `validate` source/header pairs for controller calibration.
+- `src\component\gamepad\controller\device` contains `capability`, `connection`, `discovery`, `id`, `identity`, and `registry` source/header pairs for device enumeration and identity.
+- `src\component\gamepad\controller\driver` contains `decode`, `driver`, `dualsense`, `dualsense-edge`, `dualshock4`, `output-report`, `output`, `playstation`, `set`, and `xinput` implementations.
+- `src\component\gamepad\controller\engine` contains `bind`, `command`, `dvar`, `hook`, `import`, `key`, `netmove`, and `view` integrations with the game engine.
+- `src\component\gamepad\controller\mapping` contains `binding`, `glyph`, `key`, `logical`, `physical`, and `stick-layout` abstractions.
+- `src\component\gamepad\controller\sample` contains `axis`, `button`, `frame`, `motion`, `ring`, `sample`, `touch`, and `trigger` input-sample structures.
+- `src\component\gamepad\controller\transport` contains `device-notify`, `hid`, and `xinput-module` transport integrations.
+- `src\component\gamepad\controller\support` contains shared `types.hpp` and `utility.hpp`.
+- `src\component\gamepad\controller\clock`, `context`, `diagnostic`, `error`, `runtime`, and `trace` define controller timing, lifecycle, diagnostics, error reporting, runtime coordination, and tracing.
+- `src\component\gamepad\controller_input.cpp`, `gamepad.hpp`, and `sdl_input.cpp` connect controller processing to the broader gamepad component.
+
+### Engine and application code
+
+- `src\component\engine\console` contains `command.cpp`, `command.hpp`, `console.cpp`, `console.hpp`, `game_console.cpp`, and `game_console.hpp`.
+- `src\component\engine\mouse_input\mouse_input.cpp` handles mouse input integration.
+- `src\component\engine\patches` contains `patches.cpp`, `patches.hpp`, `profile_patches.cpp`, `xlive.cpp`, and `xlive.hpp`.
+- `src\component\engine\renderer` contains `draw_version.cpp`, `ultrawide.cpp`, and `ultrawide.hpp`.
+- `src\component\engine\scripting` contains `filesystem`, `gametypes`, and `gsc` source/header pairs.
+- `src\component\engine\ux\sounds.cpp` handles user-experience sound behavior.
+- `src\component\engine\zones` contains `fastfiles.cpp` and `fastfiles.hpp`.
+- `src\component\bots.cpp` and `src\component\entities.cpp` implement bot/entity components.
+- `src\game\dvars.cpp`, `dvars.hpp`, `game.cpp`, `game.hpp`, `structs.hpp`, and `symbols.hpp` define game-facing state, structures, symbols, and dvars.
+- `src\loader\component_interface.hpp`, `component_loader.cpp`, and `component_loader.hpp` define component registration/loading.
+- `src\utils\concurrency.hpp`, `flags.cpp`, `flags.hpp`, `hook.cpp`, `hook.hpp`, `io.cpp`, `io.hpp`, `memory.cpp`, `memory.hpp`, `nt.cpp`, `nt.hpp`, `string.cpp`, `string.hpp`, `thread.cpp`, and `thread.hpp` define shared platform, hook, memory, I/O, string, flag, concurrency, and threading utilities.
+- `src\exception\minidump.cpp` and `minidump.hpp` define crash-dump support.
+- `src\main.cpp`, `std_include.cpp`, `std_include.hpp`, `sdllp.cpp`, `sdllp.hpp`, `resource.hpp`, `resource.rc`, and `src_xlive\xlive_shim.cpp` cover application bootstrap, common includes, DLL entry/integration, resources, and XLive compatibility.
+- `_tmp_iw4x_gamepad\gamepad.cpp` contains a temporary or auxiliary gamepad implementation.
+- `required_files\README.txt` documents required runtime files.
+- `.gitmodules`, `Directory.Build.props`, `premake5.lua`, `fixdeps.sh`, `generate-linux.sh`, `generate-nightly.bat`, `generate.bat`, `LICENSE`, and `README.md` define repository dependencies, build properties, generation scripts, licensing, and top-level documentation.
+- `.github\FUNDING.yml` defines repository funding metadata.
+- `.vscode\settings.json` defines editor settings.
+- `src_xlive\xlive.def` defines exported XLive symbols.
+
+## Phase 2 Directory Queue
+
+- `Depth 9` targets `deps\rapidjson\thirdparty\gtest\googlemock\include\gmock\internal\custom`, `deps\rapidjson\thirdparty\gtest\googletest\xcode\Samples\FrameworkSample\WidgetFramework.xcodeproj`, and `deps\rapidjson\thirdparty\gtest\googletest\include\gtest\internal\custom`.
+- `Depth 8` targets GoogleMock internals, GoogleTest internals, Xcode sample/configuration directories, generator C++ directories, and Linux-kernel test include directories.
+- `Depth 7` targets LibTomCrypt DER primitive directories, RapidJSON draft/optional test directories, GoogleTest/GoogleMock include, build, documentation, source, script, sample, and test directories, plus zstd Linux-kernel include directories.
+- `Depth 6` targets LibTomCrypt OID, PKCS#8, and X.509 directories; RapidJSON remote/schema directories; GoogleTest/GoogleMock CMake, documentation, Make, source, script, test, sample, CodeGear, and Xcode directories; and zstd pzstd test directories.
+- `Depth 5` targets LibTomCrypt algorithm families, ASMJIT architecture/core directories, RapidJSON JSON-schema directories, GoogleTest/GoogleMock CI and project directories, zstd pzstd, seekable-format, Visual Studio, CLI-test, fuzz, and utility directories, zlib DotZLib and Visual Studio directories, and all gamepad controller subsystem directories.
+- `Depth 4` targets GSL include, LibTomCrypt demos/notes/source/headers/math/PRNG/test directories, ASMJIT issue/database/source/test/tool directories, MinHook directories, RapidJSON data/schema/example/include/test/documentation directories, zstd documentation/contrib/examples/library/programs/wrapper/test directories, zlib contrib/documentation/example/platform/test directories, and engine component directories.
+- `Depth 3` targets top-level dependency subdirectories, gamepad and utility component directories, and zlib platform/test directories.
+- `Depth 2` targets `deps\GSL`, `deps\libtomcrypt`, `deps\asmjit`, `deps\minhook`, `deps\premake`, `deps\libtommath`, `deps\rapidjson`, `deps\zstd`, `deps\zlib`, `src\component`, `src\exception`, `src\game`, `src\loader`, and `src\utils`.
+- `Depth 1` targets `.agents-reverse-engineer`, `.github`, `.vscode`, `required_files`, `src`, `src_xlive`, and `_tmp_iw4x_gamepad`.
+- `Depth 0` targets `./AGENTS.md` after all descendants have been processed.
+
+## Integration Contracts
+
+- `.agents-reverse-engineer\config.yaml` is the adjacent configuration input for the generation process.
+- `.agents-reverse-engineer\GENERATION-PLAN.md` is both a queued Phase 1 input and the execution manifest.
+- `AGENTS.md` is the generated directory-level artifact expected at every listed directory.
+- `src\component\gamepad\controller` is the largest first-party subsystem represented in the plan.
+- `deps\rapidjson`, `deps\zstd`, `deps\zlib`, `deps\libtomcrypt`, `deps\libtommath`, `deps\asmjit`, `deps\minhook`, and `deps\GSL` are vendored dependency trees included in documentation scope.
+- `premake5.lua`, `generate.bat`, `generate-nightly.bat`, `generate-linux.sh`, and `fixdeps.sh` are build/generation entry points included as documentation targets.
+- `README.md`, `CONTRIBUTING.md`, CI files, issue templates, and build manifests appear in the queue because the plan documents workflow and repository conventions alongside source code.
+
+## Behavioral Invariants
+
+- `2892` is the required total task count recorded by the plan.
+- `2549` is the required file-task count recorded by the plan.
+- `343` is the required directory-task count recorded by the plan.
+- `2026-08-31` is the recorded generation date.
+- `Post-order (children before parents)` is the required traversal policy for both phases.
+- `[ ]` is the pending-task sentinel.
+- `AGENTS.md` is the exact generated filename.
+- `./AGENTS.md` is the final root-level directory task.
+- No exported functions, classes, types, or constants are defined by `GENERATION-PLAN.md`; the Markdown headings, counts, paths, and checklist markers are its operative data.

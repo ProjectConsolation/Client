@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:22:06.579Z
+content_hash: 4b4ab9c6f8a9de6b0e431d15a3a10c5b78d7ae5d5edd88a7732c75b09b469277
+purpose: decode.hpp decodes packed gamepad/HID fields and normalizes PlayStation controller data.
+---
+**decode.hpp decodes packed gamepad/HID fields and normalizes PlayStation controller data.**
+
+## Public interface
+
+- `rd_u8(span<const byte>, size_t offset) noexcept` reads one report byte.
+- `rd_le16(span<const byte>, size_t offset) noexcept`, `rd_le16s(span<const byte>, size_t offset) noexcept`, and `rd_le32(span<const byte>, size_t offset) noexcept` read unaligned little-endian integers.
+- `crc32_le(uint32_t init, span<const byte>) noexcept` computes reflected CRC-32 with polynomial `0xEDB88820`, without implicit inversion.
+- `ps_input_crc_seed`, `ps_output_crc_seed`, and `ps_feature_crc_seed` are `uint8_t` constants `0xA1`, `0xA2`, and `0xA3`.
+- `verify_ps_crc32(uint8_t seed, span<const byte> data, uint32_t expected) noexcept` computes `crc32_le(0xFFFFFFFF,{seed})`, then `~crc32_le(crc,data)`, comparing against `expected`.
+- `ps_touch_point` contains `bool active`, `uint8_t id`, and `uint16_t x`, `y` 12-bit coordinates.
+- `decode_touch_point(span<const byte> p) noexcept` decodes four bytes as contact/id, `x_lo`, `(x_hi:4 | y_lo:4)`, and `y_hi`.
+- `apply_hat(button_set&, uint8_t hat) noexcept` maps hat values `0..7` to eight dpad directions; `8` and invalid values clear the dpad.
+- `normalize_ps_stick(uint8_t x, uint8_t y) noexcept` returns `stick_vector`, centering bytes at `128`, inverting Y, and radially clamping magnitude to one.
+
+## Integration contracts
+
+`rd_u8`, `rd_le16`, `rd_le16s`, and `rd_le32` require callers to validate report length; `decode_touch_point` interprets the contact high bit as inactive and low seven bits as tracking ID. `button_set` and `stick_vector` come from controller sample/support types.

@@ -38,6 +38,13 @@ namespace
 		return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
 	}
 
+	bool local_offline_mode_requested()
+	{
+		return utils::flags::has_flag("offline")
+			|| utils::flags::has_flag("local_offline")
+			|| utils::flags::has_flag("local-offline");
+	}
+
 	DECLSPEC_NORETURN void show_missing_gfwl_and_exit()
 	{
 		const auto result = MessageBoxA(nullptr,
@@ -98,10 +105,16 @@ namespace
 
 	void validate_supported_install()
 	{
-		if (!has_system_xlive())
+		const auto offline_mode = local_offline_mode_requested();
+
+		if (!offline_mode && !has_system_xlive())
 		{
 			printf("consolation: Games for Windows - LIVE runtime not detected, aborting startup\n");
 			show_missing_gfwl_and_exit();
+		}
+		else if (offline_mode)
+		{
+			printf("consolation: local offline mode requested, skipping Games for Windows - LIVE runtime check\n");
 		}
 
 		const auto game_root = std::filesystem::path(utils::nt::get_host_module().get_folder());

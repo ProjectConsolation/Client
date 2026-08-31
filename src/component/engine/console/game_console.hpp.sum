@@ -1,0 +1,12 @@
+---
+generated_at: 2026-08-31T15:22:52.583Z
+content_hash: f479f0c4323a36764e56114d96debeed98d45c89e2a706fe7f8c0cabd1743f4e
+purpose: game_console.hpp exposes game-console activity and output APIs.
+---
+**game_console.hpp exposes game-console activity and output APIs.**
+
+## Interface
+
+- `bool is_active();` — queries console state.
+- `void toggle();` — toggles console state.
+- `void append_output(std::string_view text);` — appends output text.

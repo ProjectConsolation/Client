@@ -91,15 +91,4 @@ namespace gamepad::unstable::controller::engine
     return static_cast<float> (msec) * 0.001f;
   }
 
-  void AimAssist_UpdateGamePadInput (AimInput* input, AimOutput* output) noexcept
-  {
-    const auto function = static_cast<int> (game::game_offset (0x1027B9D0));
-    __asm
-    {
-      mov esi, input
-      push output
-      call function
-      add esp, 4
-    }
-  }
 }

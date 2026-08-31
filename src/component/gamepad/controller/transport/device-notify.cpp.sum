@@ -1,0 +1,34 @@
+---
+generated_at: 2026-08-31T15:22:51.324Z
+content_hash: 9a4459d0fc77d6f8eef453ad14bc09529587af6ed9a918ea76e259e9e694a637
+purpose: device-notify.cpp does HID device-change notification via a hidden Windows message window.
+---
+**device-notify.cpp does HID device-change notification via a hidden Windows message window.**
+
+## Interface
+
+- `device_notifier::device_notifier(const context& ctx)` starts a dedicated `std::thread` executing `run(ctx)`.
+- `device_notifier::~device_notifier()` posts `WM_CLOSE` to the stored `HWND` and joins `thread_`.
+- `device_notifier::run(const context& ctx) noexcept` registers the window class, creates the message-only window, subscribes to HID interface notifications, pumps messages, unregisters notifications, and clears `window_`.
+
+## Notification Flow
+
+- `window_class` is the exact class name `L"gamepad_controller_devnotify"`.
+- `window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp) noexcept` handles `WM_DEVICECHANGE`, `WM_CLOSE`, and `WM_DESTROY`, delegating other messages to `DefWindowProcW`.
+- `DBT_DEVICEARRIVAL` and `DBT_DEVICEREMOVECOMPLETE` set `pending_` through `flag_of(HWND w)` using `std::memory_order_release`; other device-change events are ignored.
+- `WM_CLOSE` calls `DestroyWindow(w)`, while `WM_DESTROY` calls `PostQuitMessage(0)` and terminates the `GetMessageW` loop.
+- `flag_of(HWND w)` retrieves the `std::atomic<bool>*` stored in `GWLP_USERDATA`, sharing the atomic consumed by `device_notifier::consume`.
+
+## Windows Integration
+
+- `RegisterClassExW` installs `window_proc`; `ERROR_CLASS_ALREADY_EXISTS` is accepted, while other registration failures trigger `ctx.report`.
+- `CreateWindowExW` creates a zero-sized `HWND_MESSAGE` window and stores it in `window_` with `std::memory_order_release`.
+- `HidD_GetHidGuid` supplies the HID class GUID for `DEV_BROADCAST_DEVICEINTERFACE_W`; `RegisterDeviceNotificationW` uses `DEVICE_NOTIFY_WINDOW_HANDLE`.
+- `UnregisterDeviceNotification` releases `notify` after message-loop shutdown.
+- `GetMessageW`, `TranslateMessage`, and `DispatchMessageW` keep the notifier thread blocked until notification or destruction.
+
+## Failure Contract
+
+- `ctx.report(severity::warning, facility::discovery, errc::transport_failure, "...")` reports class registration, window creation, or HID registration failures.
+- Exact fallback messages are `"device-change window class registration failed; discovery will poll"`, `"device-change window creation failed; discovery will poll"`, and `"HID device-change registration failed; discovery will poll"`.
+- `notify == nullptr` preserves discovery through its polling fallback.

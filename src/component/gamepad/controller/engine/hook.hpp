@@ -29,7 +29,7 @@ namespace gamepad
         // every patch goes through the project's detour abstraction rather than
         // hand-written bytes.
         //
-        // The QoS bridge supplies the PC key-name conversions, replaces CL_MouseMove
+        // The QoS bridge supplies the PC key-name conversions, augments CL_MouseMove
         // while a pad is driving, and extends the verified delta-usercmd callsites so
         // analog movement survives the network codec.
         //

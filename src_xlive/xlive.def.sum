@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:24:32.208Z
+content_hash: 53b27f7f1935f79d3ec5908098254cf29cae9f94a3eda40f317fd858f0d8693a
+purpose: xlive.def exports the `xlive` DLL ABI by binding XLive, networking, user, session, storage, and UI symbols to fixed o...
+---
+**xlive.def exports the `xlive` DLL ABI by binding XLive, networking, user, session, storage, and UI symbols to fixed ordinals.**
+
+## Export Contract
+
+`xlive` exports all entries with `NONAME`; signatures are not declared in the `.def` file.
+
+- Networking: `xlive_XWSAStartup @1`, `xlive_XSocketCreate @3`, `xlive_XSocketClose @4`, `xlive_XSocketIOCTLSocket @6`, `xlive_XSocketSetSockOpt @7`, `xlive_XSocketBind @11`, `xlive_XSocketRecvFrom @20`, `xlive_XSocketSendTo @24`, `xlive_XSocketInet_Addr @26`, `xlive_XWSAGetLastError @27`, `xlive_XSocketHTONS @38`.
+- XNet: `xlive_XNetStartup @51`, `xlive_XNetXnAddrToInAddr @57`, `xlive_XNetInAddrToXnAddr @60`, `xlive_XNetConnect @65`, `xlive_XNetGetConnectStatus @66`, `xlive_XNetQosListen @69`, `xlive_XNetQosLookup @70`, `xlive_XNetQosServiceLookup @71`, `xlive_XNetQosRelease @72`, `xlive_XNetGetTitleXnAddr @73`, `xlive_XNetGetEthernetLinkStatus @75`, `xlive_XNetSetSystemLinkPort @84`.
+- Notifications/overlapped: `xlive_XNotifyGetNext @651`, `xlive_XNotifyPositionUI @652`, `xlive_XGetOverlappedExtendedError @1082`, `xlive_XGetOverlappedResult @1083`.
+- Graphics/input/protection: `xlive_XLiveInput @5001`, `xlive_XLiveRender @5002`, `xlive_XLiveOnCreateDevice @5005`, `xlive_XLiveOnDestroyDevice @5006`, `xlive_XLiveOnResetDevice @5007`, `xlive_XHVCreateEngine @5008`, `xlive_XLivePreTranslateMessage @5030`, `xlive_XLiveCreateProtectedDataContext @5036`, `xlive_XLiveQueryProtectedDataInformation @5037`, `xlive_XLiveCloseProtectedDataContext @5038`.
+- UI/users: `xlive_XShowGuideUI @5215`, `xlive_XShowGamerCardUI @5252`, `xlive_XCancelOverlapped @5254`, `xlive_XEnumerate @5256`, `xlive_XShowSigninUI @5260`, `xlive_XUserGetXUID @5261`, `xlive_XUserGetSigninState @5262`, `xlive_XUserGetName @5263`, `xlive_XUserAreUsersFriends @5264`, `xlive_XUserCheckPrivilege @5265`, `xlive_XUserGetSigninInfo @5267`, `xlive_XNotifyCreateListener @5270`, `xlive_XShowFriendsUI @5275`, `xlive_XUserSetProperty @5276`, `xlive_XUserSetContext @5277`, `xlive_XUserWriteAchievements @5278`, `xlive_XUserReadStats @5281`, `xlive_XUserCreateStatsEnumeratorByRank @5284`, `xlive_XUserCreateStatsEnumeratorByXuid @5286`, `xlive_XUserResetStatsView @5287`, `xlive_XUserSetContextEx @5292`.
+- Data/sessions: `xlive_XLivePBufferGetByteArray @5294`, `xlive_XLivePBufferSetByteArray @5295`, `xlive_XSessionCreate @5300`, `xlive_XStringVerify @5303`, `xlive_XStorageUploadFromMemory @5305`, `xlive_XFriendsCreateEnumerator @5312`, `xlive_XUserMuteListQuery @5314`, `xlive_XInviteGetAcceptedInfo @5315`, `xlive_XSessionWriteStats @5317`, `xlive_XSessionStart @5318`, `xlive_XSessionSearchEx @5319`, `xlive_XSessionModify @5322`, `xlive_XSessionMigrateHost @5323`, `xlive_XOnlineGetNatType @5324`, `xlive_XSessionJoinRemote @5326`, `xlive_XSessionDelete @5330`, `xlive_XUserReadProfileSettings @5331`, `xlive_XSessionEnd @5332`, `xlive_XSessionArbitrationRegister @5333`, `xlive_XSessionLeaveRemote @5336`, `xlive_XUserWriteProfileSettings @5337`, `xlive_XSessionModifySkill @5342`, `xlive_XSessionCalculateSkill @5343`, `xlive_XStorageBuildServerPath @5344`, `xlive_XStorageDownloadToMemory @5345`.
+
+## Integration Constraints
+
+Ordinal stability across `xlive` implementations is ABI-critical; changing ordinals or removing `NONAME` breaks consumers.

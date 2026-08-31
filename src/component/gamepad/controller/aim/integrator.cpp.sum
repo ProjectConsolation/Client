@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:21:35.540Z
+content_hash: 5d47760877ae41a43ea2b42835f8b3d0bf03615dec4f41f2f2060f602bf63cc7
+purpose: integrator.cpp advances aim turn rates with acceleration/deceleration limits.
+---
+**integrator.cpp advances aim turn rates with acceleration/deceleration limits.**
+
+## Interface
+
+`turn_integrator::advance(deg_per_s target, const limits& lim, seconds dt) noexcept` returns `degrees`; operates in `gamepad::unstable::controller::aim`.
+
+## Behavior
+
+`advance` returns `degrees{0.0f}` for `dt <= 0`; otherwise clamps `current_` toward `target` by `lim.accel * dt` or `lim.decel * dt`, with non-positive limits causing instantaneous convergence. `advance` integrates displacement via `0.5f * (prev + cur) * dt`.
+
+## Dependencies
+
+`std::min` and `std::max` enforce target bounds; `degrees`, `deg_per_s`, `limits`, `seconds`, and `current_` define the unit-typed state.

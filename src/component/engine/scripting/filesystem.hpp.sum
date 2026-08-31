@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:22:59.167Z
+content_hash: 88c1c25762ec07efa393d6498dc3da5a8146176836d6e9f8cde0e15f1a85eca0
+purpose: filesystem.hpp does declare filesystem search-path and file-access APIs.
+---
+**filesystem.hpp does declare filesystem search-path and file-access APIs.**
+
+## API
+
+`read_file(const std::string&) -> std::string`; overload `read_file(const std::string&, std::string*, std::string*=nullptr) -> bool`; `find_file`, `exists`; path registration and search-path toggles.

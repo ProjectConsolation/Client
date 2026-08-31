@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:23:48.715Z
+content_hash: 3d4b200328362073131ee51bb3abdd6d3fa79441f8e31f0a751754961791a219
+purpose: component_loader.cpp does lifecycle dispatch, filtering, import resolution, and teardown for registered `component_in...
+---
+**component_loader.cpp does lifecycle dispatch, filtering, import resolution, and teardown for registered `component_interface` instances.**
+
+## Interface
+
+- `component_loader::register_component(std::unique_ptr<component_interface>&&)` transfers ownership into the global component registry.
+- `component_loader::post_start() -> bool` invokes `component_interface::post_start()` once; returns `false` on `premature_shutdown_trigger`, otherwise `true`.
+- `component_loader::post_load() -> bool` calls `clean()`, then invokes `component_interface::post_load()` once with the same shutdown/error contract.
+- `component_loader::pre_destroy() -> void` invokes `component_interface::pre_destroy()` once for every retained component.
+- `component_loader::clean() -> void` removes unsupported components after calling `component_interface::pre_destroy()`.
+- `component_loader::load_import(const std::string&, const std::string&) -> void*` queries every component and returns the last non-null import pointer.
+- `component_loader::trigger_premature_shutdown() -> void` throws `premature_shutdown_trigger`.
+- `component_loader::get_components() -> std::vector<std::unique_ptr<component_interface>>&` exposes the process-wide registry.
+
+## Behavior and coupling
+
+`get_components()` uses a function-local static `std::unique_ptr` with `std::function` deleter; destruction calls `pre_destroy()` before deleting the vector. `post_start()` and `post_load()` use static `handled` sentinels, so repeated calls return immediately. `post_start()` and `post_load()` wrap `std::exception`, `const char*`, and unknown exceptions as `std::runtime_error` using `post_start failed in {}: {}` or `post_load failed in {}: {}`; `premature_shutdown_trigger` propagates to the outer handler. `log_component_event()` emits `[component_loader] {} {}\n` through `OutputDebugStringA`, `std::printf`, and `std::fflush(stdout)`. `typeid(*component_).name()` identifies components at runtime; registry iteration follows a Registry plus Chain-of-Responsibility dispatch pattern.

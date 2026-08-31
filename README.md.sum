@@ -1,0 +1,31 @@
+---
+generated_at: 2026-08-31T15:24:26.052Z
+content_hash: b2cb0df18d41fa5f0c3320cd2118d730599524612ee2f72cd665ef4279cb8906
+purpose: README.md documents Consolation’s supported game version, installation/launch workflow, nightly-build policy, credits...
+---
+**README.md documents Consolation’s supported game version, installation/launch workflow, nightly-build policy, credits, and project context.**
+
+## Project Scope
+
+Consolation targets the multiplayer PC port of *007: Quantum of Solace*, an IW3/T4-adjacent Call of Duty-engine game; English/French `1.1` is the only confirmed supported release.
+
+## Public Interface
+
+README.md exports no code symbols, functions, classes, types, or constants.
+
+## Installation Contract
+
+- Obtain the game from MyAbandonware; install to `C:\Program Files (x86)\Activision\Quantum of Solace(TM)\`.
+- Apply the official `1.1` patch; non-default paths may prevent patch installation.
+- Unsupported setups: repacks, other regions, unpatched `1.0`, and other versions.
+- Copy/extract release or nightly files into the game root and overwrite conflicts.
+- Launch via `Launch Consolation.lnk`, whose target must include `-multiplayer`: `"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer`.
+- Non-default installs require editing `Launch Consolation.lnk`; advanced users may manually copy `1.1` patch files and update the `JB_Launcher_s.exe` path.
+
+## Release Policy
+
+Nightly builds are automatically published under GitHub Releases, experimental, potentially unstable or broken, intended strictly for testing, and receive no support.
+
+## Integration References
+
+Installation, controller support, and crash debugging are delegated to the linked GitHub wiki pages; credits identify contributors to zones/zonetool, GSC support/injection, patches, IW3 research, raw mouse input, controller/DualSense support, and related IW3 projects.

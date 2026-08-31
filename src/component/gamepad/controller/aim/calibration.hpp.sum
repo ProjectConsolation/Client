@@ -1,0 +1,17 @@
+---
+generated_at: 2026-08-31T15:21:35.914Z
+content_hash: 6d0eb86e04c447526240d761f52fbe7e852d7759702eeea638c3e290870b8975
+purpose: calibration.hpp defines validated, FOV-aware aim calibration for gamepad controllers.
+---
+**calibration.hpp defines validated, FOV-aware aim calibration for gamepad controllers.**
+
+## Symbols
+
+- `fov_scale(degrees fov, degrees reference_fov) noexcept -> float` scales turn rate by half-FOV tangent ratio; returns `1` at `reference_fov`.
+- `aim_settings` stores authored `aim_profile hip`, `aim_profile ads`, `turn_integrator::limits accel`, optional `vector<knot> graph_knots`, and `bool graph_monotonic {true}`.
+- `aim_calibration::make(const aim_settings&, string& why) -> optional<aim_calibration>` validates deadzones, curves, and constructed `aim_graph`, rejecting invalid configurations with a precise reason.
+- `aim_calibration::processor_config() const noexcept -> aim_processor::config` returns processor settings referencing the owned graph.
+
+## Invariants & Integration
+
+`aim_calibration` owns `optional<aim_graph> graph_`; its lifetime must exceed processors created from `processor_config()`. `graph_monotonic` requires non-decreasing graph outputs. `types.hpp`, `utility.hpp`, `aim/types.hpp`, `aim/graph.hpp`, and `aim/assist.hpp` supply profiles, containers, graph construction, and processor configuration.

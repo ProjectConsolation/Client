@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:21:49.464Z
+content_hash: b50c1c904354ffde6eeea644480513249fed3a0f8f56fe01e348082034c85bf1
+purpose: registry.hpp defines the thread-safe authoritative registry for attached gamepad devices and stable IDs.
+---
+**registry.hpp defines the thread-safe authoritative registry for attached gamepad devices and stable IDs.**
+
+## Interface
+
+- `registry(const context&)` stores `ctx_` and initializes `next_` to `1`, `generation_` to `0`.
+- `device_id add(device_identity, controller::transport_kind, connection, capabilities, transport_binding)` deduplicates equivalent `transport_binding` records, refreshes identity/capabilities, or assigns a never-reused ID; membership changes increment `generation_`.
+- `bool remove(device_id)` removes an ID and reports whether removal occurred.
+- `optional<device_connection> find(device_id) const` returns a copy, or `nullopt`, remaining valid after `mutex_` release.
+- `void for_each(function_ref<void (const device_connection&)>) const` visits records while holding `mutex_`; callbacks must not call `add`, `remove`, `find`, or `size` to avoid deadlock.
+- `size_t size() const` returns the current record count.
+- `uint64_t generation() const noexcept` atomically loads the membership-change counter.
+
+## State and Integration
+
+`devices_` stores `device_connection` identity/attachment records; `ctx_` supplies controller context; `connection`, `device_identity`, `capabilities`, `transport_binding`, and `controller::transport_kind` come from device/support headers. `mutex_` synchronizes discovery mutations with frame reads, while `generation_` enables atomic unchanged-set checks and avoids per-frame reconciliation copies. Drivers, report decoding, and input samples remain outside `registry`.

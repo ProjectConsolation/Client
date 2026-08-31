@@ -1,0 +1,15 @@
+---
+generated_at: 2026-08-31T15:21:55.365Z
+content_hash: c339e6a66d68d8c04cc10bc609e9f94473d4a981ab02ee706ac2bb7f6b160b46
+purpose: hook.hpp connects engine detours to the controller runtime.
+---
+**hook.hpp connects engine detours to the controller runtime.**
+
+## Interface
+
+- `gamepad::unstable::controller::engine::install(runtime&) -> void`
+- `runtime` is forward-declared; `types.hpp` and `utility.hpp` supply support types/utilities.
+
+## Design
+
+`install` centralizes engine addresses, detour metadata, trampolines, and QoS bridging, including PC key-name conversion, `CL_MouseMove` augmentation, and verified delta-usercmd callsites.

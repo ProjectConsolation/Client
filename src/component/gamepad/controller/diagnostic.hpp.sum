@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:23:17.968Z
+content_hash: a01791bbc0b2e9eaeb6d27b5dc377d68185eef57ade10bd3cb8cb0e5ffaf150d
+purpose: diagnostic.hpp defines structured gamepad diagnostics, sinks, severity/facility taxonomies, and reporting APIs.
+---
+**diagnostic.hpp defines structured gamepad diagnostics, sinks, severity/facility taxonomies, and reporting APIs.**
+
+## Public symbols
+
+- `facility : uint8_t` enumerates `runtime`, `discovery`, `transport`, `driver`, `decode`, `sample`, `calibration`, `mapping`, `aim`, `steam`, `engine`, `debug`.
+- `to_string(facility) noexcept` returns `const char*`.
+- `severity : uint8_t` enumerates `info`, `warning`, `error`.
+- `to_string(severity) noexcept` returns `const char*`.
+- `diagnostic` stores `severity level {severity::info}`, `facility origin {facility::runtime}`, `errc code {errc::none}`, `device_id device {}`, and `string message`; `no_device` denotes device-independent conditions.
+- `diagnostic_sink` defines virtual `~diagnostic_sink() = default` and pure virtual `consume(const diagnostic&)`.
+- `logging_sink : diagnostic_sink` overrides `consume(const diagnostic&)`, formatting records for the logger.
+- `report(diagnostic_sink&, severity, facility, errc, device_id, string)` builds and dispatches one record.
+- Inline `report(diagnostic_sink&, severity, facility, errc, string)` delegates with `no_device` and `move(message)`.
+
+## Integration and design
+
+`types.hpp` supplies `string`, `move`, and related support types; `utility.hpp`, `error.hpp`, and `device/id.hpp` supply utility, `errc`, `device_id`, and `no_device`. `diagnostic_sink` uses the Observer/Strategy pattern for test/debug sinks, while `logging_sink` is the default logger adapter; virtual dispatch remains off the hot path.

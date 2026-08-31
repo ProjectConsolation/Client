@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:23:09.600Z
+content_hash: acf6ec8354dfd9a8e19cd1c1d24b01d0fff1c3d1521b8ebbd9435750f4690094
+purpose: fastfiles.hpp enumerates assets.
+---
+**fastfiles.hpp enumerates assets.**
+
+## API
+
+`fastfiles::enum_assets(game::XAssetType, const std::function<void(game::XAssetHeader)>&, bool) -> void`

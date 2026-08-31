@@ -376,5 +376,32 @@ workspace "consolation-client"
 
 		dependencies.imports()
 
+	project "xlive"
+		kind "SharedLib"
+		language "C++"
+		targetname "xlive"
+		links { "ws2_32", "shell32" }
+		buildoptions { "/utf-8" }
+
+		files
+		{
+			"./src_xlive/**.cpp",
+			"./src_xlive/**.hpp",
+			"./src_xlive/**.h",
+			"./src_xlive/**.def"
+		}
+
+		includedirs
+		{
+			"./src_xlive",
+			"C:/Program Files (x86)/Microsoft Games for Windows - LIVE SDK/include"
+		}
+
+		linkoptions { "/DEF:../src_xlive/xlive.def" }
+
+		if _OPTIONS["copy-to"] then
+			postbuildcommands {"copy /y \"$(TargetPath)\" \"" .. _OPTIONS["copy-to"] .. "\""}
+		end
+
 	group "Dependencies"
 		dependencies.projects()

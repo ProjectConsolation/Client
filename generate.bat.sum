@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:24:24.004Z
+content_hash: 33d3e59f7f9d28886094b2d5ab6380a6480b6225231c169c0e86824cfd00e3dd
+purpose: generate.bat generates the VS2022 solution after synchronizing submodules and selecting a verified Premake executable.
+---
+**generate.bat generates the VS2022 solution after synchronizing submodules and selecting a verified Premake executable.**
+
+## Interface
+
+- `PREMAKE_URL` pins Premake `v5.0.0-beta8` Windows ZIP; `PREMAKE_HASH` pins SHA-256 `2301e3e23ff3074cb83a5ea6103d68c7ea81dad56b786807c84b0643cddea31b`.
+- `PREMAKE_NO_GLOBAL` skips PATH lookup; `PREMAKE_NO_PROMPT` enables automatic download without confirmation.
+- `:downloadpremake()` creates `tools`, downloads `PREMAKE_URL`, extracts `tools\premake5.exe`, verifies `PREMAKE_HASH`, and returns `0` or `2`.
+- `:verifypremake(path)` computes SHA-256 through PowerShell and returns `0` for `PREMAKE_HASH` equality or `1` otherwise.
+- `:runpremake()` executes `%PREMAKE_BIN% %* vs2022`, creates `build`, and returns `1` on generation failure.
+
+## Workflow and contracts
+
+- `git submodule sync --recursive` and `git submodule update --init --recursive` abort with exit code `1` on failure.
+- `deps\SDL\include\SDL.h` takes precedence over fallback `deps\SDL2-src\SDL2-2.32.10\include\SDL.h`; missing SDL emits a warning and prevents SDL backend generation.
+- `PREMAKE_BIN` selection prefers global `premake5.exe`, then hash-verified `tools\premake5.exe`, then download; existing mismatched binaries are rejected.
+- `POWERSHELL_BIN` prefers `pwsh`, otherwise `powershell`; `Invoke-WebRequest` and `Expand-Archive` run with `-NoProfile -NonInteractive`.
+- `%*` preserves all caller arguments before the mandatory `vs2022` action; successful output targets `build\consolation-client.sln`.

@@ -1,0 +1,68 @@
+---
+generated_at: 2026-08-31T15:23:32.249Z
+content_hash: 14407dcf86fc6029eee329236e9e626d400d4541320d23a4ee48a3025883d92b
+purpose: console.cpp does Windows console allocation, input handling, game-output interception, colored display, history manag...
+---
+**console.cpp does Windows console allocation, input handling, game-output interception, colored display, history management, and file logging for Project Consolation.**
+
+## Exported Interface
+
+- `print(const int type, const char* fmt, ...)` formats variadic text with `format`, then routes it through `dispatch_message(type, result)` for console output, game-console storage, color selection, and logging.
+- `match_compare(const std::string& input, const std::string& text, const bool exact) -> bool` returns `true` when `exact` requires `text == input`, or when non-exact mode finds `input` as a substring of `text`.
+- `showDevConsole() -> void` sleeps for `500ms`, calls `game::Sys_ShowConsole()`, then pumps `GetMessageA`, `TranslateMessage`, and `DispatchMessageA` until the message loop ends.
+- `console::component final : component_interface` allocates/configures the Windows console in its constructor, installs hooks in `post_load()`, and tears down hooks/thread/handles in `pre_destroy()`.
+- `REGISTER_COMPONENT(console::component)` registers `console::component` with the loader component system.
+
+## Console Lifecycle
+
+- `component::component()` calls `AllocConsole()`, `AttachConsole(GetCurrentProcessId())`, redirects `stdin` to `CONIN$`, redirects `stdout`/`stderr` to `CONOUT$`, and initially hides `GetConsoleWindow()` with `SW_HIDE`.
+- `component::post_load()` creates `printf_hook` over `printf` and `com_printf_hook` over `game::game_offset(0x103F6400)`, shows the console, sets a versioned title, creates `con.kill_event`, and starts the named `"Console"` thread through `utils::thread::create_named_thread`.
+- `component::pre_destroy()` clears `printf_hook` and `com_printf_hook`, sets `con.kill`, signals `con.kill_event`, posts `WM_QUIT` to `con.thread_id`, cancels synchronous I/O, joins `con.thread`, hides/frees the console, closes `con.kill_event`, and resets `con.thread_id`.
+- `con.thread` waits on `STD_INPUT_HANDLE`, `con.kill_event`, and queued window messages through `MsgWaitForMultipleObjects(..., 100, QS_ALLINPUT)`.
+- `game_window_closed()` ignores missing windows before first observation, then treats a missing `*game::main_window` lasting more than `3s` as shutdown.
+- `con.thread` handles `WM_QUIT`, `WM_CLOSE`, and `WM_DESTROY` by enqueueing `game::Cbuf_AddText(0, "quit\n")`; other messages pass through `TranslateMessage` and `DispatchMessageA`.
+
+## Input State and Rendering
+
+- `con` stores `kill`, `thread`, `kill_event`, `thread_id`, a fixed `char buffer[512]`, `cursor`, `history_index`, and a `std::deque<std::string> history`.
+- `handle_input(INPUT_RECORD record)` handles resize events, key-down events, cursor movement, editing, command submission, and history navigation under `print_mutex`.
+- `VK_UP` and `VK_DOWN` navigate `con.history`, clamp `con.history_index` to `[-1, history.size()-1]`, copy selected entries into `con.buffer`, and refresh through `clear()`/`update()`.
+- `VK_LEFT` and `VK_RIGHT` clamp `con.cursor` to the current `strlen(con.buffer)` range; `VK_BACK` removes one byte with `std::memmove`; `VK_ESCAPE` clears the input buffer.
+- `VK_RETURN` removes a duplicated selected history entry, pushes non-empty input to the front, caps `con.history` at `10` entries, submits `utils::string::va("%s\n", con.buffer)` through `game::Cbuf_AddText(0, ...)`, logs `"]%s\n"`, prints `"]%s\r\n"`, and clears `con.buffer`.
+- `get_max_input_length() -> size_t` derives the input limit from the console window width and `sizeof(con.buffer)`; insertion is rejected when `strlen(con.buffer) + 1 >= get_max_input_length()`.
+- `update()` hides the cursor, rewrites `con.buffer` at position `0`, restores `con.cursor`, and shows the cursor; `clear_output()` overwrites the displayed input with spaces based on `strlen(con.buffer)`.
+- `handle_resize()` calls `clear()` followed by `update()`; `clear()` resets `con.buffer`, `con.cursor`, and the console cursor position.
+- `set_cursor_pos(int x)` and `show_cursor(bool show)` manipulate `CONSOLE_SCREEN_BUFFER_INFO` and `CONSOLE_CURSOR_INFO` on `OUTPUT_HANDLE`.
+- `get_attribute(int type) -> uint8_t` maps `con_type_info` to `7` (white), `con_type_warning` to `6` (yellow), `con_type_error` to `4` (red), and `con_type_debug` to `3` (cyan), defaulting to `7`.
+
+## Output Hooks and Classification
+
+- `printf_stub(const char* fmt, ...) -> int` formats through `format`, calls `write_log`, appends to `game_console::append_output`, forwards to `game::CL_ConsolePrint(0, 6, result.c_str(), 0, 0, 0)`, and returns the original `printf` status through `invoke_printf("%s", result.data())`.
+- `com_printf_stub(int channel, const char* fmt, ...) -> void` formats/logs game output, forwards the formatted string to the original `com_printf_hook`, classifies color prefixes and keyword substrings, applies suppression rules, and dispatches colored output.
+- `format(va_list* ap, const char* message) -> std::string` uses thread-local `char buffer[0x1000]` and `vsnprintf_s(buffer, _TRUNCATE, message, *ap)`; negative results return `{}` and successful results preserve the reported byte count.
+- `dispatch_message(int type, const std::string& message) -> int` logs unless `skip_dispatch_log`, appends through `game_console::append_output`, clears the input line, sets `get_attribute(type)`, prints `message`, restores info color, adds `"\n"` when needed, refreshes input, and returns the original print result.
+- `dispatch_split_debug_message(const std::string& message) -> int` logs `"debug:" + message`, appends only `message`, prints `"debug:"` in `con_type_error` color and the body in `con_type_warning` color, then restores `con_type_info`.
+- `com_printf_stub` recognizes `^1` as `con_type_error`, `^3` as `con_type_warning`, and `^5` as `con_type_debug`, stripping the two-byte prefix for display.
+- `error_substrings` forces `con_type_error` for `"Unable to"`, `"Couldn't reset"`, and `"nat type is Strict"`.
+- `warning_substrings` forces `con_type_warning` for `"Unable to"`, `"Missing asset"`, `"Couldn't find"`, `"Unknown command"`, `"is read only"`, `"is not a valid value"`, `"is write protected"`, `"already defined"`, `"Adding channel:"`, `"Hiding channel:"`, `"will use the shock"`, `"WARNING:"`, and `"nat type is Moderate"`.
+- `debug_substrings` forces `con_type_debug` for `"GamerProfile_LogInProfile took"`, `"connection status has changed"`, `"signed in to live"`, `"Reading profile"`, `"Loaded zone"`, `"Loading fastfile"`, `"nat type is Open"`, `"LOADING..."`, `"xuid"`, and `"execing"`.
+- `com_printf_stub` handles `"^1debug:^3 "` specially through `dispatch_split_debug_message(result.substr(10))`, with `skip_dispatch_log` preventing duplicate log writes.
+- `com_printf_stub` dispatches `"Velocity change:"` only when `game::Dvar_FindVar("g_debugVelocity")` exists and `current.enabled` is true.
+- `com_printf_stub` suppresses repeated `"XUserReadProfileSettings"` messages using static `xsignin`; the first occurrence emits `"Reading XUserProfileSettings"` and omits the original message when it contains `"took 0ms"`.
+
+## Logging and Version Contracts
+
+- `get_log_paths() -> std::vector<std::filesystem::path>` tries `current_path() / "consolation" / "console.log"`, `%LOCALAPPDATA%/Project-Consolation/console.log`, and `%TEMP%/Project-Consolation-console.log`, in that order.
+- `write_log(const std::string& message)` serializes initialization and appends through `utils::io::write_file`; the first writable path receives `"console: logging to %s\n"`, and messages without a trailing newline receive `"\n"`.
+- `write_log` uses `log_mutex`, `log_initialized`, and `log_path`; failure across all paths emits `OutputDebugStringA("console: failed to open console.log\n")` and disables further writes.
+- `skip_dispatch_log` is `thread_local`; `printf_stub` and direct command submission log independently, while `com_printf_stub` prevents duplicate dispatch logging.
+- `build_display_version() -> std::string` combines `VERSION_PRODUCT`, `VERSION_BUILD` (default `"0"`), the first seven characters of `GIT_HASH`, `"-dbg-"` under `DEBUG` or `"-nightly-"` otherwise, and `"-dirty"` when `GIT_DIRTY` is true.
+- `normalize_build_date(const char* raw_date) -> std::string` returns `{}` for null input and repeatedly collapses adjacent spaces via the exact search pattern `"  "` to normalize `__DATE__`.
+- `component::post_load()` formats the title as `"Project: Consolation [" + build_display_version() + " | " + normalize_build_date(__DATE__) + " " + __TIME__ + "] - Console"`.
+
+## Coupling and Synchronization
+
+- `printf_hook` and `com_printf_hook` depend on `utils::hook::detour`; `invoke_printf` falls back to `std::printf` when `printf_hook.get_original()` is unavailable.
+- `game_console::append_output`, `game::Cbuf_AddText`, `game::CL_ConsolePrint`, `game::Dvar_FindVar`, `game::main_window`, and `game::Sys_ShowConsole` form the game integration boundary.
+- `print_mutex` is recursive because `dispatch_message`, `clear_output`, and `update` nest console-rendering operations; `log_mutex` serializes lazy log-file initialization and writes.
+- `con.thread` and `con.kill_event` define shutdown signaling; `CancelSynchronousIo` handles a potentially blocked console read before `con.thread.join()`.

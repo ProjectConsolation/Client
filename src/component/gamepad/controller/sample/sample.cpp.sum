@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:22:38.403Z
+content_hash: 1f4cba39150794d527df9c702aa3067ad3bc30d42f0caba6df46546b8bf47003
+purpose: sample.cpp maps battery_state statuses to stable strings.
+---
+**sample.cpp maps battery_state statuses to stable strings.**
+
+## Interface
+
+`to_string(battery_state::status s) noexcept -> const char*` returns `"unknown"`, `"discharging"`, `"charging"`, or `"full"`; unknown values fall back to `"unknown"`.

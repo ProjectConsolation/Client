@@ -1,0 +1,11 @@
+---
+generated_at: 2026-08-31T15:22:29.676Z
+content_hash: 640095d3c46b27877b38c2458586afaba97460352aa67701f10374df1c0fcd9b
+purpose: axis.cpp maps sticks to labels and computes stick-vector magnitude.
+---
+**axis.cpp maps sticks to labels and computes stick-vector magnitude.**
+
+## Symbols
+
+- `to_string(stick s) noexcept -> const char*`: returns `"left"`/`"right"`; unknown values fall back to `"left"`.
+- `stick_vector::magnitude() const noexcept -> float`: computes `sqrt(x*x + y*y)` via `<cmath>`.

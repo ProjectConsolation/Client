@@ -1,0 +1,42 @@
+---
+generated_at: 2026-08-31T15:24:41.477Z
+content_hash: 3fa89073d1cc267dede0b4e9efe64ae6e2d02b25f077bd6b9573c44c99ff6c0f
+purpose: generate-linux.sh bootstraps and builds the Consolation Client with Wine, MSVC-Wine, Premake, and x86 MSBuild.
+---
+**generate-linux.sh bootstraps and builds the Consolation Client with Wine, MSVC-Wine, Premake, and x86 MSBuild.**
+
+## Interface
+
+- `usage` stores `Usage: $0 [-h|--help] [<options>] [<config>]`; `mn_ver`, `mn_url`, `mw_url`, `ca_dir`, `mi_dir`, `wn_dir`, `cfg`, `to`, and `cto` define toolchain versions, URLs, directories, build configuration, and network timeouts.
+- `fail()` restores `owd` with `cd "$owd" || true` and exits status `1`; `diag()` writes blank or variadic diagnostic text to stderr.
+- `error()` prefixes diagnostics with `error:` and invokes `fail()`; `run()` logs `+ $*`, executes `"$@"`, and exits through `fail()` on any nonzero status.
+- `check_cmd()` validates an executable via `command -v`, emits an optional installation hint, and terminates through `fail()` when missing.
+- `prompt()` loops until `yes` is `true`, accepting `y`, `Y`, or empty input; `n`/`N` invokes `fail()`, while other input retries.
+- `download(url, output?)` invokes `curl -fL --connect-timeout "$cto" --max-time "$to" --progress-bar` with `-o "$2"` or `-O`.
+- `check_env()` returns `1` when `force=true`, `$wn_dir` or `$mi_dir` is absent, or `$mi_dir/bin/x86/msbuild.exe` is absent; otherwise returns `0`.
+- `sys_deps()` detects `dnf`, `yum`, `apt`, or `pacman`, then installs Wine, Python, MSITools, certificates, Git, Curl, compiler tools, and platform-specific Winbind packages through `sudo`.
+- `wine_setup()` exports `WINEPREFIX="$wn_dir"` and `WINEDLLOVERRIDES="mscoree,mshtml="`, initializes `$wn_dir` with `wineboot --init`, downloads `/tmp/wine-mono-11.0.0-x86.msi`, and installs it through `msiexec /i ... /quiet`.
+- `msvc_setup()` clones or updates `https://github.com/mstorsjo/msvc-wine.git`, downloads MSVC with `python3 ./vsdownload.py --accept-license --cache "$ca_dir" --dest "$mi_dir"`, and runs `./install.sh "$mi_dir"`.
+- `gen_vscode()` creates `.vscode/c_cpp_properties.json` with MSVC/Windows SDK include paths, `cStandard: "c17"`, `cppStandard: "c++20"`, `intelliSenseMode: "windows-msvc-x86"`, and forced include `$owd/src/std_include.hpp`.
+- `gen_bbuild()` requires `tools/premake5.exe`, runs `wine tools/premake5.exe generate-buildinfo`, removes Premake `prebuildcommands` and `postbuildcommands` blocks using `sed '/^[[:space:]]*prebuildcommands/,/^[[:space:]]*}/d; /^[[:space:]]*postbuildcommands/,/^[[:space:]]*}/d'`, generates `premake5-linux.lua`, and deletes it.
+- `compile()` requires `build/consolation-client.sln`, invokes `$mi_dir/bin/x86/msbuild.exe` with `/p:Configuration=$cfg /p:Platform=Win32`, and adds `/verbosity:detailed` when `verb=true`.
+- `sync_submodules()` runs `git submodule sync --recursive` and `git submodule update --init --recursive` unless `submods` is empty.
+- `print_summary()` reports `$cfg`, `$owd/build/consolation-client.sln`, and `$owd/build/bin/$cfg/`.
+- `build()` performs the confirmed fast path: `sync_submodules`, `gen_vscode`, `gen_bbuild`, `compile`, and `print_summary`.
+- `bootstrap()` optionally removes `build/`, `msvc-wine/`, `$wn_dir`, `$mi_dir`, and `/tmp/wine-mono-*.msi`, installs dependencies, validates commands, runs setup/generation/build stages, and prints the rebuild command.
+- `main()` selects `build()` when `check_env()` succeeds; otherwise selects `bootstrap()`.
+
+## CLI Contract
+
+- `--yes`, `--clean`, `--no-deps`, `--no-submodules`, `--force`, and `--verbose` set `yes`, `clean`, `deps`, `submods`, `force`, and `verb`.
+- `--cache-dir <dir>`, `--msvc-dir <dir>`, `--wine-dir <dir>`, and `--timeout <sec>` override `ca_dir`, `mi_dir`, `wn_dir`, and `to`; missing values produce `error`.
+- A single positional `bcfg` accepts `debug|Debug` or `release|Release`, normalizing `cfg` to `Debug` or `Release`; options must precede `bcfg`.
+- `-h|--help` exits `0`; unknown options emit `error: unknown option '$1'`; invalid configurations emit `error: invalid build configuration '$bcfg' (expected debug or release)`.
+- `verb=true` enables shell tracing with `set -x`; `to=300` and `cto=30` control Curl total and connect timeouts.
+
+## Operational Constraints
+
+- `clean=true` triggers destructive `run rm -rf`; `prompt()` gates both `build()` and `bootstrap()` unless `--yes` is supplied.
+- `sys_deps()` fails when no package manager matches `dnf`, `yum`, `apt`, or `pacman`; `check_cmd()` requires `wine`, `git`, `curl`, `python3`, and `msiexec`.
+- `gen_vscode()` discovers versions with `sort -V`, defaulting MSVC `14.44.35207` and SDK `10.0.26100.0`; `compile()` targets Win32 only.
+- `main()` executes automatically at script end; `owd` and `prog` preserve the launch directory and script path across directory changes.

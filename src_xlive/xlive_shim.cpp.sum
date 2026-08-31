@@ -1,0 +1,154 @@
+---
+generated_at: 2026-08-31T15:25:20.947Z
+content_hash: 06fca2085a700571c8778b01de7321c446fec2a4a9cb599f1a5ba777c0655aa1
+purpose: xlive_shim.cpp emulates the Windows LIVE/XLive API with Winsock forwarding, offline identity, local profile settings,...
+---
+**xlive_shim.cpp emulates the Windows LIVE/XLive API with Winsock forwarding, offline identity, local profile settings, title storage, and synchronous overlapped-operation stubs.**
+
+## Role and architecture
+
+`xlive_shim.cpp` implements an `extern "C"`/`WINAPI` compatibility layer for a game DLL, forwarding socket calls to Winsock while replacing Xbox LIVE services with deterministic offline behavior.
+
+`qos_module()`, `qos_address<T>()`, and `find_dvar()` optionally inspect `jb_mp_s.dll` using fixed IDA addresses `qos_base = 0x10000000`, `dvar_hash_table_addr = 0x1149FCE0`, and `generate_hash_value_addr = 0x10275260`.
+
+`offline_name()` resolves the identity from the in-process `name` dvar (`type == 7`), command-line `name`, `+name`, `-name`, `-set name value`, or `-seta name value`, falling back to `"Player"`.
+
+`offline_xuid()` applies 64-bit FNV-1a hashing with offset basis `1469598103934665603ull` and prime `1099511628211ull`, then returns `0x1100001000000000ull | (hash & 0x0000FFFFFFFFFFFFull)`.
+
+`storage_root()` stores state beside the executable in `storage`, falling back to `current_path()/storage` when `GetModuleFileNameW` fails or truncates its 32768-character buffer.
+
+`offline_profile_root()` resolves to `storage/profiles/<16-digit-uppercase-hex-XUID>`; `profile_setting_path()` resolves to `settings/<8-digit-title-ID>/<8-digit-setting-ID>.bin`, substituting `qos_title_id = 0x41560829` when `title_id == 0`.
+
+`title_storage_path()` strips case-insensitive `offline://`, splits the first `/` into facility and item, defaults facility to `"3"`, and maps files beneath `title_storage/<sanitized-facility>/<sanitized-item>`.
+
+`sanitize_storage_name()` replaces control characters and `<>:"/\\|?*` with `_`, and changes empty, `"."`, or `".."` names to `"unnamed"`.
+
+`read_file()` and `write_file()` implement binary local persistence; `write_file()` creates parent directories and truncates existing files.
+
+`import_legacy_qos_profile()` performs a one-time scan of `%LOCALAPPDATA%\Microsoft\Xlive\Content` for `41560829.gpd`, validates little-endian `FBDX`/XDBF tables, and imports namespace-3 setting payloads only when destination files do not exist.
+
+`complete_overlapped()` writes `internal_low`, `internal_high`, and `extended_error`, signals `event`, and invokes `completion_routine`; `finish_operation()` returns `ERROR_IO_PENDING` when an `xoverlapped*` exists, otherwise the supplied error.
+
+`inert_success()` and `inert_not_found()` complete optional `xoverlapped` structures with `ERROR_SUCCESS` or `ERROR_NOT_FOUND`.
+
+## Internal ABI structures and constants
+
+`XUID` aliases `unsigned long long`; `xoverlapped`, `xsession_info`, `xstorage_download_results`, `xuser_data`, `xuser_profile_setting`, `xuser_read_profile_setting_result`, and `xuser_signin_info` mirror expected XLive memory layouts.
+
+`xuser_data` uses type tags `1` int32, `2` int64, `3` double, `4` Unicode, `5` float, `6` binary, `7` FILETIME, and `0xFF` null.
+
+`xuser_profile_setting` uses `xsource_no_value = 0` and `xsource_title = 2`; `xuser_read_profile_setting_result` stores an inline array of settings followed by variable-sized Unicode/binary payloads.
+
+`xstorage_download_results` returns `bytes_total`, `xuid_owner`, and current `FILETIME created`.
+
+`xuser_signin_info` uses `signed_in_to_live = 2`, `info_flags = 1`, and a 16-byte `user_name`.
+
+`xonline_e_storage_file_not_found = 0x8015C004`, `xonline_e_storage_file_is_too_big = 0x8015C003`, `ERROR_INSUFFICIENT_BUFFER`, `ERROR_INVALID_PARAMETER`, `ERROR_NO_MORE_FILES`, `ERROR_NOT_FOUND`, and `ERROR_WRITE_FAULT` are observable result codes.
+
+## Exported Winsock bridge
+
+- `int WINAPI xlive_XWSAStartup(WORD version, WSADATA* data)` forwards to `WSAStartup`.
+- `SOCKET WINAPI xlive_XSocketCreate(int af, int type, int protocol)` forwards to `socket`.
+- `int WINAPI xlive_XSocketClose(SOCKET socket_handle)` forwards to `closesocket`.
+- `int WINAPI xlive_XSocketIOCTLSocket(SOCKET socket_handle, long cmd, u_long* argp)` forwards to `ioctlsocket`.
+- `int WINAPI xlive_XSocketSetSockOpt(SOCKET socket_handle, int level, int optname, const char* optval, int optlen)` forwards to `setsockopt`.
+- `int WINAPI xlive_XSocketBind(SOCKET socket_handle, const sockaddr* name, int namelen)` forwards to `bind`.
+- `int WINAPI xlive_XSocketRecvFrom(SOCKET socket_handle, char* buffer, int len, int flags, sockaddr* from, int* fromlen)` forwards to `recvfrom`.
+- `int WINAPI xlive_XSocketSendTo(SOCKET socket_handle, const char* buffer, int len, int flags, const sockaddr* to, int tolen)` forwards to `sendto`.
+- `unsigned long WINAPI xlive_XSocketInet_Addr(const char* cp)` forwards to `inet_addr`.
+- `int WINAPI xlive_XWSAGetLastError()` returns `WSAGetLastError`.
+- `unsigned short WINAPI xlive_XSocketHTONS(unsigned short hostshort)` forwards to `htons`.
+
+## Exported networking and notification stubs
+
+- `DWORD WINAPI xlive_XNetStartup(void*)` returns `ERROR_SUCCESS`.
+- `DWORD WINAPI xlive_XNetXnAddrToInAddr(const void*, const void*, IN_ADDR* in_addr)` writes loopback `INADDR_LOOPBACK` when `in_addr` is non-null.
+- `DWORD WINAPI xlive_XNetInAddrToXnAddr(IN_ADDR in_addr, void* xn_addr, void*)` copies at most 36 bytes into `xn_addr`.
+- `DWORD WINAPI xlive_XNetConnect(const void*)` returns success.
+- `DWORD WINAPI xlive_XNetGetConnectStatus(const void*)` returns `1`.
+- `DWORD WINAPI xlive_XNetQosListen(const void*, const void*, DWORD, DWORD, DWORD)` returns success.
+- `DWORD WINAPI xlive_XNetQosLookup(DWORD, const void*, const void*, const void*, DWORD, DWORD, DWORD, DWORD, DWORD, void**)` returns success without allocating results.
+- `DWORD WINAPI xlive_XNetQosServiceLookup(DWORD, DWORD, void**)` returns success without allocating results.
+- `void WINAPI xlive_XNetQosRelease(void*)` performs no action.
+- `DWORD WINAPI xlive_XNetGetTitleXnAddr(void* addr)` zeroes 36 bytes when `addr` is non-null.
+- `DWORD WINAPI xlive_XNetGetEthernetLinkStatus()` returns `1`.
+- `DWORD WINAPI xlive_XNetSetSystemLinkPort(WORD)` returns success.
+- `DWORD WINAPI xlive_XNotifyGetNext(HANDLE, DWORD, DWORD*, ULONG_PTR*)` returns `0`, indicating no notification.
+- `DWORD WINAPI xlive_XNotifyPositionUI(DWORD)` returns success.
+- `DWORD WINAPI xlive_XGetOverlappedExtendedError(xoverlapped* overlapped)` returns `extended_error`, or success for null.
+- `DWORD WINAPI xlive_XGetOverlappedResult(xoverlapped* overlapped, DWORD* result, BOOL wait)` optionally waits on `event`, writes `internal_high` to `result`, and returns `extended_error`.
+- `HANDLE WINAPI xlive_XNotifyCreateListener(ULONGLONG, DWORD)` creates an auto-reset, initially nonsignaled event.
+
+## Exported rendering, protected-data, and UI stubs
+
+- `DWORD WINAPI xlive_XLiveInput(void*)`, `DWORD WINAPI xlive_XLiveRender()`, `DWORD WINAPI xlive_XLiveOnCreateDevice(void*, void*)`, `DWORD WINAPI xlive_XLiveOnDestroyDevice()`, and `DWORD WINAPI xlive_XLiveOnResetDevice(void*)` return success.
+- `DWORD WINAPI xlive_XHVCreateEngine(void*, void*, void*)` returns success without creating an engine.
+- `BOOL WINAPI xlive_XLivePreTranslateMessage(const MSG*)` always returns `FALSE`.
+- `DWORD WINAPI xlive_XLiveCreateProtectedDataContext(void*, HANDLE* handle)` writes sentinel handle `reinterpret_cast<HANDLE>(1)` when `handle` is non-null.
+- `DWORD WINAPI xlive_XLiveQueryProtectedDataInformation(HANDLE, void*)` and `DWORD WINAPI xlive_XLiveCloseProtectedDataContext(HANDLE)` return success.
+- `DWORD WINAPI xlive_XShowGuideUI(DWORD)`, `DWORD WINAPI xlive_XShowGamerCardUI(DWORD, XUID, DWORD)`, `DWORD WINAPI xlive_XShowSigninUI(DWORD, DWORD)`, and `DWORD WINAPI xlive_XShowFriendsUI(DWORD)` return success.
+- `DWORD WINAPI xlive_XCancelOverlapped(xoverlapped* overlapped)` completes `overlapped` successfully and returns success.
+- `DWORD WINAPI xlive_XEnumerate(HANDLE, void*, DWORD, DWORD* returned, xoverlapped* overlapped)` writes zero to `returned`, completes successfully, and returns `ERROR_NO_MORE_FILES`.
+
+## Exported user, stats, and profile APIs
+
+- `DWORD WINAPI xlive_XUserGetXUID(DWORD user_index, XUID* xuid)` accepts only user index `0` and non-null `xuid`, then returns `offline_xuid()`.
+- `DWORD WINAPI xlive_XUserGetSigninState(DWORD user_index)` returns `signed_in_to_live` for user `0`, otherwise `0`.
+- `DWORD WINAPI xlive_XUserGetName(DWORD user_index, char* user_name, DWORD user_name_chars)` validates index, buffer, and nonzero capacity, then truncating-copies `offline_name()`.
+- `DWORD WINAPI xlive_XUserAreUsersFriends(DWORD, const XUID*, DWORD, void*, xoverlapped* overlapped)` completes with `ERROR_NOT_FOUND`.
+- `DWORD WINAPI xlive_XUserCheckPrivilege(DWORD, DWORD, BOOL* allowed)` writes `TRUE` when `allowed` is non-null and returns success.
+- `DWORD WINAPI xlive_XUserGetSigninInfo(DWORD user_index, DWORD, xuser_signin_info* info)` validates user `0`, zeroes `info`, and fills XUID, flags, sign-in state, and truncated name.
+- `DWORD WINAPI xlive_XUserSetProperty(DWORD, DWORD, DWORD, const void*)` and `DWORD WINAPI xlive_XUserSetContext(DWORD, DWORD, DWORD)` return success without storing state.
+- `DWORD WINAPI xlive_XUserWriteAchievements(DWORD, void*, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XUserReadStats(DWORD, XUID*, DWORD, DWORD, void*, DWORD, void*, xoverlapped* overlapped)` completes with `ERROR_NOT_FOUND`.
+- `HANDLE WINAPI xlive_XUserCreateStatsEnumeratorByRank(DWORD, DWORD, DWORD, DWORD, DWORD, DWORD*)` sets last error to `ERROR_NO_MORE_FILES` and returns `INVALID_HANDLE_VALUE`.
+- `HANDLE WINAPI xlive_XUserCreateStatsEnumeratorByXuid(XUID, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD*)` has the same empty-enumerator behavior.
+- `DWORD WINAPI xlive_XUserResetStatsView(DWORD, DWORD, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XUserSetContextEx(DWORD, DWORD, DWORD, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XLivePBufferGetByteArray(void*, DWORD, BYTE* values, DWORD size)` zeroes `values` when non-null.
+- `DWORD WINAPI xlive_XLivePBufferSetByteArray(void*, DWORD, BYTE*, DWORD)` ignores input and returns success.
+- `DWORD WINAPI xlive_XUserMuteListQuery(DWORD, XUID, BOOL* muted, xoverlapped* overlapped)` writes `FALSE` when `muted` is non-null and completes successfully.
+- `DWORD WINAPI xlive_XInviteGetAcceptedInfo(DWORD, void*)` returns `ERROR_NOT_FOUND`.
+
+`serialize_profile_value(const xuser_data&)` persists fixed-width scalar, Unicode, binary, and FILETIME payload bytes; null, unsupported, or zero-length data serializes to an empty vector.
+
+`DWORD WINAPI xlive_XUserReadProfileSettings(DWORD title_id, DWORD user_index, DWORD setting_count, const DWORD* setting_ids, DWORD* result_size, xuser_read_profile_setting_result* result, xoverlapped* overlapped)` imports legacy GPD data once, computes the required packed result size, returns `ERROR_INSUFFICIENT_BUFFER` with the required size when needed, emits null settings for missing files, and copies supported values into the caller’s inline buffer.
+
+`DWORD WINAPI xlive_XUserWriteProfileSettings(DWORD user_index, DWORD setting_count, const xuser_profile_setting* settings, xoverlapped* overlapped)` accepts only user `0`, writes each serialized setting under `qos_title_id`, returns `ERROR_WRITE_FAULT` on persistence failure, and otherwise completes successfully.
+
+## Exported session APIs
+
+- `DWORD WINAPI xlive_XSessionCreate(DWORD, DWORD, DWORD, DWORD, ULONGLONG* nonce, xsession_info* info, xoverlapped* overlapped, HANDLE* handle)` sets `nonce` to `offline_xuid()`, fills `info` via `make_session_info`, creates an event handle, and completes successfully.
+- `DWORD WINAPI xlive_XStringVerify(DWORD, const char*, DWORD, const void*, DWORD, void*, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionWriteStats(HANDLE, XUID, DWORD, const void*, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionStart(HANDLE, DWORD, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionSearchEx(DWORD, DWORD, DWORD, DWORD, WORD, WORD, const void*, const void*, DWORD*, void*, xoverlapped* overlapped)` completes with `ERROR_NOT_FOUND`.
+- `DWORD WINAPI xlive_XSessionModify(HANDLE, DWORD, DWORD, DWORD, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionMigrateHost(HANDLE, DWORD, xsession_info* info, xoverlapped* overlapped)` regenerates session info and completes successfully.
+- `DWORD WINAPI xlive_XOnlineGetNatType()` returns `1`.
+- `DWORD WINAPI xlive_XSessionJoinRemote(HANDLE, DWORD, const XUID*, const BOOL*, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionDelete(HANDLE handle, xoverlapped* overlapped)` closes valid non-`INVALID_HANDLE_VALUE` handles and completes successfully.
+- `DWORD WINAPI xlive_XSessionEnd(HANDLE, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionArbitrationRegister(HANDLE, DWORD, ULONGLONG, DWORD*, void*, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionLeaveRemote(HANDLE, DWORD, const XUID*, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionModifySkill(HANDLE, DWORD, const XUID*, xoverlapped* overlapped)` completes successfully.
+- `DWORD WINAPI xlive_XSessionCalculateSkill(DWORD, double*, double*, double*, double*)` returns success without modifying skill values.
+
+## Exported title-storage APIs
+
+- `DWORD WINAPI xlive_XStorageUploadFromMemory(DWORD user_index, const wchar_t* server_path, DWORD buffer_size, const BYTE* buffer, xoverlapped* overlapped)` validates user/path/buffer, writes to `title_storage_path(server_path)`, and reports `bytes = buffer_size` on success.
+- `HANDLE WINAPI xlive_XFriendsCreateEnumerator(DWORD, DWORD, DWORD, DWORD, DWORD*)` sets last error to `ERROR_NO_MORE_FILES` and returns `INVALID_HANDLE_VALUE`.
+- `DWORD WINAPI xlive_XStorageBuildServerPath(DWORD user_index, DWORD facility, const void*, DWORD, const wchar_t* item_name, wchar_t* server_path, DWORD* server_path_chars)` builds `offline://<facility>/<sanitized-item>`, requires user `0`, reports required UTF-16 count including NUL, and returns `ERROR_INSUFFICIENT_BUFFER` for missing or undersized output.
+- `DWORD WINAPI xlive_XStorageDownloadToMemory(DWORD user_index, const wchar_t* server_path, DWORD buffer_size, BYTE* buffer, DWORD result_size, xstorage_download_results* results, xoverlapped* overlapped)` validates inputs, returns `0x8015C004` for missing files, `0x8015C003` for oversized files, copies bytes, and optionally fills ownership/time metadata.
+
+## Compatibility and maintenance constraints
+
+`xlive_shim.cpp` requires Windows headers, Winsock2, `shellapi`, filesystem support, and a 64-bit-compatible ABI matching the consumer’s expected XLive structures.
+
+`xoverlapped` callbacks and events are completed immediately, although APIs with an overlapped argument commonly return `ERROR_IO_PENDING`; callers must inspect `xlive_XGetOverlappedResult` or `xlive_XGetOverlappedExtendedError`.
+
+`xlive_XUserReadProfileSettings` and `xlive_XStorageDownloadToMemory` assume caller-provided buffers satisfy the reported sizes; malformed legacy GPD offsets are guarded before dereference.
+
+`xlive_XSessionDelete` owns and closes session handles returned by `xlive_XSessionCreate`; `xlive_XNotifyCreateListener` and session creation create Win32 event handles that callers must release through the surrounding lifecycle.
+
+`xlive_XUserWriteProfileSettings` always writes profile settings under `qos_title_id`, while `xlive_XUserReadProfileSettings` accepts a title ID and uses `qos_title_id` only when the supplied title ID is zero.

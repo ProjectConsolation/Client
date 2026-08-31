@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:22:34.328Z
+content_hash: 5a8bc34ba655253d065d1609d311aea2e2a9fd2cb5fc162bda732d6ac25934ea
+purpose: logical.hpp defines gamepad logical actions and their engine-command mapping.
+---
+**logical.hpp defines gamepad logical actions and their engine-command mapping.**
+
+## API
+
+`gamepad::unstable::controller::mapping::action` is a `uint8_t` enum: `none`, `fire`, `ads`, `jump_stand`, `stance`, `melee`, `use_reload`, `sprint`, `next_weapon`, `frag`, `special_grenade`, `menu`, `scoreboard`, `action_slot_1`–`action_slot_4`.
+
+`to_string(action) noexcept` returns an action label.
+
+`command(action) noexcept` returns engine commands such as `"+attack"` and `"weapnext"`, or `""` for `action::none`.
+
+## Contracts
+
+`scoreboard` maps to `"+scores"`; `"+scores"` is bindable, while `togglescores` resolves unbound and is dropped.
+
+## Dependencies
+
+`types.hpp` supplies `uint8_t`; `utility.hpp` supplies shared mapping support.

@@ -1,0 +1,24 @@
+---
+generated_at: 2026-08-31T15:24:02.081Z
+content_hash: a5af600511144ae0a722df3825629db8ea667522ed3485186a3eac83a99d6c69
+purpose: string.cpp implements `utils::string` formatting, case conversion, matching, encoding, timestamp, hex-dump, and clipb...
+---
+**string.cpp implements `utils::string` formatting, case conversion, matching, encoding, timestamp, hex-dump, and clipboard helpers.**
+
+## Exports
+
+- `va(const char* fmt, ...) -> const char*` formats variadic input through thread-local `va_provider<8, 256>`.
+- `to_lower(std::string text) -> std::string` applies locale-dependent `std::tolower`.
+- `to_upper(std::string text) -> std::string` applies locale-dependent `std::toupper`.
+- `starts_with(const std::string& text, const std::string& substring) -> bool` checks prefix position zero.
+- `ends_with(const std::string& text, const std::string& substring) -> bool` checks reverse suffix equality.
+- `string_contains(const std::string_view& s1, std::string_view s2) -> bool` tests `std::string_view::find`.
+- `convert(const std::string& str) -> std::wstring` widens each byte via `static_cast<wchar_t>`.
+- `dump_hex(const std::string& data, const std::string& separator) -> std::string` emits uppercase `%02X` bytes joined by `separator`.
+- `get_timestamp() -> std::string` emits `%Y-%m-%d-%H-%M-%S` using `_localtime64_s`.
+- `match_compare(const std::string& input, const std::string& text, bool exact) -> bool` selects equality or substring matching.
+- `get_clipboard_data() -> std::string` reads Win32 clipboard format `1u`, returning `{}` on failure.
+
+## Contracts
+
+`va` uses `thread_local va_provider<8, 256>`; `dump_hex` masks bytes with `& 0xFF`; `get_timestamp` uses `MAX_PATH`; `get_clipboard_data` requires successful `OpenClipboard`, `GetClipboardData(1u)`, and `GlobalLock`.

@@ -1,0 +1,26 @@
+---
+generated_at: 2026-08-31T15:21:54.409Z
+content_hash: 4bd4fb3350a0de5b4acd67c9d4cfb0407ff6fff44e66b8786f5920eda30ed1e0
+purpose: bind.hpp bridges the controller binding model with the engine’s authoritative bind table.
+---
+**bind.hpp bridges the controller binding model with the engine’s authoritative bind table.**
+
+## Interface
+
+- `bind_bridge(const context&, const dvars&)` stores `context` and `dvars` references.
+- `bind_bridge::apply_layout(string_view name) -> void` writes a named layout; unknown names, including `"custom"`, select defaults without changing `gpad_buttonConfig`.
+- `bind_bridge::apply_configured_layout() -> void` applies `gpad_buttonConfig`; `"custom"` preserves player bindings during startup restoration.
+- `bind_bridge::reapply_layout() -> void` reapplies the layout named by `gpad_buttonConfig`, including controls-reset flow through `bindgpbuttonsconfigs`.
+- `bind_bridge::note_manual_rebind() noexcept -> void` marks bindings as no longer represented by a named layout.
+- `bind_bridge::command_keys(int client, bool controller_in_use, const char* command, int (&keys_out)[2]) noexcept -> size_t` returns up to two matching keynums, `-1` padded, restricted to the active input-source half of the 256-key space.
+- `controller_command_for(const char* command) noexcept -> const char*` maps keyboard commands to controller-equivalent commands.
+
+## Binding Semantics
+
+`bind_bridge` isolates engine keynum lookup from the subsystem layout model, with the engine bind table authoritative; `command_keys` avoids engine-wide first-match behavior that could select a mouse binding before a controller binding.
+
+`migrate_controller_commands()` rewrites legacy controller binds to merged commands: `+activate`/`+reload` → `+usereload`, and `+melee_breath` → `+holdbreath`; the rewrite is idempotent and fixes custom-config gameplay/menu mismatches.
+
+## Dependencies
+
+`types.hpp` supplies `string_view`; `utility.hpp`, `context.hpp`, and `dvar.hpp` support controller types, engine context, and dvar access.

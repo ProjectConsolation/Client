@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:21:32.091Z
+content_hash: e8bcbaa68c403ed72fff51cffe3eee9967958569a57cd865b31c7ff12ade2d11
+purpose: filter.cpp implements frame-time-independent `gamepad::unstable::controller::aim::low_pass` smoothing.
+---
+**filter.cpp implements frame-time-independent `gamepad::unstable::controller::aim::low_pass` smoothing.**
+
+## Interface
+
+`low_pass::low_pass(seconds time_constant) noexcept` stores `tau_`; `float low_pass::apply(float target, seconds dt) noexcept` returns filtered output; `void low_pass::reset(float value) noexcept` primes `state_`; `void low_pass::reset() noexcept` clears `primed_`.
+
+## Behavior
+
+`apply` bypasses smoothing when `tau_ <= 0`, adopts `target` on the first sample, then computes `alpha = clamp(1 - exp(-dt/tau), 0, 1)` and updates `state_`; `<cmath>` supplies `exp`, `<algorithm>` supplies `clamp`.

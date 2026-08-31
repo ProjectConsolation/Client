@@ -1,0 +1,38 @@
+---
+generated_at: 2026-08-31T15:21:54.292Z
+content_hash: 20aa4fb7770da11010e308faddfa6fbf319d6673d1f08ff57063a9e22b12b673
+purpose: store.cpp persists and restores validated gamepad controller calibration profiles in deterministic `.cal` files.
+---
+**store.cpp persists and restores validated gamepad controller calibration profiles in deterministic `.cal` files.**
+
+## Interface
+
+- `store::store(const context& ctx, path directory)` stores `ctx_` and moves `directory` into `dir_`.
+- `store::file_for(controller::family family, optional<uint64_t> device_key) const -> path` maps profiles to `controller-<family>.cal` or `controller-<family>-<16-digit lowercase hex key>.cal`.
+- `store::save(const profile& p) const -> bool` validates and serializes `p`, returning stream success.
+- `store::load(controller::family family, optional<uint64_t> device_key) const -> optional<profile>` parses, validates, identity-checks, and returns a profile or `nullopt`.
+
+## File Format
+
+- `magic` is the exact header token `"gamepad-controller-calibration"`; the first line is `<magic> <version>`.
+- `save` emits `family <int>`, `source <int>`, and `device_key <0|1> <uint64_t>`.
+- `save` emits `stick <index> <center_x> <center_y> <range_x> <range_y> <drift_threshold>` for every `stick_count` entry.
+- `save` emits `trigger <index> <min> <max>` for every `trigger_count` entry.
+- `save` emits `motion <gyro_bias.x> <gyro_bias.y> <gyro_bias.z> <accel_bias.x> <accel_bias.y> <accel_bias.z> <gyro_scale> <accel_scale>`.
+- `save` terminates with `smoothing <value>` and sets stream precision to `9` for exact `float` round trips.
+
+## Validation and Errors
+
+- `save` calls `validate(const profile&, string&)`; invalid profiles report `errc::calibration_invalid` at `severity::warning` through `ctx_.report` and return `false`.
+- `save` calls `filesystem::create_directories(dir_, ec)` best-effort, while file-open failure reports `errc::transport_failure`.
+- `load` treats a missing file as `nullopt` without reporting an error.
+- `load` rejects malformed input through its `reject` lambda, reporting `errc::calibration_invalid` with messages including `"bad header"`, `"unsupported version"`, `"bad family"`, `"bad source"`, `"bad device key"`, `"bad stick record"`, `"bad trigger record"`, `"bad motion record"`, `"bad smoothing record"`, and `"family or device key mismatch"`.
+- `load` accepts versions `1..profile::current_version`; `version == 0` and newer versions are rejected.
+- `family_max` range-checks serialized values before casting to `controller::family`, while `source_max` performs the same boundary check for `value_source`.
+- `load` requires sequential stick and trigger indices, matching `stick_count` and `trigger_count`, then calls `validate` before returning `p`.
+
+## Coupling and Safety
+
+- `store::save` depends on `validate`, `profile`, `stick_calibration`, `trigger_calibration`, `controller::family`, `value_source`, `context`, `severity`, `facility::calibration`, and calibration `errc` values.
+- `store::load` compares `p.family` and `p.device_key` with requested `family` and `device_key`, preventing cross-device calibration application.
+- `dir_` is the sole storage root, and `std::ofstream` truncates existing profile files during `save`.

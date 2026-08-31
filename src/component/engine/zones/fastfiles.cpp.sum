@@ -1,0 +1,54 @@
+---
+generated_at: 2026-08-31T15:23:31.080Z
+content_hash: c1e9ba9d29b4e6f77fbfaba4aa97ca68170c6a5736830899bef09f4be2314929
+purpose: fastfiles.cpp hooks asset linking and file I/O to support fastfile/Scaleform overrides, diagnostics, deferred patch-z...
+---
+**fastfiles.cpp hooks asset linking and file I/O to support fastfile/Scaleform overrides, diagnostics, deferred patch-zone loading, and asset enumeration.**
+
+## Public Interface
+
+- `enum_assets(const game::XAssetType type, const std::function<void(game::XAssetHeader)>& callback, const bool include_override)` delegates to `game::DB_EnumXAssets_FastFile`, adapting its `(game::XAssetHeader, void*)` callback ABI to `std::function<void(game::XAssetHeader)>`; `include_override` controls override-asset inclusion.
+- `component final : public component_interface` registers runtime hooks through `post_load()`.
+- `component::post_load()` detours Win32 `CreateFileA` and `game::DB_LinkXAssetEntry`, then schedules deferred patch loading on `scheduler::main` after `250ms`.
+
+## File Resolution and I/O Overrides
+
+- `create_file_a_stub(const LPCSTR file_name, const DWORD desired_access, const DWORD share_mode, const LPSECURITY_ATTRIBUTES security_attributes, const DWORD creation_disposition, const DWORD flags_and_attributes, const HANDLE template_file)` preserves the original `CreateFileA` ABI, redirects qualifying Scaleform reads, then retries missing zone fastfiles from fallback roots.
+- `is_read_open_request(const DWORD desired_access, const DWORD creation_disposition)` accepts reads when `desired_access & (GENERIC_READ | FILE_GENERIC_READ) != 0` and `creation_disposition` is `OPEN_EXISTING` or `OPEN_ALWAYS`.
+- `is_scaleform_file_path(const char* file_name)` normalizes `/` to `\` and matches `.gfx`/`.swf` paths containing `\scaleform\` or `\ui_mp\`.
+- `is_zone_fastfile_path(const char* file_name)` normalizes `/` to `\` and matches case-insensitive `.ff` paths containing `\zone\`.
+- `find_scaleform_file(const char* file_name)` searches only the basename under `consolation/ui_mp/scaleform` in host-module, executable, and current-working-directory roots.
+- `find_zone_file(const std::string& zone_file_name)` searches direct and recursive files under six roots, comparing filenames with `_stricmp`.
+- `zone_lookup_roots()` returns `{host/zone, host/consolation/zone, exe/zone, exe/consolation/zone, cwd/zone, cwd/consolation/zone}`.
+- `scaleform_lookup_roots()` returns `{host/consolation/ui_mp/scaleform, exe/consolation/ui_mp/scaleform, cwd/consolation/ui_mp/scaleform}`.
+- `create_file_a_stub` logs `^5Opening Scaleform file %s\n` and `^5Loading Scaleform override %s\n`; failed zone fallback restores the original `GetLastError()` via `SetLastError`.
+
+## Asset-Linking Diagnostics and Normalization
+
+- `db_link_xasset_entry_stub(game::XAssetEntry* entry, const int allow_override)` normalizes rawfile names before invoking `db_link_xasset_entry_hook`, tracks source/linked zones, and logs Scaleform or `debug_xasset` asset-link records.
+- `normalize_rawfile_name(game::XAssetEntry* entry)` converts backslashes to slashes for `game::ASSET_TYPE_RAWFILE` names, storing up to `1024` normalized names in `normalized_rawfile_names[1024][256]`; each name is copied with `strncpy_s(..., _TRUNCATE)` and the ring index is `normalized_rawfile_name_index++ % 1024`.
+- `is_scaleform_asset_name(const char* asset_name)` lowercases slash-normalized names and matches `.gfx`, `.swf`, `scaleform`, `mpsysmodeselect`, `mpxbplaylistselect`, `cmsharedplatform`, `gfxfontlib`, `pcsharedlibrary`, or `cmsharedlibrary`.
+- `get_asset_name(const game::XAssetEntry* entry)` returns `"<null>"` for absent data, `"<invalid>"` for out-of-range `asset.type`, `"<unnamed>"` for empty names, or `game::DB_GetXAssetName` output.
+- `get_asset_zone_index(const game::XAssetEntry* entry)` returns `entry->zoneIndex` cast to `unsigned char`, or sentinel `0`.
+- `get_zone_name(const unsigned char zone_index)` and `get_zone_flags(const unsigned char zone_index)` index the `game::XZone` table at `game::game_offset(0x10AB8188)`; `get_zone_name` returns `"<none>"` for an empty zone name.
+- `debug_xasset()` enables verbose logging only when `utils::flags::has_flag("debug_xasset")` is true.
+- `print_zone_list(const char* prefix, const game::XZoneInfo* zone_info, const int zone_count, const int sync)` emits `zoneCount`, `sync`, zone names, `allocFlags`, and `freeFlags` only under `debug_xasset`.
+- `print_zone_load_state(const char* action, const std::vector<game::XZoneInfo>& zones)` logs `Loading fastfile '%s'\n` for debug loading and `"%s zone '%s'\n"` otherwise.
+- `zone_name_equals(const char* lhs, const char* rhs)` performs null-safe case-insensitive comparison with `_stricmp`; `ends_with_ignore_case(const std::string& value, const std::string& suffix)` performs case-insensitive suffix matching.
+
+## Deferred Patch Fastfiles
+
+- `common_fastfiles_seen`, `patch_mp_loaded`, and `patch_consolation_loaded` become true when incoming or linked assets originate from `common_mp`, `patch_mp`, or `patch_consolation`.
+- `patch_mp_attempted` and `patch_consolation_attempted` enforce one loading attempt per process after `common_fastfiles_seen`.
+- `make_override_zone(const char* zone_name)` creates `game::XZoneInfo` with `name = zone_name`, `allocFlags = 0x11`, and `freeFlags = 0`.
+- `zone_file_exists(const char* zone_name)` checks for `<zone_name>.ff` through `find_zone_file`.
+- `get_pending_patch_zones()` queues existing `patch_mp` and `patch_consolation` zones, logs `^1Skipping override fastfile '%s' because it was not found\n`, and marks each attempted before filesystem lookup.
+- `load_patch_fastfiles_after_common()` submits pending zones through `game::DB_LoadXAssets(..., patch_sync)` with `patch_sync = 0`, waits via `game::DB_WaitXAssets()`, refreshes UI gametype data through `gametypes::refresh_ui_gametype_list()` when `patch_consolation` is expected, and reports either loaded zones or `^3Submitted patch fastfile(s), but no linked assets were observed yet: %s\n`.
+- `has_zone(const game::XZoneInfo* zone_info, const int zone_count, const char* name)` performs null/count validation and case-insensitive zone-name membership testing; `join_zone_names(const std::vector<game::XZoneInfo>& zones)` formats names as comma-separated `", "` text.
+
+## Integration and Lifecycle
+
+- `component::post_load()` installs `utils::hook::detour create_file_a_hook` on `CreateFileA` and `utils::hook::detour db_link_xasset_entry_hook` on `game::DB_LinkXAssetEntry`.
+- `component::post_load()` schedules a repeating callback that returns `scheduler::cond_continue` until `common_fastfiles_seen`, then calls `load_patch_fastfiles_after_common()` and returns `scheduler::cond_end`.
+- `REGISTER_COMPONENT(fastfiles::component)` exposes the component to the loader.
+- `game::Com_Printf(16, ...)` is the logging boundary; `utils::nt::get_host_module()` and `GetModuleFileNameA` determine lookup roots; `std::filesystem` operations use `std::error_code` to avoid filesystem exceptions.

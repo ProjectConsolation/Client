@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:21:46.996Z
+content_hash: 80dcec5b45837d6a5033ee15d76ec1043a84bbf406c0ef1adfc7fc87f8e6ae82
+purpose: connection.hpp defines transport bindings and the discovered `device_connection` record for gamepad devices.
+---
+**connection.hpp defines transport bindings and the discovered `device_connection` record for gamepad devices.**
+
+## Symbols
+
+- `xinput_binding` stores an XInput `user_index`.
+- `hid_binding` stores a HID `wstring path`; path is stable physical identity, while handles open lazily.
+- `transport_binding` is `variant<std::monostate, xinput_binding, hid_binding>`; `std::monostate` marks undiscovered/unbound state.
+- `same_binding(const transport_binding&, const transport_binding&) noexcept` compares physical attachment identity.
+- `device_connection` aggregates `device_id id`, `device_identity identity`, `controller::transport_kind transport`, `connection link`, `capabilities caps`, and `transport_binding binding`.
+
+## Integration
+
+`types.hpp` supplies `user_index`, `wstring`, `transport_kind`, and `connection`; `utility.hpp` supports shared types; `id.hpp`, `identity.hpp`, and `capability.hpp` define device metadata. `device_connection` excludes decoded input/report knowledge; drivers translate reports into samples, while the registry assigns presence-stable `id`.

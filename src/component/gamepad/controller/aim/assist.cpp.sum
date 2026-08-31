@@ -1,0 +1,28 @@
+---
+generated_at: 2026-08-31T15:21:41.156Z
+content_hash: bde971761ce8f54943e19af223c24ac2785f1597521bbdc58399f717b0f11224
+purpose: assist.cpp does gamepad aim processing, target lock-on, slowdown scaling, and dominant-axis shaping.
+---
+**assist.cpp does gamepad aim processing, target lock-on, slowdown scaling, and dominant-axis shaping.**
+
+## Exported symbols
+
+- `aim_processor::aim_processor(config c)` moves `c` into `cfg_` and initializes stateful yaw/pitch acceleration.
+- `void aim_processor::reset() noexcept` resets `yaw_` and `pitch_` integrators.
+- `aim_frame_output aim_processor::process(const aim_frame_input& in) noexcept` clamps `ads_lerp`, interpolates hip/ADS deadzones and turn rates, applies `apply`, evaluates the configured `graph` or active `curve`, scales by FOV/sensitivity/slowdown, enforces optional `yaw_max`/`pitch_max`, advances acceleration using `in.dt`, and applies pitch inversion.
+- `float slowdown_scale(bool target_present, float hip_scale, float ads_scale, float ads_lerp) noexcept` returns `1.0f` without a target; otherwise linearly interpolates scales using clamped `ads_lerp`.
+- `stick_vector scale_dominant_axis(stick_vector look) noexcept` preserves the dominant axis and attenuates the subordinate axis by the absolute-magnitude difference; equal axes remain unchanged.
+- `aim_frame_output lock_on(const lock_on_target& target, const lock_on_params& params, seconds dt) noexcept` converts relative target/player velocity projected onto view axes into yaw/pitch angular deltas.
+
+## Processing contracts
+
+- `lerp_rate(deg_per_s, deg_per_s, float)` interpolates `.value`; `lerp_deadzone(const deadzone_params&, const deadzone_params&, float)` independently interpolates `inner`, `outer`, and `anti` magnitudes.
+- `aim_processor::process` clamps `ads_lerp` to `[0.0f, 1.0f]`, clamps radial `deflection` to `[0.0f, 1.0f]`, and uses `cfg_.ads.curve` when `t >= 0.5f`, otherwise `cfg_.hip.curve`.
+- `aim_processor::process` integrates non-negative target speeds before restoring signs, so direction reversal flips at current speed; `invert_pitch` negates the final pitch delta.
+- `lock_on` returns `{}` when `target.distance <= 0.0f`; otherwise uses `arc = target.distance * pi` and multiplies projected relative velocity by `180.0f`, axis strength, and `dt.count()`.
+
+## Integration and dependencies
+
+- `assist.cpp` depends on `std_include.hpp`, `component/gamepad/controller/aim/assist.hpp`, `<cmath>`, and `<algorithm>`.
+- `aim_processor` couples `deadzone_params`, `stick_vector`, `aim_frame_input`, `aim_frame_output`, `lock_on_target`, `lock_on_params`, `deg_per_s`, `degrees`, `seconds`, `apply`, `evaluate`, `dot`, and acceleration state `yaw_`/`pitch_`.
+- `std::lerp`, `std::clamp`, `std::sqrt`, and `std::fabs` define interpolation, bounds, radial magnitude, and sign-independent axis behavior.

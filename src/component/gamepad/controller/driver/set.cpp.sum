@@ -1,0 +1,37 @@
+---
+generated_at: 2026-08-31T15:22:29.286Z
+content_hash: abf5582025da2d33100c270a7e9d4eb36bf19059395930074b5ff6e695cd88d2
+purpose: set.cpp binds, reconciles, iterates, and routes input/output across Xbox and PlayStation controller drivers.
+---
+**set.cpp binds, reconciles, iterates, and routes input/output across Xbox and PlayStation controller drivers.**
+
+## Interface
+
+- `set::set (const context& ctx, const transport::xinput_module& x)` stores non-owning `ctx_` and `xinput_` references.
+- `set::~set ()` is out-of-line/defaulted so `driver` and transport types require completeness only here.
+- `unique_ptr<driver> set::bind (const device_connection& d, unique_ptr<transport::hid_device>& hid)` constructs a family-specific driver or returns `nullptr`.
+- `void set::reconcile (const registry& r)` synchronizes active `entries_` with registry membership.
+- `void set::for_each (function_ref<void (driver&, const device_connection&)> fn)` invokes `fn` for every active driver/device pair.
+- `void set::submit (device_id id, const output_request& request)` forwards `request` to the matching driver and silently ignores unknown `id`.
+
+## Binding behavior
+
+- `set::bind` maps `family::xbox` to `xinput_driver`, requiring `std::get_if<xinput_binding>(&d.binding)` and passing `ctx_`, `xinput_`, `d.id`, and `b->index`.
+- `set::bind` maps `family::dualshock4`, `family::dualsense`, and `family::dualsense_edge` to `dualshock4_driver`, `dualsense_driver`, and `dualsense_edge_driver`, respectively.
+- `set::bind` requires non-null `hid` for PlayStation families and asserts `hid->link() == connection::usb || hid->link() == connection::bluetooth`.
+- `enable_extended_reports (ctx_, *hid, d.id, d.identity.family)` must succeed for Bluetooth PlayStation devices; failure returns `nullptr` because minimal reports are undecodable.
+- `family::unknown`, invalid bindings, absent HID handles, and unsupported families return `nullptr`.
+
+## Reconciliation and ownership
+
+- `set::reconcile` caches `registry::generation()` in `generation_` and skips work when `reconciled_ && g == generation_`.
+- `set::reconcile` snapshots `registry` via `r.for_each` before slow HID operations or lock reacquisition.
+- `std::erase_if(entries_)` retires entries whose `device.id` is absent; `entry` owns the borrowed `hid` lifetime alongside `drv`.
+- `transport::open (ctx_, b->path)` opens `hid_binding` paths; null handles skip binding after transport-side error reporting.
+- `set::reconcile` reports `errc::none` for release/bind events and `errc::unsupported_device` with `severity::warning` when `bind` returns null.
+
+## Coupling
+
+- `set.cpp` includes `set.hpp`, `xinput.hpp`, `dualshock4.hpp`, `dualsense.hpp`, `dualsense-edge.hpp`, and `playstation.hpp`.
+- `context::report`, `registry::generation`, `registry::for_each`, `device_connection::identity`, `device_connection::binding`, `device_connection::transport`, `entry`, `driver::submit`, `transport::open`, `connection`, `family`, `xinput_binding`, and `hid_binding` define the surrounding contracts.
+- `std::variant` access uses `std::get_if`; `std::any_of`, `std::none_of`, and `std::erase_if` implement membership synchronization.

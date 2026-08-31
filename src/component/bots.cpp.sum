@@ -1,0 +1,157 @@
+---
+generated_at: 2026-08-31T15:24:44.272Z
+content_hash: d5d2a2717efb0ec6208c286b8f336915fee6d6b185ebd1cce542e5bec4667337
+purpose: bots.cpp does server-side bot movement, targeting, combat, cover seeking, health synchronization, and engine-hook lif...
+---
+**bots.cpp does server-side bot movement, targeting, combat, cover seeking, health synchronization, and engine-hook lifecycle integration for up to 18 clients.**
+
+## Role and integration
+
+`bots::component` integrates custom bot behavior into the game through `component_interface`, `REGISTER_COMPONENT(bots::component)`, `post_load()`, and `pre_destroy()`.
+
+`game::game_offset()` resolves hard-coded engine addresses; `game::SV_ClientThink` supplies the original client-think function; `game::SV_BotUserMove` supplies the bot movement hook target; `utils::hook::call()` installs `client_enter_world_hook`; `utils::hook::jump()` replaces the native bot movement routine.
+
+`component::post_load()` stores `SV_ClientThink.get()` in `s_client_think_real_addr`, hooks engine address `0x10414440` with `client_enter_world_hook`, jumps `SV_BotUserMove.get()` to `sv_bot_user_move_hook`, initializes `s_tracked_target` to `-1`, and registers shutdown cleanup through `scheduler::on_shutdown()`.
+
+`component::pre_destroy()` restores the five original bytes at `game_offset(0x10414440)` as `E8 2B 5E D9 FF` and restores the first five bytes at `SV_BotUserMove.get()` as `83 EC 30 83 BE`.
+
+`game::entity_t`, `game::playerState_t`, `game::clientState_t`, `game::usercmd_t`, `game::usercmd_buttons`, and `game::dvar_s` are accessed through direct memory layouts and engine globals, making this code version-sensitive to the target executable.
+
+`dvars::bot_maxHealth` controls bot health; `sv_maxclients_dvar()` controls client iteration bounds; `sv_bots_press_attack_dvar()` gates ranged bot firing.
+
+## Public symbol
+
+`bots::component final : public component_interface` exposes:
+
+- `void post_load() override` — resolves the original think address, installs enter-world and bot-movement hooks, initializes target state, and registers shutdown state reset.
+- `void pre_destroy() override` — restores overwritten engine instruction bytes before component unload.
+
+`REGISTER_COMPONENT(bots::component)` registers the component with the loader.
+
+## Engine memory contracts
+
+`CLIENT_STRIDE = 688916` bytes separates client records; `CLIENT_ENTITYPTR_OFF = 0x2128C` locates the client entity pointer; `CLIENT_LAST_USERCMD_OFF = 0x20E9C` locates the last `game::usercmd_t`; `CLIENT_USERINFO_OFF = 1604` locates the backslash-delimited user-info string.
+
+`PS_ORIGIN_OFFSET = 0x20` locates player-state origin; `PS_MAXHEALTH_OFFSET = 0x32C4` locates player-state maximum health; the player-state health field is read at offset `0x1CC`.
+
+`SNAPINFO_STRIDE = 13504` and `SNAPINFO_DEAD_OFF = 0x3228` locate per-client dead-state data in `g_snapshot_info()`; null `g_snapshot_info()` conservatively makes `client_is_dead()` return `true`.
+
+`g_entities()` reads entity storage from `game_offset(0x11961F80)`; `g_clients()` dereferences the client-base pointer at `game_offset(0x11CA5D8C)`; `g_snapshot_info()` dereferences snapshot info at `game_offset(0x11A34458)`.
+
+`g_archived_snap_base()` reads archived command data from `game_offset(0x112EBD18)`; `g_archived_snap_stride()` reads its stride from `game_offset(0x112EBD1C)`; `sv_maxclients_dvar()` reads the server-client dvar pointer from `game_offset(0x112EBEFC)`; `sv_bots_press_attack_dvar()` reads the bot attack dvar pointer from `game_offset(0x1130BF80)`.
+
+`trace_passed()` calls engine address `game_offset(0x101AA870)` through inline x86 assembly with `CONTENTS_SOLID_SHOT = 41969713`, `ENTITYNUM_NONE = 1023`, `pass_entity_num`, `start`, and `end`.
+
+`client_enter_world_hook()` calls engine address `game_offset(0x101AA270)` through inline assembly, retrieves the client index from `ESI`, and forces full bot health after world entry.
+
+`sv_bot_user_move_hook()` retrieves the client pointer from `ESI`, rejects clients whose entity pointer at `CLIENT_ENTITYPTR_OFF` is null, and forwards valid clients to `bot_user_move_impl()`.
+
+`call_sv_client_think_real()` invokes `s_client_think_real_addr` with the client pointer in `EAX`, command pointer in `EDI`, and preserved `EDI`, matching the native x86 calling convention.
+
+## Team and target selection
+
+`get_info_value(const char* info, const char* key) -> std::string` parses `\key\value` pairs, performs case-insensitive key comparison with `_stricmp`, tolerates a leading backslash, returns the first matching value, and returns `{}` for null inputs or absent keys.
+
+`parse_team_value(const std::string& value) -> game::bot_team` lowercases input with `utils::string::to_lower()` and recognizes:
+
+- `axis`, `1`, or substrings `axis`, `cell`, `enemy` → `game::bot_team::axis`
+- `allies`, `2`, or substrings `allies`, `mi6`, `friendly` → `game::bot_team::allies`
+- `spectator`, `3` → `game::bot_team::spectator`
+- `free`, `0`, `none` → `game::bot_team::free`
+- all other values, including empty values → `game::bot_team::unknown`
+
+`client_team(int idx) -> game::bot_team` reads `teamNum` first from `client_userinfo(idx)` and falls back to `team` only when `teamNum` parses as `unknown`.
+
+`should_target_client(int bot_idx, int target_idx) -> bool` rejects self-targeting, inactive clients (`game::CS_ACTIVE` mismatch), dead clients, null entities, and entities with `health <= 0`; unknown-vs-unknown teams are rejected, unknown/free bot teams target every non-spectator target, and known teams reject spectators and same-team clients.
+
+`client_state(int idx) -> game::clientState_t` copies the client-state structure from `client_at(idx)`; `client_is_real_player(int idx) -> bool` tests the integer flag at client offset `0x20`; `client_is_dead(int idx) -> bool` reads snapshot dead state; `client_userinfo(int idx) -> const char*` returns the user-info buffer; `client_last_usercmd(int idx) -> game::usercmd_t*` returns the last command pointer.
+
+`client_recently_fired(int idx, int command_time) -> bool` requires `BUTTON_ATTACK`, computes `age = command_time - cmd->serverTime`, and accepts ages in `[0, 1200]`; structured exception handling converts invalid command memory into `false`.
+
+## Persistent bot state
+
+`MAX_CLIENTS = 18` sizes all per-client arrays; `bot_state_index(int client_idx) -> int` maps valid indices `[0, MAX_CLIENTS)` to themselves and invalid indices to `-1`.
+
+`s_attack_phase[MAX_CLIENTS]` tracks attack-phase state; `s_tracked_target[MAX_CLIENTS]` stores target indices and uses `-1` as the no-target sentinel; `s_last_visible_time[MAX_CLIENTS]` stores the last target visibility timestamp; `s_last_seen_origin[MAX_CLIENTS][3]` stores the latest remembered target eye position.
+
+`s_last_cmd_yaw[MAX_CLIENTS]` and `s_last_cmd_pitch[MAX_CLIENTS]` support aim-settling checks; `s_search_yaw[MAX_CLIENTS]` and `s_next_search_time[MAX_CLIENTS]` drive idle search movement; `s_last_progress_time[MAX_CLIENTS]` and `s_last_progress_origin[MAX_CLIENTS][3]` detect stuck bots; `s_last_applied_bot_max_health` prevents redundant health synchronization.
+
+`clear_bot_target_state(int client_idx) -> void` resets attack, target, visibility, aim, search-progress, and remembered-origin state for one valid client while preserving invalid indices.
+
+`component::post_load()` shutdown cleanup zeroes every state array, refills `s_tracked_target` with `-1`, and resets `s_last_applied_bot_max_health` to `0`.
+
+## Geometry, visibility, and cover
+
+`IW_RAD_TO_ANGLE = 10430.378f` converts radians to engine angle units; `normalize_angle_units(int angle) -> int` wraps values into approximately `[-32768, 32768]`.
+
+`get_eye_position(const game::playerState_t* ps, float eye_height, float* out) -> void` copies player origin and adds `eye_height` to Z; `BOT_EYE_HEIGHT = 56.0f`, `TARGET_EYE_HEIGHT = 48.0f`, and `TARGET_TORSO_HEIGHT = 26.0f`.
+
+`distance_squared_3d(const float* a, const float* b) -> float` computes squared Euclidean distance; `copy_vec3(float* out, const float* in) -> void` copies three coordinates; `set_vec3(float* out, float x, float y, float z) -> void` writes three coordinates.
+
+`vector_length_2d(float x, float y) -> float` and `vector_length_3d(float x, float y, float z) -> float` use square-root Euclidean norms; `vector_to_yaw_units(float x, float y) -> int` applies `atan2f(y, x) * IW_RAD_TO_ANGLE`.
+
+`yaw_units_to_forward_right(int yaw_units, float* forward, float* right) -> void` converts engine yaw units into normalized horizontal forward/right vectors using `sinf()` and `cosf()`.
+
+`build_target_sample_points(const float* bot_eye, const game::playerState_t* target_ps, float samples[5][3]) -> void` creates five visibility samples: target eye center, eye ± lateral offsets, torso, and low body; `TARGET_SAMPLE_WIDTH = 10.0f`.
+
+`sample_target_visibility(const float* bot_eye, int bot_idx, const game::playerState_t* target_ps) -> float` traces all five samples and returns visible-sample fraction in `{0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f}`.
+
+`find_cover_goal(const float* bot_eye, int bot_idx, const float* enemy_eye, int enemy_idx, float* out_goal) -> bool` evaluates five lateral/backward/diagonal candidates, requires bot-to-candidate visibility, rejects enemy-to-candidate visibility, and chooses the nearest valid candidate by squared distance.
+
+`COVER_OFFSET_SIDE = 96.0f`, `COVER_OFFSET_BACK = 128.0f`, and `COVER_OFFSET_DIAGONAL = 72.0f` define cover candidates; `COVER_COMMIT_RANGE = 80.0f` prevents unnecessary movement once near cover.
+
+## Movement and stuck recovery
+
+`set_move_toward(game::usercmd_t& cmd, int view_yaw, int move_yaw, std::int8_t forward_speed, std::int8_t side_speed) -> void` converts yaw delta into movement: delta within `4096` uses full forward, delta at least `24576` uses half reverse, and intermediate deltas use half forward plus signed strafing.
+
+`apply_search_movement(game::usercmd_t& cmd, int bot_idx, int command_time) -> void` updates search yaw every `SEARCH_UPDATE_MS = 900`, computes `degrees = ((phase * 45) + bot_idx * 35) % 360`, writes yaw/pitch/roll as search yaw/`0`/`0`, moves forward at `127`, and adds `game::BUTTON_SPRINT`.
+
+`bot_is_stuck(int bot_idx, const game::playerState_t* bot_ps) -> bool` records progress origin and command time, treats movement greater than `STUCK_DIST_EPSILON = 24.0f` as progress, and reports stuck after `STUCK_REPATH_MS = 1400` without sufficient displacement.
+
+`bot_user_move_impl()` applies alternating yaw perturbations of `±8192` and alternating forward/right/up movement when `bot_is_stuck()` is true; grounded bots receive `upmove = 127`, and stuck recovery adds `BUTTON_SPRINT`.
+
+## Health management
+
+`get_bot_max_health() -> int` returns positive `dvars::bot_maxHealth->current.integer`, otherwise `100`.
+
+`sanitize_bot_health(int client_idx, bool force_full_health, bool assume_bot = false) -> void` skips real players unless `assume_bot` is true, writes player-state max health, forcefully sets entity/player health to max when requested, clamps invalid live health values, and caps dead health values without reviving dead clients.
+
+`sync_bot_health_from_dvar() -> void` compares `get_bot_max_health()` against `s_last_applied_bot_max_health`, iterates clients below `game::CS_CONNECTED`, skips real players, calls `sanitize_bot_health(i, true)`, and records the applied max health.
+
+`client_enter_world_hook()` sets `s_last_applied_bot_max_health` to the current dvar value and calls `sanitize_bot_health(client_idx, true)` after the native enter-world routine.
+
+## `bot_user_move_impl()` behavior
+
+`bot_user_move_impl(std::uintptr_t client) -> void` exits when `g_clients()` is null, synchronizes health, derives `bot_idx = (client - clients_base) / CLIENT_STRIDE`, sanitizes bot health, and initializes a zeroed `game::usercmd_t`.
+
+`bot_user_move_impl()` copies weapon state from `g_archived_snap_base()[bot_idx * g_archived_snap_stride() + 0xF0]` when archived snapshots are valid; the default max-client fallback is `12` when `sv_maxclients_dvar()` is unavailable.
+
+`bot_user_move_impl()` scans valid target clients, computes target-eye squared distance and five-point visibility, scores visible targets as `(visibility * 600000.0f) - d2` plus `60000.0f` for the tracked target, and scores hidden targets as `-d2` plus `50000.0f` for the tracked target and `85000.0f` for recently firing targets.
+
+`TARGET_MEMORY_MS = 5000` allows a bot to pursue the last tracked target and last seen eye position for five seconds after visibility is lost; visible targets refresh `s_tracked_target`, `s_last_visible_time`, and `s_last_seen_origin`.
+
+`bot_user_move_impl()` selects visible targets before hidden targets, retains valid tracked targets within `TARGET_MEMORY_MS`, calls `clear_bot_target_state()` when no target remains, and falls back to `apply_search_movement()` when no target or player state exists.
+
+`bot_user_move_impl()` aims at target yaw and torso pitch, clamps pitch to `[-1400, 1400]`, stores the latest aim units, and defines `aim_settled` as yaw/pitch deltas each within `AIM_SETTLE_THRESHOLD = 1400`.
+
+`bot_user_move_impl()` seeks cover when the target is visible, visibility is at least `0.4f`, distance is at most `FIRE_RANGE = 1400.0f`, and bot health is at most `max(35, max_health / 2)`.
+
+`bot_user_move_impl()` uses full forward speed `96` and side speed `48` against visible targets, or forward `127` and side `32` while searching/approaching hidden targets; sprint is added beyond `SPRINT_RANGE = 700.0f` or whenever the target is hidden.
+
+`bot_user_move_impl()` applies periodic strafing `±24` for visible targets in `(192.0f, FIRE_RANGE)`, periodic crouch within `CROUCH_RANGE = 384.0f` and beyond `160.0f`, and melee attack plus `BUTTON_MELEE_BREATH` within `MELEE_RANGE * 1.5f = 144.0f`.
+
+`bot_user_move_impl()` adds `BUTTON_ADS` for visible targets with visibility at least `0.4f` and distance greater than `256.0f`.
+
+`bot_user_move_impl()` adds `BUTTON_ATTACK` only when `sv_bots_press_attack_dvar()->current.enabled`, target visibility is positive, distance is at most `FIRE_RANGE`, and aim alignment satisfies `aim_settled` or yaw/pitch delta within `FIRE_ALIGNMENT_THRESHOLD * 2 = 2400`.
+
+`bot_user_move_impl()` increases forward movement to at least `48` and alternates side movement `±32` for ranged attacks beyond `224.0f`; otherwise `s_attack_phase[state_idx]` is cleared.
+
+`bot_user_move_impl()` decrements the client command counter through `*(int*)(client + 0x08) = *(int*)(client + 0x10) - 1`, invokes `call_sv_client_think_real(client, &cmd)`, and sanitizes bot health again after native processing.
+
+## Observable constants and assumptions
+
+`CONTENTS_SOLID_SHOT = 41969713`, `ENTITYNUM_NONE = 1023`, `MAX_CLIENTS = 18`, `TARGET_MEMORY_MS = 5000`, `SEARCH_UPDATE_MS = 900`, `STUCK_REPATH_MS = 1400`, `AIM_SETTLE_THRESHOLD = 1400`, `FIRE_VISIBILITY_THRESHOLD = 3`, `FIRE_ALIGNMENT_THRESHOLD = 1200`, `MELEE_RANGE = 96.0f`, `CROUCH_RANGE = 384.0f`, `SPRINT_RANGE = 700.0f`, `FIRE_RANGE = 1400.0f`, and `STUCK_DIST_EPSILON = 24.0f` define gameplay thresholds and must remain synchronized with engine units.
+
+`FIRE_VISIBILITY_THRESHOLD` is declared as `3` but ranged-fire logic compares `best_visibility` directly against `0.0f` and `0.4f`; changing this unused constant alone does not alter firing behavior.
+
+`__asm`, `__try`, `__except`, absolute game offsets, client strides, and raw structure offsets require the original 32-bit Windows-compatible compiler/runtime and matching game binary layout.

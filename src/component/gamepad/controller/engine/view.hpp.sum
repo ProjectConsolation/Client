@@ -1,0 +1,28 @@
+---
+generated_at: 2026-08-31T15:22:05.896Z
+content_hash: ec805c89f6ef75d2c3dd5fc68a1da073363593264023fd0700d13b60a1fe324f
+purpose: view.hpp turns calibrated gamepad sticks into movement and view-angle updates.
+---
+**view.hpp turns calibrated gamepad sticks into movement and view-angle updates.**
+
+## Role
+
+`view_driver` owns latched analog-stick state, persistent aim integration, stick-layout resolution, and controller contributions to `usercmd_s`; `observe()` and `idle()` cover frame sampling, while `apply_move()` and `apply_remote_move()` consume latched state later in command construction.
+
+## Public interface
+
+- `view_driver(const context&, const dvars&)` binds runtime `context` and tuning `dvars`.
+- `void observe(const canonical_sample&) noexcept` maps the calibrated sample through `mapping::resolved_axes` and latches virtual movement/view axes.
+- `void idle() noexcept` clears `axes_` and resets aim integrators when no controller drives the frame.
+- `void apply_move(int client, usercmd_s& cmd, float frame_time) noexcept` adds movement to `forwardmove`/`rightmove`, advances view angles after native `CL_MouseMove`, and accounts for left-handed attack/throw mapping.
+- `void apply_remote_move(int client, usercmd_s& cmd) noexcept` folds controller movement into remote-control commands.
+
+## State and algorithms
+
+`axes_` stores the most recent shaped stick vectors, decoupling runtime sampling from later command construction. `calibration_` owns the validated aim response graph referenced by `processor_`; both `optional` values remain empty until a successful build, with invalid tuning falling back to unshaped stick input. `tuning_signature_`, `have_signature_`, and `reported_invalid_` implement cached dvar-change detection and invalid-configuration reporting.
+
+`ensure_processor()` rebuilds the aim processor when tuning changes and returns availability; `view_active(int client) const noexcept` gates view motion while menus, console/chat input, or player freeze are active.
+
+## Integration and contracts
+
+`view_driver` depends on `support/types.hpp`, `support/utility.hpp`, `engine/import.hpp`, `context.hpp`, `dvar.hpp`, `aim/assist.hpp`, `aim/calibration.hpp`, `mapping/stick-layout.hpp`, and `sample/sample.hpp`. `gpad_sticksConfig` selects left/right stick roles, while engine aim-assist globals apply slowdown and lock-on. `apply_move()` and `apply_remote_move()` are explicitly `noexcept`; `apply_move()` receives `frame_time` in seconds.

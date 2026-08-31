@@ -1,0 +1,12 @@
+---
+generated_at: 2026-08-31T15:22:04.873Z
+content_hash: c47df6f3019c026cbd01ed96ee95a6ca2c7e93eaf35ee059d1081688a1fed6d8
+purpose: dualsense-edge.cpp does DualSense Edge report decoding and controller polling.
+---
+**dualsense-edge.cpp does DualSense Edge report decoding and controller polling.**
+
+## API
+
+`decode_dualsense_edge(span<const byte>, connection, raw_sample&, canonical_sample&) noexcept -> bool` delegates `decode_dualsense(..., true)`.
+
+`dualsense_edge_driver::poll(raw_sample&, canonical_sample&) noexcept -> bool` delegates `read_and_decode(..., true)`.

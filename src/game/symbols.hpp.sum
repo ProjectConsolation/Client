@@ -1,0 +1,35 @@
+---
+generated_at: 2026-08-31T15:24:01.265Z
+content_hash: f35675be2cc3c3b1b13029d5cc1abae4438d17939ab24342429b3de319f24504
+purpose: symbols.hpp maps `game` engine functions and globals to fixed executable addresses via `symbol<T>` and `game_offset`.
+---
+**symbols.hpp maps `game` engine functions and globals to fixed executable addresses via `symbol<T>` and `game_offset`.**
+
+## Exported engine functions
+
+- `Com_Printf: symbol<void(int channel, const char* fmt, ...)>`; `Com_Error: symbol<void(int a1, int a2, int a3, char* Format, ...)>`; `Conbuf_AppendText: symbol<void(int channel, const char* fmt)>`.
+- `CL_KeyEvent_: symbol<void()>`; `CL_DrawScreen: symbol<void()>`; `Con_DrawConsole: symbol<void()>`; `Con_DrawSolidConsole: symbol<void()>`; `Con_KeyEvent: symbol<void()>`; `Con_SetConsoleRect: symbol<void()>`; `Con_DrawVersionString: symbol<void()>`; `Con_DrawTextLimited: symbol<void()>`; `Con_DrawText: symbol<void()>`.
+- `ConDrawInput_DrawInputText: symbol<char(unsigned char* text)>`; `ConDrawInput_GetInput: symbol<int(unsigned char* text)>`; `ConDrawInput_DrawInput: symbol<void()>`; `Sys_ShowConsole: symbol<void()>`; `Con_CancelAutoComplete: symbol<void()>`.
+- `DB_LoadXAssets: symbol<int(XZoneInfo* zoneInfo, int zoneCount, int sync)>`; `DB_WaitXAssets: symbol<int()>`; `DB_LinkXAssetEntry: symbol<XAssetEntry*(XAssetEntry* entry, int allowOverride)>`.
+- `DB_EnumXAssets_FastFile: symbol<void(XAssetType type, void(*)(XAssetHeader, void*), const void* userdata, bool overrides)>`; `DB_FindXAssetHeader: symbol<XAssetHeader(XAssetType type, const char* name)>`; `DB_FindXAssetHeader_Internal: symbol<XAssetHeader(XAssetType type, const char* name, int create_default)>`.
+- `Dvar_RegisterNew: symbol<dvar_s*(const char* dvarName, DvarType type, unsigned short flags, const char* description, int unk, DvarValue value, DvarLimits domain)>`.
+- `R_AddCmdDrawStretchPic: symbol<void(float x, float y, float width, float height, float s0, float t0, float s1, float t1, float* color, Material* material, int unknown)>`; `R_AddCmdDrawText: symbol<void(const char* text, int maxChars, Font_s* font, float x, float y, float xScale, float yScale, float rotation, const float* color, int style)>`.
+- `R_EndFrame: symbol<int()>`; `R_IssueDrawCmd: symbol<int(float arg)>`; `R_TextWidth: symbol<int(const char* text, int maxChars, Font_s* font)>`.
+- `Scr_LoadScript_: symbol<int(const char* name)>`; `Scr_FormatCodePos: symbol<char*(char* result, int a2)>`; `SV_AddTestClient: symbol<void*()>`; `SV_BotFrame: symbol<void()>`; `SV_BotUserMove: symbol<void()>`.
+- `SV_ClientThink: symbol<void()>`; `SV_ClientEnterWorld: symbol<void*(int client_ptr, int* userinfo)>`; `SV_ClientUserinfoChanged: symbol<void(int clientNum)>`.
+- `GScr_AddTestClient: symbol<void()>`; `Scr_SightTracePassed: symbol<void()>`; `Scr_BulletTracePassed: symbol<void()>`; `ClientScr_SetNormalHealth: symbol<void()>`; `ClientScr_GetNormalHealth: symbol<void()>`.
+- `CL_ConsolePrint: symbol<void(int localClientNum, int channel, const char* txt, int duration, int pixelWidth, int flags)>`; `generateHashValue: symbol<int(char* dvar)>`.
+
+## Exported engine state
+
+- `command_id: symbol<DWORD>`; `cmd_argc: symbol<DWORD>`; `cmd_argv: symbol<char**>`; `cmd_functions: symbol<cmd_function_s*>`.
+- `scrMemTreePub: symbol<scrMemTreePub_t>`; `scrVmPub: symbol<scrVmPub_t>`; `scr_numParams: symbol<unsigned int>`; `db_hashTable: symbol<unsigned short>`.
+- `g_assetEntryPool: symbol<XAssetEntryPoolEntry>`; `g_zones: symbol<XZone>`; `g_assetNames: symbol<const char*>`; `dvarHashTable: symbol<dvar_s*>`; `dvarCount: symbol<int>`; `sortedDvars: symbol<dvar_s*>`; `r_LodScale: symbol<dvar_s>`.
+- `keyCatchers: symbol<int>`; `playerKeys: symbol<PlayerKeyState>`; `scrPlaceView: symbol<ScreenPlacement>`; `g_consoleField: symbol<field_t>`; `g_console_field_width: symbol<int>`.
+- `con_outputVisible: symbol<int>`; `con_fullConsoleVisible: symbol<unsigned char>`; `main_window: symbol<HWND>`; `con_font: symbol<Font_s*>`.
+
+## ABI and integration contracts
+
+- `WEAK` expands to `__declspec(selectany)`, enabling weak/select-any address-bound definitions; every `symbol<T>` initializer uses a hard-coded `game_offset(...)`.
+- `DB_XAssetGetNameHandler_t` aliases `const char* (*)(game::XAssetHeader* asset)`, while `DB_XAssetGetNameHandler` is an external `DB_XAssetGetNameHandler_t*` associated with `IW3SP-MOD`.
+- `symbol`, `game_offset`, `XAssetHeader`, `XAssetType`, `XAssetEntry`, `XZoneInfo`, `dvar_s`, `DvarType`, `DvarValue`, `DvarLimits`, `Font_s`, `Material`, `cmd_function_s`, `scrMemTreePub_t`, `XAssetEntryPoolEntry`, `XZone`, `PlayerKeyState`, `ScreenPlacement`, `scrVmPub_t`, `field_t`, `HWND`, and `DWORD` must be declared by included project/platform headers.

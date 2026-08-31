@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:22:22.006Z
+content_hash: 9006ba10cf5db949eb660364a0746b1d8cb3a50289bdb53606279e8702e34894
+purpose: playstation.hpp switches PlayStation Bluetooth controllers to extended HID reports and identifies minimal-mode reports.
+---
+**playstation.hpp switches PlayStation Bluetooth controllers to extended HID reports and identifies minimal-mode reports.**
+
+## Interface
+
+`enable_extended_reports(const context&, transport::hid_device&, device_id, family) noexcept` performs Bluetooth feature exchange; returns whether a feature report was read, gating extended-report driver binding.
+
+`minimal_bluetooth_report(span<const byte>, connection) noexcept` detects the 10-byte `0x01` minimal report and enables silent dropping.
+
+## Contracts
+
+`enable_extended_reports` is unnecessary over USB; extended formats are DualSense `0x31` and DualShock 4 `0x11`. Dependencies: `types.hpp`, `utility.hpp`, `context`, `device_id`, `transport::hid_device`.

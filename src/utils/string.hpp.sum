@@ -1,0 +1,24 @@
+---
+generated_at: 2026-08-31T15:24:03.743Z
+content_hash: c0355346b2a4506feaa7b2ead43f98b11cf3d9d109585c852d7a251f2e6bfe0c
+purpose: string.hpp implements string utilities and rotating variadic-format buffers.
+---
+**string.hpp implements string utilities and rotating variadic-format buffers.**
+
+## Interface
+
+- `va_provider<Buffers, MinBufferSize>` allocates `Buffers` reusable char buffers, each at least `MinBufferSize`.
+- `va_provider::get(const char* format, const va_list ap) -> char*` rotates buffers, formats via `_TRUNCATE`, doubles capacity on failure, and throws `"String pool not initialized"`.
+- `va(const char* fmt, ...) -> const char*`
+- `to_lower(std::string) -> std::string`; `to_upper(std::string) -> std::string`
+- `starts_with(const std::string&, const std::string&) -> bool`; `ends_with(...) -> bool`
+- `string_contains(const std::string_view&, std::string_view) -> bool`
+- `convert(const std::string&) -> std::wstring`
+- `dump_hex(const std::string&, const std::string& separator = " ") -> std::string`
+- `get_timestamp() -> std::string`
+- `match_compare(const std::string&, const std::string&, bool exact) -> bool`
+- `get_clipboard_data() -> std::string`
+
+## Integration and Contracts
+
+`va_provider` depends on `memory.hpp`, `memory::get_allocator()`, `ARRAYSIZE`, `vsnprintf_s`, and `std::runtime_error`; `entry` frees allocations and `double_size()` reallocates at 2× capacity. `static_assert` rejects zero `Buffers` or `MinBufferSize`; formatting result `0` returns `nullptr`.

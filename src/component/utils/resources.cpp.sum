@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:23:34.287Z
+content_hash: 377497a591cc411e57f04f15805a12855d4ffcba02f207e480f51ea98665e6d8
+purpose: resources.cpp does Win32 resource interception for icon, splash, and logo assets.
+---
+**resources.cpp does Win32 resource interception for icon, splash, and logo assets.**
+
+## Interface
+
+`resources::component` derives `component_interface`; overrides `~component()`, `post_start()`, and `void* load_import(const std::string& library, const std::string& function)`.
+
+## Behavior
+
+`post_start()` loads `ID_ICON` and `IMAGE_SPLASH` from the module via `LoadIconA`/`LoadImageA`; `load_import()` redirects `USER32.dll` imports `LoadIconA` and `LoadImageA` to local hooks. `load_icon_a()` returns `icon` for resource ID `2`; `load_image_a()` returns `logo` for `"logo.bmp"` or `splash` for resource ID `0x64`, otherwise delegates to Win32 APIs.
+
+## Lifecycle
+
+`resources::component::~component()` destroys `icon`, `logo`, and `splash`; `REGISTER_COMPONENT(resources::component)` registers the component.

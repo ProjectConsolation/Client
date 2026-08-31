@@ -1,0 +1,24 @@
+---
+generated_at: 2026-08-31T15:24:03.906Z
+content_hash: 8d37773bba0bb2561133116fd4fc8254a1351d010541642790078d81eae8bfad
+purpose: nt.hpp does Windows module loading, PE introspection, symbol resolution, invocation, and process control.
+---
+**nt.hpp does Windows module loading, PE introspection, symbol resolution, invocation, and process control.**
+
+## API
+
+`utils::nt::library` wraps `HMODULE`; static `load(string)`, `load(path)`, `get_by_address(void*)`; constructors `library()`, `library(string)`, `library(HMODULE)`; equality, `operator bool()`, and `operator HMODULE()`.
+
+`library` exposes `unprotect()`, `get_entry_point() -> void*`, `get_relative_entry_point() -> size_t`, `is_valid()`, `get_name()`, `get_path()`, `get_folder()`, `get_ptr() -> uint8_t*`, `get_handle() -> HMODULE`, `free()`, and `get_section_headers() -> vector<PIMAGE_SECTION_HEADER>`.
+
+`library` exposes PE accessors `get_nt_headers()`, `get_dos_header()`, `get_optional_header()`, plus `get_iat_entry(string module_name, string proc_name) -> void**`.
+
+`library::get_proc<T>(string)`, `get<T>(string) -> function<T>`, `invoke<T, Args...>(string, Args...)`, `invoke_pascal<T, Args...>(string, Args...)`, and `invoke_this<T, Args...>(string, void*, Args...)` resolve exports using `GetProcAddress` and calling conventions; invalid lookups return default values.
+
+## Process helpers
+
+`raise_hard_exception()`, `terminate(uint32_t code = 0)` are noreturn; `load_resource(int) -> string`, `relaunch_self()`, and `get_host_module() -> library` manage resources, relaunching, and the host module.
+
+## Integration
+
+`library` depends on Windows PE types, `GetProcAddress`, `std::filesystem`, `std::function`, strings, vectors, and `std`; `invoke_this` passes `this_ptr` but its shown `get` call has an argument mismatch requiring verification.

@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:22:59.485Z
+content_hash: 475461fbc5518fc3a31075a816adb3be67a693570241e9f85ccfb52543e883f3
+purpose: trigger.hpp models analog trigger readings.
+---
+**trigger.hpp models analog trigger readings.**
+
+## API
+
+`trigger_side:uint8_t{left,right}`; `trigger_count:size_t=2`; `to_string(trigger_side) noexcept→const char*`; `trigger_sample{raw:uint16_t=0,normalized:float=0.0f}`.
+
+## Contract
+
+`raw` retains 0..255 units; `normalized` is post-deadzone [0,1]; pressed mapping stays external. Depends on `types.hpp`, `utility.hpp`.

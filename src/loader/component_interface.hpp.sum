@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:23:42.111Z
+content_hash: 7e0019de2b9ec8d724aec77e60f1f855f41fe39b2e4f43083a04f05d4c480db0
+purpose: component_interface.hpp defines the polymorphic asset-component lifecycle interface.
+---
+**component_interface.hpp defines the polymorphic asset-component lifecycle interface.**
+
+## Interface
+
+`component_interface`: virtual `~component_interface()`, `post_start()`, `post_load()`, `pre_destroy()`, `load_import(const std::string&, const std::string&) -> void*`, `is_supported() -> bool`, `get_type() -> game::XAssetType`.
+
+## Defaults
+
+`load_import` returns `nullptr`; `is_supported` returns `true`; `get_type` returns `game::ASSET_TYPE_INVALID`; lifecycle hooks are no-ops.

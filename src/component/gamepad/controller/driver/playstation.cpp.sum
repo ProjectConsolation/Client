@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:22:21.564Z
+content_hash: fe8462799852a5c87b31b1e734526192eb2f7a6a90ae532450d202081eb30f3e
+purpose: playstation.cpp enables enhanced PlayStation Bluetooth reports and identifies minimal Bluetooth input reports.
+---
+**playstation.cpp enables enhanced PlayStation Bluetooth reports and identifies minimal Bluetooth input reports.**
+
+## API
+
+- `enable_extended_reports(const context& ctx, transport::hid_device& hid, device_id device, family device_family) noexcept -> bool` requests DualSense/DualSense Edge serial (`ds_feature_serial`), firmware (`ds_feature_firmware`), then calibration (`ps_feature_calibration`); other families request calibration only and report `severity::warning`/`errc::transport_failure` on failure.
+- `minimal_bluetooth_report(span<const byte> r, connection link) noexcept -> bool` returns true only for nonempty Bluetooth reports whose byte 0 equals `ps_report_bt_minimal`.
+
+## Protocol Contracts
+
+- `ps_feature_calibration` is `0x05`; `ds_feature_serial` is `0x09`; `ds_feature_firmware` is `0x20`; `ps_feature_calibration_size` is `41`; `max_feature_size` is `128`; `ps_report_bt_minimal` is `0x01`.
+- `read_feature(transport::hid_device& hid, uint8_t report) noexcept -> bool` clamps `hid.feature_report_length()` to `[ps_feature_calibration_size, max_feature_size]`, writes the report ID at buffer index `0`, and calls `hid.get_feature`.
+- `enable_extended_reports` treats successful feature reads as a transport side effect that activates enhanced Bluetooth input; failure leaves the controller inactive.
+
+## Coupling
+
+- `transport::hid_device` supplies feature-report length and retrieval; `context::report` emits diagnostics; `rd_u8` from `driver/decode.hpp` parses report bytes.
+- `family::dualsense` and `family::dualsense_edge` select the DualSense request sequence; `connection::bluetooth` gates minimal-report detection.

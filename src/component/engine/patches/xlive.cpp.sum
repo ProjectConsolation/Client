@@ -1,0 +1,43 @@
+---
+generated_at: 2026-08-31T15:23:10.551Z
+content_hash: 4960fc13255c756b8f1df6b05ee087fb5c81760e8666dc484b6a937bc41fa58d
+purpose: xlive.cpp disables debugger detection in `xlive.dll`, hooks anti-debugging NT APIs, and continuously clears process d...
+---
+**xlive.cpp disables debugger detection in `xlive.dll`, hooks anti-debugging NT APIs, and continuously clears process debug state.**
+
+## Public Interface
+
+- `void apply_early()` clears PEB debug flags, installs NTDLL detours, patches `xlive.dll`, and starts `peb_cleaner_thread`.
+- `class component final : public component_interface` overrides `void post_load()` to repeat `clear_peb_debug_flags()` and `patch_xlive()` after component loading.
+- `component::post_load()` is defined, but `REGISTER_COMPONENT(xlive::component)` remains disabled under `DEBUG`.
+
+## Anti-Debugging Hooks
+
+- `nt_query_information_process_stub(HANDLE, UINT, PVOID, ULONG, PULONG) -> LONG` spoofs `process_debug_port = 7u` as zero with `status_success = 0x00000000L`, spoofs `process_debug_object_handle = 0x1Eu` as null with `status_port_not_set = 0xC0000353L`, and reports `process_debug_flags = 0x1Fu` as `1`; other classes delegate through `nt_query_information_process_hook`.
+- `nt_set_information_thread_stub(HANDLE, UINT, PVOID, ULONG) -> LONG` returns `status_success` for `thread_hide_from_debugger = 0x11u`, otherwise invokes `nt_set_information_thread_hook`.
+- `nt_set_information_process_stub(HANDLE, UINT, PVOID, ULONG) -> LONG` accepts `process_debug_flags` changes without effect and delegates all other classes through `nt_set_information_process_hook`.
+- `nt_query_system_information_stub(UINT, PVOID, ULONG, PULONG) -> LONG` delegates through `nt_query_system_information_hook`, then rewrites `system_kernel_debugger_information = 0x23u` output bytes to `KernelDebuggerEnabled = FALSE` and `KernelDebuggerNotPresent = TRUE` when `status_success` and `info_len >= 2`.
+- `nt_get_context_thread_stub(HANDLE, PCONTEXT) -> LONG` delegates through `nt_get_context_thread_hook` and zeros `CONTEXT_DEBUG_REGISTERS` fields `Dr0`, `Dr1`, `Dr2`, `Dr3`, `Dr6`, and `Dr7` on successful queries.
+- `nt_set_context_thread_stub(HANDLE, const CONTEXT*) -> LONG` copies debug-register contexts, zeros `Dr0`–`Dr3`, `Dr6`, and `Dr7`, then invokes `nt_set_context_thread_hook` with the sanitized copy.
+- `nt_set_debug_filter_state_stub(ULONG, ULONG, BOOLEAN) -> LONG` always returns `status_success`.
+- `nt_yield_execution_stub() -> LONG` delegates to `nt_yield_execution_hook`.
+- `is_debugger_present_stub() -> BOOL` always returns `FALSE`; `check_remote_debugger_present_stub(HANDLE, PBOOL) -> BOOL` writes `FALSE` when `present != nullptr` and returns `TRUE`.
+- `output_debug_string_a_stub(LPCSTR)` and `output_debug_string_w_stub(LPCWSTR)` discard debug output.
+
+## Patching and PE/Import Handling
+
+- `mem_write(void*, const void*, size_t) -> bool` temporarily changes protection to `PAGE_EXECUTE_READWRITE`, copies bytes with `memcpy`, calls `FlushInstructionCache`, restores protection, and reports `VirtualProtect` failure.
+- `scan(uint8_t*, size_t, const uint8_t*, size_t) -> uint8_t*` performs an exact byte-pattern search and returns `nullptr` for empty patterns, undersized images, or missing signatures.
+- `get_module_range(const char*, uint8_t*&, size_t&) -> bool` resolves a module with `GetModuleHandleA`, validates `IMAGE_DOS_SIGNATURE` and `IMAGE_NT_SIGNATURE`, and returns `IMAGE_NT_HEADERS::OptionalHeader.SizeOfImage`.
+- `patch_xlive_imports(uint8_t*, size_t)` scans `IMAGE_IMPORT_DESCRIPTOR` entries for case-insensitive `"kernel32.dll"` or `"kernel32"` and replaces `IsDebuggerPresent`, `CheckRemoteDebuggerPresent`, `OutputDebugStringA`, and `OutputDebugStringW` IAT entries via `mem_write`; malformed access is suppressed by `__try/__except (EXCEPTION_EXECUTE_HANDLER)`.
+- `patch_peverifyhash(uint8_t*, size_t)` searches the 22-byte `prologue` signature, falls back to `peverifyhash_rva = 0x000F36B3u`, and overwrites the target with `ret_success = { 0x31, 0xC0, 0xC2, 0x0C, 0x00 }`, making `PEVerifyHash` return success with `ret 0x0C`.
+- `patch_peverifyhash()` skips absent signatures, already-patched `ret_success`, or unexpected bytes; `dbg()` records `"PEVerifyHash patch skipped: signature missing"`, `"PEVerifyHash patch already applied"`, `"PEVerifyHash patch skipped: unexpected bytes at +0x%X"`, and `"PEVerifyHash patch applied at +0x%X"` in `DEBUG`.
+
+## Lifecycle and Coupling
+
+- `hook_ntdll()` installs `utils::hook::detour` instances for `NtQueryInformationProcess`, `NtSetInformationThread`, `NtSetInformationProcess`, `NtQuerySystemInformation`, `NtGetContextThread`, `NtSetContextThread`, `NtSetDebugFilterState`, and `NtYieldExecution` using `GetProcAddress`.
+- `clear_peb_debug_flags()` uses x86 FS offsets `0x18` and `0x30`, clears PEB byte offset `0x02` (`BeingDebugged`) and DWORD offset `0x68` (`NtGlobalFlag`), and safely returns when the PEB is null.
+- `peb_cleaner_thread(LPVOID) -> DWORD` runs indefinitely, calling `clear_peb_debug_flags()` followed by `Sleep(16)`, so `apply_early()` intentionally creates a persistent thread and immediately closes its handle.
+- `patch_xlive()` targets only the loaded `"xlive.dll"` module and applies `patch_peverifyhash()` plus `patch_xlive_imports()`.
+- `dbg(const char*, ...)` formats into a 512-byte buffer and emits `[xlive] ` through `OutputDebugStringA` in `DEBUG`; the release implementation is a no-op.
+- `std_include.hpp`, `utils/hook.hpp`, `loader/component_loader.hpp`, and `xlive.hpp` supply Windows types, detour machinery, component integration, and xlive declarations.

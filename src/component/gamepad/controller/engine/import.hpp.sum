@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:22:01.081Z
+content_hash: 0977331fddf533fe2326184d41491a3733ea365ad073d7e6beee09deaad47fa4
+purpose: import.hpp declares the gamepad controller-engine engine-import interface and packed aim-assist memory layout.
+---
+**import.hpp declares the gamepad controller-engine engine-import interface and packed aim-assist memory layout.**
+
+## Interface
+
+`dvar_t = game::dvar_s`, `usercmd_s = game::usercmd_t`; constants `DVAR_NONE`, `DVAR_ARCHIVE`, `DVAR_ROM`, `DVAR_CHEAT`, `K_ENTER`, `K_ESCAPE`, `K_UPARROW`, `K_DOWNARROW`, `K_LEFTARROW`, `K_RIGHTARROW` alias game dvar flags/key codes.
+
+`Dvar_FindVar(const char*) noexcept -> dvar_t*`; `Dvar_RegisterBool`, `Dvar_RegisterFloat`, `Dvar_RegisterInt`, `Dvar_RegisterString -> dvar_t*`; `Dvar_SetBool`, `Dvar_SetInt`, `Dvar_SetString -> void`; `Sys_Milliseconds() noexcept -> int`; `menu_or_console_active() noexcept -> bool`; `emit_key(int, bool, unsigned) noexcept -> void`.
+
+## Packed Layout
+
+`AimScreenTarget` stores `entityNum`, 2D `clipMins`/`clipMaxs`, 3D `position`/`velocity`, `distSqr`, and `crosshairDistSqr`.
+
+`AimAssistGlobals` stores initialization, slowdown/lock-on regions, `playerVelocity`, `viewAxis`, `adsLerp`, 64 `screenTargets`, and `screenTargetCount`; `#pragma pack(1)` fixes offsets `screenTargets == 0xFC`, `screenTargetCount == 0xDFC`, `sizeof == 0xE34`.
+
+`aim_globals(int) noexcept -> AimAssistGlobals&`; `view_pitch() noexcept -> float&`; `view_yaw() noexcept -> float&`; `frame_seconds() noexcept -> float`.

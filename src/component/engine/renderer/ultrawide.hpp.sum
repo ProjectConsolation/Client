@@ -1,0 +1,13 @@
+---
+generated_at: 2026-08-31T15:22:54.263Z
+content_hash: 536587991b4d11c42f62b0fa9a6a21426efe9a63fd9105696e3217cfc953ae86
+purpose: ultrawide.hpp declares ultrawide resolution commands.
+---
+**ultrawide.hpp declares ultrawide resolution commands.**
+
+## API
+
+- `set_custom_resolution_command(const std::string&)` → `void`
+- `reset_custom_resolution_command()` → `void`
+- `dump_ultrawide_command()` → `void`
+- `apply_ultrawide_now_command()` → `void`

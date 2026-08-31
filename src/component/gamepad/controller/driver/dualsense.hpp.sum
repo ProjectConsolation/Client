@@ -1,0 +1,24 @@
+---
+generated_at: 2026-08-31T15:22:17.624Z
+content_hash: b43a0b9e9e0df8d420dbfbb8a04c8db3a14117970cb2f4ed0f896c673504b8e4
+purpose: dualsense.hpp decodes DualSense HID reports and defines the first-class DualSense driver.
+---
+**dualsense.hpp decodes DualSense HID reports and defines the first-class DualSense driver.**
+
+## Interface
+
+`decode_dualsense(span<const byte>, connection, raw_sample&, canonical_sample&, bool edge = false) noexcept -> bool` validates and decodes USB report `0x01` (64 bytes) or Bluetooth report `0x31` (78 bytes), leaving outputs untouched on framing, length, or CRC-32 failure.
+
+`dualsense_driver(const context&, transport::hid_device&, device_id)` constructs the driver; `family() const noexcept -> controller::family` returns `controller::family::dualsense`; `device() const noexcept -> device_id` returns `device_`; `poll(raw_sample&, canonical_sample&) noexcept -> bool` reads and decodes input; `submit(const output_request&) noexcept -> void` submits output requests.
+
+`read_and_decode(raw_sample&, canonical_sample&, bool edge) noexcept -> bool` shares HID read/decode logic with the Edge driver and enables Edge handling when `edge` is true.
+
+## Behavioral contracts
+
+`decode_dualsense` selects report framing from `connection`; Bluetooth CRC-32 is checked before field access. `edge` decodes rear-button bits `buttons[2]` bits `4..7` and records back-button capability; standard DualSense leaves those bits uninterpreted.
+
+`dualsense_driver` tracks `ctx_`, `hid_`, `device_`, and `link_`; `bt_output_sequence_` is a per-device Bluetooth output counter wrapping at 16 and unused over USB. `minimal_reported_` suppresses repeated diagnostics for minimal Bluetooth reports.
+
+## Coupling
+
+`decode_dualsense` depends on `types.hpp`, `utility.hpp`, `context.hpp`, `driver.hpp`, and `transport::hid`; DualSense and Edge share `hid-playstation.c`’s `struct dualsense_input_report`. Output for haptics, adaptive triggers, and LEDs remains withheld pending verified report encoding.

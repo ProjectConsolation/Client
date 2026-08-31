@@ -1,0 +1,27 @@
+---
+generated_at: 2026-08-31T15:23:02.412Z
+content_hash: 758cef4d1363d7cd70f554ec882bd7240f3c774c7ff8333d1161edcee8f7f290
+purpose: draw_version.cpp draws the configurable Project: Consolation watermark and game version text in the renderer pipeline.
+---
+**draw_version.cpp draws the configurable Project: Consolation watermark and game version text in the renderer pipeline.**
+
+## Interface
+
+- `draw_version::component::post_load() override` registers a renderer-pipeline scheduler loop invoking `cg_draw_watermark()` and `cg_draw_version()`.
+- `REGISTER_COMPONENT(draw_version::component)` is commented out, so the component is currently not registered.
+
+## Rendering Behavior
+
+- `cg_draw_watermark()` requires enabled `dvars::cg_drawWatermark`, registers `"fonts/objectivefont"`, and draws `"Project: Consolation"` bottom-right at `watermark_font_scale = 0.25f`, with margins `watermark_margin_x = 8.0f` and `watermark_margin_y = 6.0f`.
+- `cg_draw_version()` requires enabled `dvars::cg_drawVersion`, reads the `"version"` dvar through `game::Dvar_FindVar("version")`, registers `"fonts/consolefont"`, and draws the version bottom-right using `cg_drawVersionX` default `50.0f` and `cg_drawVersionY` default `18.0f`.
+- `draw_text_shadowed()` emits `game::R_AddCmdDrawText` twice: shadow at `(x + shadow_offset_x, y + shadow_offset_y)` and foreground at `(x, y)`, with offsets `1.0f, 1.0f`, `shadow_color = {0.0f, 0.0f, 0.0f, 0.65f}`, and `text_color = {0.86f, 0.82f, 0.72f, 0.60f}`.
+- `watermark_font_scale = 0.25f` and `version_font_scale = 1.0f` control text scaling; `R_TextWidth` uses `0x7FFFFFFF` or `std::numeric_limits<int>::max()` character limits.
+
+## Layout and Dependencies
+
+- `resolve_layout_width(const game::ScreenPlacement&)` selects `max(realViewportSize)` then `max(virtualViewableMax)`, falling back to `640.0f`.
+- `resolve_layout_height(const game::ScreenPlacement&)` selects `min(realViewportSize)` then `min(virtualViewableMax)`, falling back to `480.0f`.
+- `get_layout_width()` and `get_layout_height()` query `game::ScrPlace_GetViewPlacement()`.
+- `get_text_width()` returns scaled `game::R_TextWidth`; `get_line_height()` uses `Font_s::pixelHeight`, defaulting to `18.0f * scale`.
+- Null/empty text, missing `Font_s`, missing fonts, invalid viewport width, and empty version dvar values abort drawing safely.
+- `game::R_RegisterFont`, `game::R_AddCmdDrawText`, `game::R_TextWidth`, `game::Dvar_FindVar`, `dvars::*`, and `scheduler::pipeline::renderer` define runtime coupling and renderer lifecycle.

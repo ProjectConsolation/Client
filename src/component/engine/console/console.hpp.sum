@@ -1,0 +1,12 @@
+---
+generated_at: 2026-08-31T15:23:01.950Z
+content_hash: e300f20fd031bd1fdb04a46dde534518ae30ab96bc23ad2f7e9202e6a01d229c
+purpose: console.hpp defines console matching, variadic logging, and `GIT_VERSION` fallback.
+---
+**console.hpp defines console matching, variadic logging, and `GIT_VERSION` fallback.**
+
+## API
+
+`match_compare(std::string,const std::string&,bool)->bool`; `print(int,const char*,...)->void`; `console_type`: `con_type_error=1`, `con_type_debug=2`, `con_type_warning=3`, `con_type_info=7`.
+
+`error`, `debug`, `warn`, `info(const char*,Args&&...)->void` forward to `print`; `debug` requires `DEBUG`. `GIT_VERSION` defaults to `"unknown"`.

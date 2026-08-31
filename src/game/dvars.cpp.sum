@@ -1,0 +1,102 @@
+---
+generated_at: 2026-08-31T15:24:32.416Z
+content_hash: 03772c5cad5d020df67ebe61db36fe9e8aa1dfa2e89a48ee76171ee72ad711f5
+purpose: dvars.cpp registers, describes, overrides, replaces, and lifecycle-manages game console variables (dvars).
+---
+**dvars.cpp registers, describes, overrides, replaces, and lifecycle-manages game console variables (dvars).**
+
+## Role and integration
+
+`dvars::component` implements `component_interface::post_load()` and is registered through `REGISTER_COMPONENT(dvars::component)`. `component::post_load()` installs override metadata, schedules main-thread registration, refreshes selected UI dvars every `250ms`, and nulls managed pointers during shutdown.
+
+`game::Dvar_RegisterNew`, `game::Dvar_FindVar`, `game::DvarType`, `game::DvarValue`, `game::DvarLimits`, `game::dvar_s`, and `game::dvar_flags` define the engine-facing dvar ABI. `console::debug` logs registration and override operations; `scheduler::once`, `scheduler::loop`, `scheduler::on_shutdown`, and `scheduler::main` control lifecycle and thread affinity. `utils::string::va` formats domain and value strings; `utils::hook::nop` removes original registration instructions.
+
+## Public state
+
+`dvar_map` is an `std::unordered_map<std::int32_t, dvar_info>` for indexed dvar metadata.
+
+The following `game::dvar_s*` globals cache engine dvar addresses and are initialized to `nullptr`: `con_inputBoxColor`, `con_inputHintBoxColor`, `con_outputBarColor`, `con_outputSliderColor`, `con_outputWindowColor`, `con_inputDvarMatchColor`, `con_inputDvarValueColor`, `con_inputDvarInactiveValueColor`, `con_inputCmdMatchColor`, `g_debugVelocity`, `g_debugLocalization`, `r_borderless`, `bot_maxHealth`, `m_rawInput`, `gpad_enabled`, `gpad_present`, `gpad_in_use`, `gpad_debug`, `gpad_buttonsConfig`, `gpad_sticksConfig`, `gpad_rumble`, `gpad_stick_deadzone_min`, `gpad_stick_deadzone_max`, `gpad_button_deadzone`, `gpad_menu_scroll_delay_first`, `gpad_menu_scroll_delay_rest`, `gpad_menu_scroll_delay_min`, `gpad_menu_scroll_accel_time`, `input_invertPitch`, `cg_drawWatermark`, `cg_drawVersion`, `cg_drawVersionX`, `cg_drawVersionY`, `r_aspectRatioCustomEnable`, `r_aspectRatioCustom`, and `r_ultrawideCustomMode`.
+
+## Domain and value formatting
+
+`dvar_get_vector_domain(int components, const game::DvarLimits& domain) -> std::string` formats vector ranges using `domain.vector.min` and `domain.vector.max`; `-FLT_MAX` and `FLT_MAX` mean unbounded, yielding exact templates `Domain is any %iD vector`, `Domain is any %iD vector with components %g or smaller`, `Domain is any %iD vector with components %g or bigger`, or `Domain is any %iD vector with components from %g to %g`.
+
+`dvar_get_domain(game::dvar_type type, const game::DvarLimits& domain) -> std::string` maps boolean, scalar, vector, integer, color, enumeration, and string domains to user-facing descriptions: `Domain is 0 or 1`, `Domain is any number`, `Domain is any number %g or smaller`, `Domain is any number %g or bigger`, `Domain is any number from %g to %g`, `Domain is any integer`, `Domain is any integer %i or smaller`, `Domain is any integer %i or bigger`, `Domain is any integer from %i to %i`, `Domain is any 4-component color, in RGBA format`, `Domain is any text`, or `unhandled dvar type '%i'`.
+
+`dvar_get_domain()` treats `domain.enumeration.stringCount` as the unbounded-integer sentinel when it equals `INT_MIN`; enumeration output starts with `Domain is one of the following:` and appends `\n  %2i: %s` per entry.
+
+`dvar_type_name(game::DvarType type) -> const char*` returns `bool`, `int`, `float`, or `string` for `DVAR_TYPE_BOOL`, `DVAR_TYPE_INT`, `DVAR_TYPE_FLOAT`, and `DVAR_TYPE_STRING`; all other types return `dvar`.
+
+`dvar_value_to_string(const dvar_spec& spec) -> std::string` serializes booleans as `true`/`false`, integers with `%d`, floats with `%g`, strings as `"\"%s\""`, and unsupported types as `<?>`; null string values serialize as an empty string.
+
+## Override registration API
+
+`overrides::register_bool_overrides`, `overrides::register_int_overrides`, `overrides::register_float_overrides`, `overrides::register_enum_overrides`, and `overrides::register_string_overrides` store named override records in `std::unordered_map<std::string, ...>` containers.
+
+`overrides::register_bool(const std::string& name, bool value, unsigned int flags) -> void` stores `dvar_bool{value, flags}` in `register_bool_overrides`.
+
+`overrides::register_int(const std::string& name, int value, int min, int max, unsigned int flags) -> void` stores value, bounds, and flags in `register_int_overrides`.
+
+`overrides::register_float(const std::string& name, float value, float min, float max, unsigned int flags) -> void` stores value, bounds, and flags in `register_float_overrides`.
+
+`overrides::register_enum(const std::string& name, const char* const* value_list, int default_index, unsigned int flags) -> void` stores the enum list, default index, and flags in `register_enum_overrides`.
+
+`overrides::register_string(const std::string& name, const std::string& value, unsigned int flags) -> void` stores the default string and flags in `register_string_overrides`.
+
+## Engine registration wrappers
+
+`Dvar_RegisterFloat(const char* dvar_name, const char* description, double float_value, double min_value, double max_value, std::uint16_t flags) -> game::dvar_s*` builds `DvarValue::value`, `DvarLimits::value`, logs `registered dvar '%s'\n`, and calls `game::Dvar_RegisterNew(..., game::DvarType::DVAR_TYPE_FLOAT, ...)`.
+
+`Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags) -> game::dvar_s*` fills `DvarValue::vector[0..3]`, sets `DvarLimits::vector`, and registers `DVAR_TYPE_FLOAT_4`.
+
+`Dvar_RegisterBool(const char* dvar_name, int value_default, const char* description, std::uint16_t flags) -> game::dvar_s*` maps `value_default` to `DvarValue::enabled`, constrains `DvarLimits::integer` to `[0, 1]`, and registers `DVAR_TYPE_BOOL`.
+
+`Dvar_RegisterInt(const char* dvar_name, const char* description, int value_default, int min, int max, std::uint16_t flags) -> game::dvar_s*` fills integer value and bounds, then registers `DVAR_TYPE_INT`.
+
+`Dvar_RegisterString(const char* dvar_name, const char* value_default, const char* description, std::uint16_t flags) -> game::dvar_s*` fills `DvarValue::string`, leaves limits default-initialized, and registers `DVAR_TYPE_STRING`.
+
+`Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value) -> char*` invokes the game executable at `game::game_offset(0x10274F80)` through inline x86 assembly, passing `value` on the stack and `dvar` in `ecx`; the returned engine-owned `char*` must be treated according to engine lifetime rules.
+
+## Specification builders and registration
+
+`register_dvar(const dvar_spec& spec, bool log) -> game::dvar_s*` dispatches on `spec.type`, optionally logs `overriding %s dvar '%s' with %s\n`, and delegates to the typed wrappers; unsupported types return `nullptr`.
+
+`make_bool(const char* name, const char* description, bool value, std::uint16_t flags) -> dvar_spec` creates `DVAR_TYPE_BOOL`, stores `value.enabled`, and assigns integer domain `[0, 1]`.
+
+`make_int(const char* name, const char* description, int value, int min, int max, std::uint16_t flags) -> dvar_spec` creates `DVAR_TYPE_INT`, stores `value.integer`, and assigns integer domain `[min, max]`.
+
+`make_float(const char* name, const char* description, float value, float min, float max, std::uint16_t flags) -> dvar_spec` creates `DVAR_TYPE_FLOAT`, stores `value.value`, and assigns scalar domain `[min, max]`.
+
+`make_string(const char* name, const char* description, const char* value, std::uint16_t flags) -> dvar_spec` creates `DVAR_TYPE_STRING`, stores `value.string`, and leaves its domain default-initialized.
+
+`replace_dvar(const dvar_spec& spec, bool log) -> game::dvar_s*` finds `spec.name`; existing dvars receive the new value in `current`, `latched`, and `reset`, receive `spec.domain`, set `modified = true`, and retain only writable existing flags plus `spec.flags`. Missing dvars are created through the typed registration wrappers, with optional `registered %s dvar '%s' = %s\n` logging.
+
+`replace_dvar_at(std::uintptr_t nop_address, std::size_t nop_size, game::dvar_s** target, const dvar_spec& spec, bool log) -> game::dvar_s*` calls `utils::hook::nop(nop_address, nop_size)`, reuses an existing dvar while preserving its value, updates domain and writable flags, optionally writes the result through `target`, or registers a new dvar via `register_dvar`.
+
+`set_saved_dvar_flags(game::dvar_s* dvar, std::uint16_t desired_flags)` is private and ignores null pointers; it removes existing `read_only`, `write_protected`, and `latched` bits, then ORs `desired_flags` into the remaining `std::uint16_t` flags.
+
+## Runtime dvar set
+
+`component::post_load()` registers the override `monkeytoy = false` with `game::dvar_flags::none`.
+
+The `scheduler::once` callback on `scheduler::main` initializes `r_borderless` by reusing `game::Dvar_FindVar("r_borderless")` or registering saved `r_borderless` with default `0` and description `Do not use a border in windowed mode`.
+
+The `scheduler::once` callback registers `g_debugVelocity`, `g_debugLocalization`, `bot_maxHealth`, `m_rawInput`, `gpad_enabled`, `gpad_present`, `gpad_in_use`, `gpad_debug`, `gpad_buttonsConfig`, `gpad_sticksConfig`, `gpad_rumble`, `gpad_stick_deadzone_min`, `gpad_stick_deadzone_max`, `gpad_button_deadzone`, `gpad_menu_scroll_delay_first`, `gpad_menu_scroll_delay_rest`, `gpad_menu_scroll_delay_min`, `gpad_menu_scroll_accel_time`, `input_invertPitch`, `cg_drawWatermark`, `cg_drawVersion`, `cg_drawVersionX`, and `cg_drawVersionY`.
+
+`bot_maxHealth` defaults to `100` with domain `[1, 1000]`; `m_rawInput` defaults to `1`; `gpad_enabled` defaults to `1`; `gpad_present`, `gpad_in_use`, `gpad_debug`, and `input_invertPitch` default to `0`; `gpad_rumble`, `cg_drawWatermark`, and `cg_drawVersion` default to `1`.
+
+`gpad_buttonsConfig` defaults to `buttons_default_alt`; `gpad_sticksConfig` defaults to `thumbstick_default`; `gpad_stick_deadzone_min` defaults to `0.2` with `[0.0, 1.0]`; `gpad_stick_deadzone_max` defaults to `0.01` with `[0.0, 1.0]`; and `gpad_button_deadzone` defaults to `0.13` with `[0.0, 1.0]`.
+
+`gpad_menu_scroll_delay_first` defaults to `420` milliseconds with `[0, 1000]`; `gpad_menu_scroll_delay_rest` defaults to `210` milliseconds with `[0, 1000]`; `gpad_menu_scroll_delay_min` defaults to `50` milliseconds with `[0, 1000]`; and `gpad_menu_scroll_accel_time` defaults to `1500` milliseconds with `[0, 5000]`.
+
+`cg_drawVersionX` defaults to `50.0` with `[-1024.0, 1024.0]`; `cg_drawVersionY` defaults to `18.0` with `[-1024.0, 1024.0]`; `cg_drawWatermark` describes the bottom-right Consolation watermark; and `cg_drawVersion` controls game-version rendering.
+
+`component::post_load()` calls `replace_dvar()` for `g_speed = 210`, `ui_smallFont = 0.0`, `ui_bigFont = 0.0`, `ui_extraBigFont = 0.0`, and `cg_overheadNamesSize = 0.5`, all saved and bounded by `[0, 1000]` for `g_speed` or `[0.0, 1.0]` for the font/overhead scales.
+
+The `scheduler::loop` callback reapplies the four UI specifications—`ui_smallFont`, `ui_bigFont`, `ui_extraBigFont`, and `cg_overheadNamesSize`—on `scheduler::main` every `250ms`, forcing runtime values and domains back to the configured defaults.
+
+The `scheduler::on_shutdown` callback nulls managed pointers from `bot_maxHealth` through `cg_drawVersion`, plus `r_aspectRatioCustomEnable`, `r_aspectRatioCustom`, and `r_ultrawideCustomMode`; console color globals and `r_borderless` are not cleared by this callback.
+
+## Annex References
+
+No reproduction-critical multiline constants or prompt templates are defined.

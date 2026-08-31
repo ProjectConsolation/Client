@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:21:34.419Z
+content_hash: 16ccb06a9f0a5e86982ee21c11efd1c7554c530847332f86d6d0a5eb98a136dc
+purpose: integrator.hpp does frame-time-independent aim turn-rate integration with controlled acceleration/deceleration.
+---
+**integrator.hpp does frame-time-independent aim turn-rate integration with controlled acceleration/deceleration.**
+
+## API
+
+- `turn_integrator::limits` stores `deg_per_s2 accel` and `deg_per_s2 decel`; zero means instantaneous snapping.
+- `turn_integrator::advance(deg_per_s target, const limits&, seconds dt) noexcept` ramps `current_` toward `target`, returning trapezoid-integrated `degrees`.
+- `turn_integrator::current() const noexcept -> deg_per_s` returns the current rate.
+- `turn_integrator::reset() noexcept` sets `current_` to `0 deg/s`.
+
+## Design
+
+`turn_integrator` uses piecewise-linear rate ramps, limiting acceleration/deceleration independently while preserving subdivision-invariant angle integration. `current_` is the sole mutable state.
+
+## Dependencies
+
+`types.hpp` and `utility.hpp` supply controller units/helpers; `clock.hpp` supplies `seconds`; `aim/types.hpp` supplies `degrees`, `deg_per_s`, and `deg_per_s2`.

@@ -1,0 +1,19 @@
+---
+generated_at: 2026-08-31T15:22:25.788Z
+content_hash: 9323e1f66827e68fb30ae56b340cf723b254cd7e98306defcdca513d266fbe68
+purpose: binding.hpp defines `mapping::binding_table` and `apply_button_layout` for engine-key-to-command bindings.
+---
+**binding.hpp defines `mapping::binding_table` and `apply_button_layout` for engine-key-to-command bindings.**
+
+## Interface
+
+- `binding_table::bind(engine_key, string)` assigns a command; `binding_table::bind(engine_key, action)` assigns a logical action’s command.
+- `binding_table::unbind(engine_key) noexcept` clears one binding; `binding_table::clear() noexcept` clears all bindings.
+- `binding_table::command_for(engine_key) const noexcept` returns `const string*`, or `nullptr` when unbound.
+- `binding_table::for_each(function_ref<void (engine_key, const string&)>) const` visits bound keys in engine-key order.
+- `binding_table::size() const noexcept` returns the number of bound keys.
+- `apply_button_layout(binding_table&, string_view)` clears and populates named layouts: `gamepad_default`, `tactical`, `lefty`, `nomad`, `_alt`; unknown names fall back to default.
+
+## Representation and Dependencies
+
+`binding_table::commands_` is `array<string, binding_table::count>`, indexed by `mapping::key_index`; `binding_table::count` equals `engine_key_count`, and empty strings represent unbound keys. `types.hpp` supplies `string`, `string_view`, `array`, `size_t`, and `function_ref`; `key.hpp` supplies `engine_key`; `logical.hpp` supplies `action`.

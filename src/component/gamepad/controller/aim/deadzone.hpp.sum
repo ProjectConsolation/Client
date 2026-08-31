@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:21:33.921Z
+content_hash: f2d3eeacbe7df3db7d7784ddb07d3e2902ac4d7392741435e241227b9fd2d954
+purpose: deadzone.hpp applies validated radial deadzones to gamepad aim stick vectors.
+---
+**deadzone.hpp applies validated radial deadzones to gamepad aim stick vectors.**
+
+## Interface
+
+- `deadzone_params` stores `magnitude inner`, `magnitude outer`, and `magnitude anti`, defaulting to `0.0f`.
+- `validate(const deadzone_params&, string& why) noexcept` returns `bool`, enforcing each value in `[0, 1)` and `inner < 1 - outer`; failures write a specific reason.
+- `apply(const deadzone_params&, stick_vector) noexcept` returns `stick_vector`, assuming validated params and asserting the invariant.
+
+## Behavior & Dependencies
+
+`apply` maps magnitude to zero through `inner`, linearly to one at `1 - outer`, clamps beyond saturation, applies `anti` after non-zero output, and preserves direction exactly. `types.hpp` supplies `magnitude`, `string`, and controller types; `utility.hpp`, `aim/types.hpp`, and `sample/axis.hpp` supply supporting utilities and `stick_vector`.

@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:21:50.296Z
+content_hash: eacfec31131fc57df12e7cf19975eb1ef5dba04a570c9f635af4da8d1f3b56d4
+purpose: command.cpp registers gamepad controller console commands.
+---
+**command.cpp registers gamepad controller console commands.**
+
+## API
+
+`register_commands(const context& ctx, runtime& rt) -> void` adds `controller_status`, `bindgpbuttonsconfigs`, and `bindgpsticksconfigs`.
+
+## Behavior
+
+`controller_status` reports `device_count()` and `keys().in_use()`; layout commands call `reapply_layout()` or report `sticks_config` via `read(..., "thumbstick_default")`.

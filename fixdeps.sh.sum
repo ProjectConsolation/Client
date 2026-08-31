@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:24:15.227Z
+content_hash: e4cd61e157dc8683b770c80786a6d1d0dce1f6e8ffe362294bfa5a327902e161
+purpose: fixdeps.sh reconstructs broken Git submodules from `.gitmodules`.
+---
+**fixdeps.sh reconstructs broken Git submodules from `.gitmodules`.**
+
+## Behavior
+
+`set -e` aborts on failure; `git config` matches `^submodule\..*\.path`, reads `.url`/`.branch`, and echoes `git submodule add` commands.
+
+## Interface
+
+`fixdeps.sh` exports no symbols; requires Git and POSIX shell (though `[[ ... ]]` is non-POSIX).

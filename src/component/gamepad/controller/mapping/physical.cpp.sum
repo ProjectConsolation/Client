@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:22:37.086Z
+content_hash: 63dd7af7881372d7fc2f99045da84c3ecc3064afbde2acf0252ddf292b3fa651
+purpose: physical.cpp maps physical gamepad inputs to engine keys and evaluates analog-stick deflection.
+---
+**physical.cpp maps physical gamepad inputs to engine keys and evaluates analog-stick deflection.**
+
+## Public interface
+
+- `optional<engine_key> to_engine_key(button b) noexcept` maps standard `button` values to `engine_key`; `guide`, `touchpad`, `mute`, Edge paddles/functions, and `count` return `nullopt`.
+- `engine_key to_engine_key(const apad_input& a) noexcept` maps left-stick directions to `apad_*` and right-stick directions to `rstick_*`; invalid directions fall back to `*_up`.
+- `optional<engine_key> to_engine_key(const physical_input& p) noexcept` dispatches `physical_input` variants through `std::get_if<button>` or `std::get<apad_input>`.
+- `bool axis_deflected(float value, bool positive, bool was_down, float pressed, float hysteresis) noexcept` tests `value > threshold` for positive axes or `value < -threshold` otherwise, with `threshold = pressed + (was_down ? -hysteresis : hysteresis)`.
+
+## Mapping contracts
+
+`button` mappings include `face_south→button_a`, `face_east→button_b`, `face_west→button_x`, `face_north→button_y`, shoulder/trigger/stick buttons, `start`, `back`, and all four `dpad_*` keys. `apad_input` deliberately keeps left and right sticks independently bindable because shared base-engine keys would collide. `physical_input` requires a `button` or `apad_input` alternative; unexpected variants can throw through `std::get`.
+
+## Coupling
+
+`physical.cpp` depends on `std_include.hpp`, `component/gamepad/controller/mapping/physical.hpp`, `std::variant`, `button`, `apad_input`, `physical_input`, `stick`, `stick_direction`, `engine_key`, `optional`, and `nullopt` within `gamepad::unstable::controller::mapping`.

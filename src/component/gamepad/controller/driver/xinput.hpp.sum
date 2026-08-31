@@ -1,0 +1,19 @@
+---
+generated_at: 2026-08-31T15:22:25.951Z
+content_hash: 487fa131ed04b7372b6dd929567a6273c13206cece6303140d812a84bf8dbc12
+purpose: xinput.hpp decodes XInput states and defines the Xbox-class controller driver.
+---
+**xinput.hpp decodes XInput states and defines the Xbox-class controller driver.**
+
+## Interface
+
+- `decode_xinput(const XINPUT_GAMEPAD&, bool has_guide, raw_sample&, canonical_sample&) noexcept` converts XInput state into raw and canonical samples; `has_guide` controls guide-button observability.
+- `xinput_driver(const context&, const transport::xinput_module&, device_id, user_index)` constructs a borrowed-module, borrowed-slot driver.
+- `xinput_driver::family() const noexcept` returns `controller::family::xbox`.
+- `xinput_driver::device() const noexcept` returns `device_id device_`.
+- `xinput_driver::poll(raw_sample&, canonical_sample&) noexcept` performs packet-based state polling.
+- `xinput_driver::submit(const output_request&) noexcept` submits dual-motor rumble output.
+
+## State and Integration
+
+`xinput_driver` inherits `driver`, references `context`, `xinput_module`, `device_id`, and `user_index`, and tracks per-instance change detection via `uint32_t last_packet_ {0}` plus `bool have_packet_ {false}`. `decode_xinput` preserves XInput-specific analog triggers, guide-button support, packet numbers, and Xbox button semantics; PlayStation devices require separate drivers. `types.hpp`, `utility.hpp`, `context.hpp`, `driver.hpp`, and `xinput-module.hpp` define the coupled sample, runtime, and transport APIs.

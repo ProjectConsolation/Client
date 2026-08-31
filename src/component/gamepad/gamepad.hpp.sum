@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:23:27.744Z
+content_hash: 60e06aa60292e532863efc4e2ce3bcc5c07ac09c4600abc24008acb46b4e7a3f
+purpose: gamepad.hpp declares gamepad input-state APIs.
+---
+**gamepad.hpp declares gamepad input-state APIs.**
+
+## Exports
+
+`is_controller_active() -> bool`; `should_hide_cursor() -> bool`; `note_mouse_activity() -> void`.

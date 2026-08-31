@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:22:06.986Z
+content_hash: 50c48e817b33e4b935f699da1e7d5ccd23b335d9db288362b3560a583efb24f7
+purpose: decode.cpp decodes PlayStation controller report fields, verifies CRC-32, maps hats, and normalizes stick coordinates.
+---
+**decode.cpp decodes PlayStation controller report fields, verifies CRC-32, maps hats, and normalizes stick coordinates.**
+
+## Interface
+
+- `rd_u8(span<const byte> d, size_t off) noexcept -> uint8_t` reads one byte; `assert(off < d.size())` guards bounds.
+- `rd_le16(span<const byte> d, size_t off) noexcept -> uint16_t` reads little-endian 16-bit data with `assert(off + 1 < d.size())`.
+- `rd_le16s(span<const byte> d, size_t off) noexcept -> int16_t` converts `rd_le16` to signed form.
+- `rd_le32(span<const byte> d, size_t off) noexcept -> uint32_t` reads little-endian 32-bit data with `assert(off + 3 < d.size())`.
+- `crc32_le(uint32_t crc, span<const byte> data) noexcept -> uint32_t` computes reflected IEEE 802.3 CRC-32 bit-at-a-time using `reflected_polynomial = 0xEDB88320u`.
+- `verify_ps_crc32(uint8_t seed, span<const byte> data, uint32_t expected) noexcept -> bool` seeds CRC with `0xFFFFFFFFu`, processes `seed`, complements the data CRC, and compares against `expected`.
+- `decode_touch_point(span<const byte> p) noexcept -> ps_touch_point` requires `p.size() >= 4`; decodes contact activity/ID plus packed 12-bit `x` and `y`.
+- `apply_hat(button_set& s, uint8_t hat) noexcept -> void` maps hat values `0..7` clockwise from up to `button::dpad_*`; values `>= 8` leave state unchanged.
+- `normalize_ps_stick(uint8_t x, uint8_t y) noexcept -> stick_vector` maps byte coordinates around `(128,128)` to clamped `[-1,1]`, inverts Y, and radially clamps magnitude to `1.0f`.
+
+## Coupling and Contracts
+
+`decode.cpp` depends on `decode.hpp` for `byte`, `span`, `ps_touch_point`, `button_set`, `button`, and `stick_vector`, plus `<cassert>`, `<algorithm>`, and `<cmath>`. `crc32_le` favors auditability over lookup-table speed for reports up to 78 bytes; `verify_ps_crc32` requires the device’s reflected CRC convention and standard polynomial. `decode_touch_point` interprets `contact & 0x80u == 0` as active and `contact & 0x7Fu` as ID. `normalize_ps_stick` uses `127.0f` scale, preserving endpoint clamping and diagonal normalization.

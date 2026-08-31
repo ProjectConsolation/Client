@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:23:31.669Z
+content_hash: 95a0874d0f410d1e24b8f146ab3586b53a938c7b81259afc5d80742a8159eb61
+purpose: controller_input.cpp does controller runtime setup and gamepad activity bridging.
+---
+**controller_input.cpp does controller runtime setup and gamepad activity bridging.**
+
+## Interface
+
+`is_controller_active() -> bool`, `should_hide_cursor() -> bool`, `note_mouse_activity() -> void`; `component::post_load() override` initializes `controller::runtime`.
+
+## Runtime
+
+`post_load` skips on `no_controller`, constructs runtime (`DEBUG` true, otherwise false), calls `controller::engine::install`, schedules `engine_ready` after `100ms`, `frame` every `16ms`, and shutdown `keys().release_all()`. `runtime` is global `unique_ptr`; `REGISTER_COMPONENT` registers `component`.

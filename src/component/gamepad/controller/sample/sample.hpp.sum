@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:22:46.221Z
+content_hash: 844cc23878843b651a21371d3f65a4ca98315a74f0f09af3238c5f4107fb8432
+purpose: sample.hpp does define raw and canonical gamepad samples plus battery-state formatting.
+---
+**sample.hpp does define raw and canonical gamepad samples plus battery-state formatting.**
+
+## API
+
+- `battery_state` stores `status state {status::unknown}` and `optional<uint8_t> percent` (`0..100` when reported).
+- `battery_state::status` enumerates `unknown`, `discharging`, `charging`, `full`.
+- `to_string(battery_state::status) noexcept` returns `const char*`.
+- `raw_sample` stores device-native `array<stick_raw, stick_count> sticks`, `array<uint16_t, trigger_count> triggers`, `uint32_t buttons`, and optional `motion_sample`, `touchpad`, `battery_state`.
+- `canonical_sample` stores device-neutral `button_set buttons`, `array<stick_sample, stick_count> sticks`, `array<trigger_sample, trigger_count> triggers`, optional `touchpad`, `motion_sample`, `battery_state`, plus `capabilities caps`.
+
+## Contracts
+
+`raw_sample` preserves minimally decoded units, button bits, and layouts for calibration/diagnostics; gameplay excludes it. `canonical_sample` preserves capability absence via empty `optional` values, distinguishes absent from zero, and uses `caps` for feature presentation without driver inspection. `DualSense` may populate touch/motion, while `XInput` may leave them empty.
+
+## Dependencies
+
+`types.hpp` and `utility.hpp` supply shared aliases; `axis.hpp`, `button.hpp`, `trigger.hpp`, `touch.hpp`, `motion.hpp`, and `capability.hpp` define component types. Symbols reside in `gamepad::unstable::controller`.

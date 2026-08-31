@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:22:02.002Z
+content_hash: ad121539b911b01404b3c527eadeb41c645f088370e2a382d61f7d5723e5efbe
+purpose: import.cpp adapts gamepad controller engine calls to game runtime dvars, input events, timing, and memory-backed aim/...
+---
+**import.cpp adapts gamepad controller engine calls to game runtime dvars, input events, timing, and memory-backed aim/view state.**
+
+## Interface
+
+- `Dvar_FindVar(const char* name) noexcept -> dvar_t*` forwards to `game::Dvar_FindVar`.
+- `Dvar_RegisterBool(const char*, bool, int, const char*) -> dvar_t*`, `Dvar_RegisterFloat(const char*, float, float, float, int, const char*) -> dvar_t*`, `Dvar_RegisterInt(const char*, int, int, int, int, const char*) -> dvar_t*`, and `Dvar_RegisterString(const char*, const char*, int, const char*) -> dvar_t*` return existing dvars or register through `dvars::Dvar_Register*`, narrowing flags to `std::uint16_t`.
+- `Dvar_SetBool(dvar_t*, bool) noexcept` and `Dvar_SetInt(dvar_t*, int) noexcept` synchronize `current`, `latched`, and `reset`; `Dvar_SetString(dvar_t*, const char*) noexcept` calls `game::Dvar_SetString` by `dvar->name`.
+- `Sys_Milliseconds() noexcept -> int` returns `GetTickCount()`.
+- `menu_or_console_active() noexcept -> bool` checks `game_console::is_active()`, missing/disabled `"cl_ingame"`, and nonzero `*game::keyCatchers`.
+- `emit_key(int key, bool down, unsigned time) noexcept` invokes `game::CL_KeyEvent(0, key, down ? 1 : 0, time)`.
+- `aim_globals(int client) noexcept -> AimAssistGlobals&`, `view_pitch() noexcept -> float&`, and `view_yaw() noexcept -> float&` expose `game::game_offset` memory.
+- `frame_seconds() noexcept -> float` clamps address `0x11255D70` milliseconds to `[0, 200]`, then multiplies by `0.001f`.
+
+## Coupling
+
+`set_value<T>` is an internal template with bool-specific `enabled` assignment and integer assignment otherwise; `game::game_offset` bases client aim state at `0x1149D290`, pitch at `0x11A9FEC0`, and yaw at `0x11A9FEC4`.

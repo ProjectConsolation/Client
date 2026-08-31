@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:21:55.612Z
+content_hash: a197c63b63391f02b297088561a68f695c35ad5b4148e4ec3e76eb52bda81e19
+purpose: bind.cpp queues controller bindings and tracks custom layouts.
+---
+**bind.cpp queues controller bindings and tracks custom layouts.**
+
+## Interface
+
+`controller_command_for(const char*) noexcept -> const char*` maps `+activate`/`+reload`→`+usereload`, `+melee_breath`→`+holdbreath`, preserving other commands and null.
+
+`bind_bridge::bind_bridge(const context&, const dvars&)`; `apply_layout(string_view)`, `apply_configured_layout()`, `migrate_controller_commands()`, `reapply_layout()`, `note_manual_rebind() noexcept`, and `command_keys(int, bool, const char*, int (&)[2]) noexcept -> size_t`.
+
+## Contracts
+
+`apply_layout` uses `mapping::binding_table`/`apply_button_layout`, queues `bind <key> "<command>"\n` through `game::Cbuf_AddText`, and reports binding count via `context::report`.
+
+`custom_layout` is `"custom"`; `apply_configured_layout` skips it, while `note_manual_rebind` writes it through `Dvar_SetString`. `command_keys` sets both outputs to `-1`, returns `0`; `migrate_controller_commands` is empty.

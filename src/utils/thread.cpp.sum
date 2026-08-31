@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:24:04.753Z
+content_hash: 363b0add3cbb7dfb9784c6380930b590f5e7a3365785e97b1a6c368b5ea04afc
+purpose: thread.cpp manages Windows thread naming, enumeration, suspension, and resumption.
+---
+**thread.cpp manages Windows thread naming, enumeration, suspension, and resumption.**
+
+## Exports
+
+`set_name(const HANDLE, const std::string&) -> bool`; `set_name(const DWORD, const std::string&) -> bool`; `set_name(std::thread&, const std::string&) -> bool`; `set_name(const std::string&) -> bool`; `get_thread_ids() -> std::vector<DWORD>`; `for_each_thread(const std::function<void(HANDLE)>&) -> void`; `suspend_other_threads() -> void`; `resume_other_threads() -> void`.
+
+## Behavior
+
+`set_name` dynamically resolves `SetThreadDescription` from `kernel32.dll`, converts via `string::convert`, and returns `SUCCEEDED`; thread-ID overloads acquire `THREAD_SET_LIMITED_INFORMATION`. `get_thread_ids` snapshots `TH32CS_SNAPTHREAD`, filters `GetCurrentProcessId()`, and validates `THREADENTRY32::dwSize`. `for_each_thread` opens matching threads with `THREAD_ALL_ACCESS`, invokes callbacks, and closes handles via `gsl::finally`. `suspend_other_threads` and `resume_other_threads` skip `GetCurrentThreadId()` and call `SuspendThread`/`ResumeThread`.

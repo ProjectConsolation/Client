@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:23:30.965Z
+content_hash: 31af528bf4fe4cba08eb54e1b80d0dbcef1add573a877332748ecc6b91213975
+purpose: sdl_input.cpp scaffolds an inert SDL gamepad component.
+---
+**sdl_input.cpp scaffolds an inert SDL gamepad component.**
+
+## Symbols
+
+- `sdl_input::component` — `final component_interface`; `post_load() override` is inert.
+
+## Integration
+
+- Includes `component_loader.hpp` and `gamepad.hpp`; `REGISTER_COMPONENT(sdl_input::component)` remains disabled.

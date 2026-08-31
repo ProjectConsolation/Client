@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:23:12.806Z
+content_hash: 821f9d05b82cdbf3eb31ffc4b2194d4fe74c73af39d35e5b8bcb7ea8a8dbaef4
+purpose: context.hpp does define the shared, non-owning service view passed through controller subsystems.
+---
+**context.hpp does define the shared, non-owning service view passed through controller subsystems.**
+
+## Interface
+
+- `context(diagnostic_sink& sink, bool developer) noexcept` stores a borrowed `diagnostic_sink` and immutable developer-mode flag.
+- `diagnostic_sink& diagnostics() const noexcept` returns the shared diagnostic sink.
+- `bool developer() const noexcept` gates verbose reporting and developer-only tooling without changing decoding.
+- `void report(severity, facility, errc, device_id, string message) const` reports device-scoped diagnostics.
+- `void report(severity, facility, errc, string message) const` reports diagnostics without a device identifier.
+
+## Design
+
+`context` owns no services or mutable state; runtime-owned `diagnostic_sink` is shared across device, driver, sample, aim, and engine layers. `clock.hxx` remains a directly consulted stateless monotonic source rather than a context dependency. `types.hpp`, `utility.hpp`, `error.hpp`, `diagnostic.hpp`, and `device/id.hpp` supply shared types.

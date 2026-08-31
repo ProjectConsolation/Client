@@ -1,0 +1,15 @@
+---
+generated_at: 2026-08-31T15:23:02.806Z
+content_hash: c556fd15fa079dfd44ca9ccf2b00c89ce66b5f9283e7f3cc31d4076b08fbd6a4
+purpose: gsc.hpp declares GSC function-registration APIs.
+---
+**gsc.hpp declares GSC function-registration APIs.**
+
+## API
+
+- `gsc::add_function(const char*, game::function_t, int type = 0)`
+- `gsc::add_method(const char*, game::method_t, int type = 0)`
+
+## Dependency
+
+`game::function_t` and `game::method_t` come from `game/structs.hpp`.

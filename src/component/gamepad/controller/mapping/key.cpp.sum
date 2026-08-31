@@ -1,0 +1,24 @@
+---
+generated_at: 2026-08-31T15:22:33.549Z
+content_hash: 3c619e05e5d07a9b638e8e8d68ab15339fa15cce65228bac7a2a5a23ac63cfe9
+purpose: key.cpp maps controller `engine_key` values, numeric IDs, and stable string names.
+---
+**key.cpp maps controller `engine_key` values, numeric IDs, and stable string names.**
+
+## Public interface
+
+- `bool is_controller_key(int keynum) noexcept` checks whether `keynum` maps via `key_from_keynum`.
+- `size_t key_index(engine_key key) noexcept` finds `key` in `all_engine_keys`, returning sentinel index `0` when absent.
+- `const char* key_name(engine_key k) noexcept` returns the canonical name from `key_names`.
+- `optional<engine_key> key_from_name(string_view name) noexcept` performs case-insensitive lookup through `iequals`, returning `nullopt` for unknown names.
+- `optional<engine_key> key_from_keynum(int keynum) noexcept` converts numeric IDs by scanning `all_engine_keys`, returning `nullopt` when unmatched.
+
+## Mapping contract
+
+`key_names` contains exactly `engine_key_count` entries enforced by `static_assert`; canonical strings are `BUTTON_A`, `BUTTON_B`, `BUTTON_X`, `BUTTON_Y`, `BUTTON_LSHLDR`, `BUTTON_RSHLDR`, `BUTTON_START`, `BUTTON_BACK`, `BUTTON_LSTICK`, `BUTTON_RSTICK`, `BUTTON_LTRIG`, `BUTTON_RTRIG`, `DPAD_UP`, `DPAD_DOWN`, `DPAD_LEFT`, `DPAD_RIGHT`, `APAD_UP`, `APAD_DOWN`, `APAD_LEFT`, `APAD_RIGHT`, `RSTICK_UP`, `RSTICK_DOWN`, `RSTICK_LEFT`, `RSTICK_RIGHT`.
+
+`key_name` assumes `engine_key` values align with `all_engine_keys`; `key_index`’s `0` fallback is safe only under that enum invariant.
+
+## Dependencies and behavior
+
+`std_include.hpp` supplies shared aliases such as `string_view`, `optional`, and `nullopt`; `key.hpp` defines `engine_key`, `engine_key_count`, and `all_engine_keys`; `<cctype>` supports unsigned-char-safe `std::tolower` in `iequals`.

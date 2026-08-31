@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:21:36.151Z
+content_hash: ce328f9d5a1f91a3bdd4ea15b48099421abea7f7d41391d9b1b629479b63a362
+purpose: curve.hpp defines validated, deterministic aim-response curves.
+---
+**curve.hpp defines validated, deterministic aim-response curves.**
+
+## Interface
+
+- `curve_kind`: `linear` or `power`.
+- `to_string(curve_kind) noexcept -> const char*`.
+- `response_curve`: `kind` defaults `linear`; `exponent` defaults `1.0f`.
+- `validate(const response_curve&, string& why) noexcept -> bool`.
+- `evaluate(const response_curve&, float t) noexcept -> float`.
+
+## Contracts
+
+`validate` requires finite exponent `> 0` for `power`; `evaluate` clamps `t` to `[0,1]`, preserving monotonic endpoints and output range, assuming validation.
+
+## Dependencies
+
+`types.hpp` supplies `string`; `utility.hpp` supplies curve-support utilities.

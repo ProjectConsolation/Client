@@ -1,0 +1,11 @@
+---
+generated_at: 2026-08-31T15:24:06.506Z
+content_hash: 31b145c4fde0b1c813e1961ef738d9a385efd79c5e05137662320a54bee82cde
+purpose: resource.hpp defines resource IDs.
+---
+**resource.hpp defines resource IDs.**
+
+## Symbols
+
+- `ID_ICON`: `102`
+- `IMAGE_SPLASH`: `300`

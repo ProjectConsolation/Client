@@ -1,0 +1,15 @@
+---
+generated_at: 2026-08-31T15:21:35.047Z
+content_hash: 8361ccdeee2ae438f8d82b513cbeb1150554539b98059d96bf98e61bbf080dc8
+purpose: deadzone.cpp validates and applies aim-stick deadzone transforms.
+---
+**deadzone.cpp validates and applies aim-stick deadzone transforms.**
+
+## API
+
+- `validate(const deadzone_params& p, string& why) noexcept -> bool` checks `inner.value`, `outer.value`, and `anti.value` in `[0, 1)`, then requires `inner.value < 1.0f - outer.value`; failures set exact messages: `"inner deadzone must be in [0, 1)"`, `"outer deadzone must be in [0, 1)"`, `"anti-deadzone must be in [0, 1)"`, `"inner deadzone must be below (1 - outer deadzone)"`.
+- `apply(const deadzone_params& p, stick_vector v) noexcept -> stick_vector` computes magnitude with `std::sqrt`, zeros vectors within `inner`, linearly remaps magnitude across `(1 - outer) - inner`, clamps via `std::clamp`, applies `anti`, and rescales while preserving direction.
+
+## Contracts
+
+`apply` asserts `inner >= 0.0f && outer >= 0.0f && anti >= 0.0f && inner < 1.0f - outer`; callers must validate `deadzone_params` first. `cmath`, `cassert`, and `algorithm` supply magnitude, invariant checking, and clamping.

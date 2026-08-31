@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:24:10.535Z
+content_hash: fa8b44c2c156e778b2b938c6793b196aec6e3eba19997e526207a5669e66a8f6
+purpose: sdllp.hpp resolves dynamic-library exports through `sdllp`.
+---
+**sdllp.hpp resolves dynamic-library exports through `sdllp`.**
+
+## Interface
+
+- `sdllp::get_export(const char* function, const char* library) -> FARPROC` resolves a named export.
+
+## Internals
+
+- `sdllp::libraries` caches `std::string` library names to `HINSTANCE` handles.
+- `sdllp::load_library(const char* library)` loads libraries; `sdllp::is_loaded(const char* library)` checks cache state.
+- `sdllp::log(const char* message, ...)` emits variadic diagnostic messages.

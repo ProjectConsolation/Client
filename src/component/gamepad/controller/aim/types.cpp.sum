@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:21:33.494Z
+content_hash: 55a270d367177661545c1fe6840cfcd7ddd2243d70ebc28d47698520459f050a
+purpose: types.cpp formats `degrees` and `deg_per_s` stream output.
+---
+**types.cpp formats `degrees` and `deg_per_s` stream output.**
+
+## Symbols
+
+- `ostream& operator<<(ostream&, degrees)` → `value + "deg"`.
+- `ostream& operator<<(ostream&, deg_per_s)` → `value + "deg/s"`.
+
+## Integration
+
+- `std_include.hpp` supplies `ostream`; `types.hpp` defines `degrees` and `deg_per_s`.
+- Namespace: `gamepad::unstable::controller::aim`.

@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:23:32.503Z
+content_hash: 9f2f924e3d707809f348bf09ff25bea8dbb6ca902595201c3dbedf339156c54b
+purpose: Entities models/parses entity data and converts game entities.
+---
+**Entities models/parses entity data and converts game entities.**
+
+## API
+
+`Entities()`; `Entities(const char*, size_t)`; `Entities(std::string)`; copy ctor; `std::string Build()`; `std::vector<std::string> GetModels()`; `bool ConvertTurrets()`; `bool ConvertVehicles()`; `void AddCarePackages()`; `void AddRemovedSModels()`; `void DeleteOldSchoolPickups()`.
+
+## Internals
+
+`entities`: vector of string maps; `parse(std::string)` populates it via four parser states.

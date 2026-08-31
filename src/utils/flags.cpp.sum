@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:23:54.633Z
+content_hash: f8d00e00384e162a032d89fc8b772e7f27111903e5e6878152d2700450acf34f
+purpose: flags.cpp parses Windows command-line switches for case-insensitive queries.
+---
+**flags.cpp parses Windows command-line switches for case-insensitive queries.**
+
+## Exports
+
+`parse_flags(std::vector<std::string>&) -> void` clears/populates flags, stripping leading `-`; `has_flag(const std::string&) -> bool` lazily caches `enabled_flags` via `parsed`.
+
+## Coupling
+
+`CommandLineToArgvW`, `GetCommandLineW`, `LocalFree`, `string::to_lower`.

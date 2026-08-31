@@ -1,0 +1,42 @@
+---
+generated_at: 2026-08-31T15:23:41.696Z
+content_hash: 28d174eb0b1f65506d4e4327e03aebb200604857b567b604c7c0dc2c30b90e5b
+purpose: runtime.hpp defines `gamepad::unstable::controller::runtime`, the non-copyable process-wide owner and frame lifecycle...
+---
+**runtime.hpp defines `gamepad::unstable::controller::runtime`, the non-copyable process-wide owner and frame lifecycle coordinator for the controller subsystem.**
+
+## Public interface
+
+- `runtime (bool developer)` constructs diagnostics, shared services, device discovery, drivers, calibration, and engine bridges; `~runtime ()` tears them down.
+- `runtime (const runtime&) = delete`, `runtime& operator= (const runtime&) = delete`, `runtime (runtime&&) = delete`, and `runtime& operator= (runtime&&) = delete` prevent duplication of process-global engine hooks.
+- `context make_context () noexcept` returns a cheap borrowed service view; `diagnostic_sink& diagnostics () noexcept` exposes `sink_`.
+- `void engine_ready ()` registers engine dvars/commands and acquires configured bindings once engine systems exist.
+- `void frame ()` advances one engine input frame; it must not throw across the engine ABI or allocate on the per-frame acquisition path.
+- `device_id active () const noexcept` returns the currently followed device or `no_device`; `const input_frame& latest () const noexcept` returns its latest published frame.
+- `engine::key_dispatcher& keys () noexcept`, `engine::bind_bridge& binds () noexcept`, and `engine::view_driver& view () noexcept` expose engine integration bridges.
+- `bool driving () const noexcept` is true only when `active_ != no_device`, `keys_.in_use ()`, and `engine::read (dvars_.enabled, true)` all hold.
+- `const engine::dvars& dvars () const noexcept` exposes dvar definitions; `size_t device_count () const noexcept` returns `drivers_.size ()`.
+
+## Ownership and integration
+
+`runtime` owns `logging_sink sink_`, `context ctx_`, `transport::xinput_module xinput_`, `registry devices_`, `discovery discovery_`, `driver::set drivers_`, `calibration::store calibration_`, `engine::dvars dvars_`, `engine::key_dispatcher keys_`, `engine::bind_bridge binds_`, and `engine::view_driver view_` in declaration order.
+
+`mod::controller_module` creates the single process instance, while subsystems receive borrowed `context` values instead of locating services through `runtime`.
+
+`engine_ready_` gates one-time engine initialization; `frame ()` is called through the engine input hook surface.
+
+## State and behavior
+
+`bool advance (driver::driver&, const device_connection&, input_frame& out)` polls one driver and fills `out` when a reading is produced.
+
+`const calibration::profile& profile_for (controller::family)` lazily loads one profile per family; `profiles_` is `array<optional<calibration::profile>, 5>`, and `static_assert (static_cast<size_t> (controller::family::dualsense_edge) == 4, "profiles_ is indexed by family and must cover every one")` enforces family-index coverage.
+
+`void apply_light_bar ()` sends PlayStation light-bar output only when `lit_device_` or packed `lit_colour_` changes; `lit_device_ == no_device` means no output has been applied.
+
+`active_` selects the single device whose most recent reading drives singular engine key/view state; `latest_` stores its last frame.
+
+`sequence_` monotonically numbers subsystem samples, while `last_published_` records the sequence visible to the engine; `had_device_` tracks prior-frame presence so departing devices can release held keys.
+
+## Dependencies
+
+`support/types.hpp` and `support/utility.hpp` supply shared types/utilities; `clock.hpp`, `diagnostic.hpp`, device registry/discovery, `driver::set`, `xinput-module.hpp`, `sample/frame.hpp`, `calibration/store.hpp`, and engine dvar/key/bind/view headers define the owned subsystem boundaries.

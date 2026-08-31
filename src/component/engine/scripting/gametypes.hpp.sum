@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:22:59.263Z
+content_hash: 1e6a06e49bf7b96fc2cc7f6947eec8fcd7068096b344a4dbdb688e3451a111c7
+purpose: gametypes.hpp declares gametypes UI/debug hooks.
+---
+**gametypes.hpp declares gametypes UI/debug hooks.**
+
+## Exports
+
+`gametypes::refresh_ui_gametype_list()`, `gametypes::force_refresh_ui_gametype_list()`, `gametypes::dump_debug_state()` return `void`.

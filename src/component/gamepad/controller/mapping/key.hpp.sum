@@ -1,0 +1,25 @@
+---
+generated_at: 2026-08-31T15:22:37.282Z
+content_hash: c5344f5a50d6e955a256c71ab987c4705065eeb06bb7a96c8e520d1eb82fad4b
+purpose: key.hpp defines IW4x controller-to-engine key identifiers and lookup APIs.
+---
+**key.hpp defines IW4x controller-to-engine key identifiers and lookup APIs.**
+
+## Interface
+
+- `engine_key : int` enumerates 24 controller keys: face buttons `0x01–0x04`, shoulders `0x05–0x06`, start/back `0x0E–0x0F`, sticks/triggers `0x10–0x13`, d-pad `0x14–0x17`, left-stick APAD `0x1C–0x1F`, and right-stick directions `0xE0–0xE3`.
+- `all_engine_keys : array<engine_key, 24>` stores every supported key in stable enumeration order.
+- `engine_key_count : size_t` equals `all_engine_keys.size()`.
+- `key_index(engine_key) noexcept -> size_t` maps an `engine_key` to its zero-based `all_engine_keys` index.
+- `is_controller_key(int keynum) noexcept -> bool` recognizes whether a raw engine key number belongs to the controller-key set.
+- `key_name(engine_key) noexcept -> const char*` returns engine-compatible names such as `"BUTTON_A"` and `"APAD_RIGHT"`.
+- `key_from_name(string_view) noexcept -> optional<engine_key>` resolves a case-insensitive engine key name, returning `nullopt` for unknown/non-controller names.
+- `key_from_keynum(int) noexcept -> optional<engine_key>` resolves a numeric key, returning `nullopt` for unknown/non-controller values.
+
+## Contracts and Integration
+
+`engine_key` is the boundary between physical controller inputs and engine binding/key-event systems; key names remain semantic-neutral, while `key_name`, `key_from_name`, and `key_from_keynum` preserve compatibility with keyboard binding tables.
+
+`engine_key::rstick_right` must remain below `256`; the `static_assert` enforces direct indexing into the engine’s `keys[256]` state array.
+
+`types.hpp` supplies `array`, `optional`, `size_t`, and `string_view`; `utility.hpp` supplies related support utilities. All declarations reside under `gamepad::unstable::controller::mapping`.

@@ -1,0 +1,56 @@
+---
+generated_at: 2026-08-31T15:23:46.298Z
+content_hash: 1e5bacddd1ca4ba3e0522f167d65a37ab019988397fad6d589bd5cc4e041e773
+purpose: runtime.cpp orchestrates controller discovery, polling, calibration, input dispatch, view latching, engine integratio...
+---
+**runtime.cpp orchestrates controller discovery, polling, calibration, input dispatch, view latching, engine integration, and PlayStation light-bar output.**
+
+## Role and Dependencies
+
+`gamepad::unstable::controller::runtime` owns the controller runtime lifecycle and coordinates `context`, `xinput`, `devices`, `discovery`, `drivers`, `calibration`, `keys`, and `view`.
+
+`calibration_directory()` resolves `std::filesystem::current_path()` and appends `"players" / "controller"`; filesystem errors return an empty base `path`.
+
+`runtime::~runtime()` is out-of-line and defaulted so subsystem types can remain forward-declared in `runtime.hpp`.
+
+## Public Interface
+
+`runtime::runtime(bool developer)` initializes `developer_`, `ctx_`, `xinput_`, `devices_`, `discovery_`, `drivers_`, `calibration_`, `keys_`, `binds_`, and `view_`, then reports severity `info`, facility `runtime`, error `errc::none`, and exact message `"controller runtime initialized"`.
+
+`context runtime::make_context() noexcept` returns a new `context(sink_, developer_)`.
+
+`void runtime::engine_ready()` is idempotent through `engine_ready_`; it registers dvars via `engine::register_dvars(ctx_)`, registers commands via `engine::register_commands(ctx_, *this)`, applies `binds_.apply_configured_layout()`, performs eager `discovery_.scan_now()`, and then marks `engine_ready_`.
+
+`const calibration::profile& runtime::profile_for(controller::family f)` lazily loads `calibration_.load(f, nullopt)` into `profiles_`, falling back to `calibration::default_profile(f)` when no stored profile exists.
+
+`bool runtime::advance(driver::driver& d, const device_connection& dc, input_frame& out)` polls `d` into stack-allocated `raw_sample` and `canonical_sample`, applies `calibration::apply(profile_for(dc.identity.family), raw, canonical)`, and writes `input_frame` metadata with `dc.id`, `dc.identity.family`, `dc.link`, incremented `sequence_`, `latency_span{acquired, timestamp{}}`, and `canonical`; `false` from `d.poll()` aborts publication.
+
+`void runtime::apply_light_bar()` drives only `dualshock4`, `dualsense`, or `dualsense_edge` devices advertising `capability::light_bar`.
+
+`void runtime::frame()` executes the per-frame discovery, reconciliation, publication, polling, dispatch, view, and light-bar workflow.
+
+## Frame State and Selection
+
+`runtime::frame()` marks `CONTROLLER_ZONE("controller::frame")` and `CONTROLLER_FRAME_MARK()`; frames before `engine_ready_` return without reading dvars.
+
+`discovery_.scan()` and `drivers_.reconcile(devices_)` refresh device state, while `engine::publish_present(dvars_, drivers_.size() != 0)` updates engine presence.
+
+`engine::read(dvars_.enabled, true)` disables processing when false or when `drivers_.size() == 0`; `keys_.release_all()`, `view_.idle()`, `active_ = no_device`, `had_device_ = false`, `lit_device_ = no_device`, and `lit_colour_ = 0` clear held state when a device was active.
+
+`drivers_.for_each()` polls every bound driver through `advance()`, but `candidate` follows exactly one device: a new reading wins unless `active_` also reports, preserving the current active device during simultaneous reports.
+
+`latest_.sequence > last_published_` is asserted before updating `last_published_`, enforcing monotonic published-frame ordering.
+
+`keys_.release_all()` runs when `active_ != latest_.device` before `keys_.dispatch(latest_.state)`, preventing held-button latching across device takeover.
+
+`view_.observe(latest_.state)` latches stick state for the later movement hook; `keys_.dispatch(latest_.state)` still ticks held-button repeats when `had_device_` is true but no fresh sample arrives.
+
+## Light-Bar Contract
+
+`engine::read(dvars_.light_bar, true)` gates output; disabled light bars reset `lit_device_` and `lit_colour_` without overwriting OS or Steam state.
+
+`light_bar_r`, `light_bar_g`, and `light_bar_b` default to `196`, `151`, and `54`; the local `clamp8(int v)` clamps each channel to `[0, 255]`.
+
+`colour` packs RGB as `(r << 16) | (g << 8) | b`; `drivers_.submit(active_, driver::light_bar_request{r, g, b})` runs only when `active_ != lit_device_` or `colour != lit_colour_`.
+
+`latest_.state.caps.has(capability::light_bar)` is required before light-bar submission, and unchanged colour is intentionally not resent each frame.

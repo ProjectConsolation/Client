@@ -1,0 +1,26 @@
+---
+generated_at: 2026-08-31T15:21:37.272Z
+content_hash: d88cfe98cfa759f5b3ea14fc6964e93651dc098990c4e830cb3f4f0879da230b
+purpose: types.hpp defines dimension-safe aim-domain scalar and vector types.
+---
+**types.hpp defines dimension-safe aim-domain scalar and vector types.**
+
+## Types and conversions
+
+- `pi` is `inline constexpr float` equal to `3.14159265358979323846f`.
+- `degrees` wraps `float value`, supports `+`, binary/unary `-`, scalar `*`, defaulted `==`, and `std::partial_ordering <=>`.
+- `radians` wraps `float value`; `to_radians(degrees) noexcept -> radians` and `to_degrees(radians) noexcept -> degrees` convert using `pi` and 180-degree factors.
+- `deg_per_s` wraps `float value`, supports scalar `*`, `+`, defaulted `==`, and `std::partial_ordering <=>`.
+- `deg_per_s2` wraps `float value`; `operator*(deg_per_s2, seconds) noexcept -> deg_per_s` integrates angular acceleration over `seconds::count()`.
+- `operator*(deg_per_s, seconds) noexcept -> degrees` integrates turn rate over a timestep.
+- `axis_input` wraps signed normalized `float value`; `sign() const noexcept -> float` returns `1.0f` for nonnegative values and `-1.0f` otherwise, while `absolute() const noexcept -> float` returns magnitude.
+- `magnitude` wraps nonnegative normalized `float value`.
+- `screen_vector` contains `float x, y`; `world_vector` contains `float x, y, z`, enforcing screen/world-space separation.
+- `dot(world_vector, world_vector) noexcept -> float` computes `x*x + y*y + z*z`.
+
+## Integration and contracts
+
+- `seconds` comes from `component/gamepad/controller/clock.hpp`; support definitions come from `component/gamepad/controller/support/types.hpp` and `utility.hpp`.
+- `ostream& operator<<(ostream&, degrees)` and `ostream& operator<<(ostream&, deg_per_s)` are declared for stream formatting and defined elsewhere.
+- `degrees` and `deg_per_s` use partial ordering because `float` comparisons must represent NaN; all arithmetic and conversion functions are `constexpr noexcept`.
+- `degrees`, `deg_per_s`, and `world_vector` encode dimensional/type boundaries, preventing accidental interchange of angles, rates, normalized inputs, and coordinate spaces.

@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:21:35.589Z
+content_hash: 448bc9e71832580fc236f5fc75b052a7d098e73bb7b86fa736d66f3106fbde64
+purpose: calibration.cpp does FOV scaling and validated aim-calibration construction.
+---
+**calibration.cpp does FOV scaling and validated aim-calibration construction.**
+
+## API
+
+- `fov_scale(degrees fov, degrees reference_fov) noexcept -> float` computes tangent-half-angle ratio; returns `1.0f` when reference tangent is non-positive or `f` is non-finite.
+- `aim_calibration::make(const aim_settings& s, string& why) -> optional<aim_calibration>` validates hip/ADS deadzones and curves, optionally builds `aim_graph`, and returns `nullopt` with prefixed diagnostics.
+- `aim_calibration::processor_config() const noexcept -> aim_processor::config` returns `{hip_, ads_, accel_, graph_ ? &*graph_ : nullptr}`.
+
+## Contracts
+
+`aim_calibration::make` emits exact prefixes `"hip deadzone: "`, `"ADS deadzone: "`, `"hip curve: "`, `"ADS curve: "`, and `"aim graph: "`; `aim_graph::make` receives `span<const knot>` over `graph_knots`, plus `graph_monotonic`.
+
+## Dependencies
+
+`to_radians`, `validate`, `aim_graph::make`, `optional`, `nullopt`, `move`, and `<cmath>` underpin conversion, validation, graph creation, ownership transfer, and finite-value checks.

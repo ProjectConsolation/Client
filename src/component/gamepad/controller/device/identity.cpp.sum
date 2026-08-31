@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:21:46.830Z
+content_hash: aad2186234afcb980f2098e01d7c2efad8c60df998983c033d2326c121469b78
+purpose: identity.cpp classifies gamepad identities and formats `family` values.
+---
+**identity.cpp classifies gamepad identities and formats `family` values.**
+
+## Exports
+
+- `const char* to_string(family f) noexcept` maps `unknown`, `xbox`, `dualshock4`, `dualsense`, `dualsense_edge` to exact strings: `"unknown"`, `"xbox"`, `"dualshock4"`, `"dualsense"`, `"dualsense-edge"`.
+- `ostream& operator<<(ostream& os, family f)` streams `to_string(f)`.
+- `family classify(vendor_id v, product_id p) noexcept` recognizes Sony IDs: `product_dualsense_edge` → `dualsense_edge`, `product_dualsense` → `dualsense`, DS4 generation/dongle IDs → `dualshock4`; otherwise returns `family::unknown`.
+
+## Contracts
+
+`classify` checks Edge before DualSense; `vendor_sony` gates HID classification, while Xbox is transport-classified via XInput.

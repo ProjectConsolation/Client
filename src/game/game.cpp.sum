@@ -1,0 +1,47 @@
+---
+generated_at: 2026-08-31T15:24:00.515Z
+content_hash: 02d96e7cef2cdee2e7afabdce8659aa5bc3708f40c21c767316c666e4f9c61ff
+purpose: game.cpp does runtime bridging between the project and the 32-bit `jb_mp_s.dll` game engine.
+---
+**game.cpp does runtime bridging between the project and the 32-bit `jb_mp_s.dll` game engine.**
+
+## Public symbols
+
+- `HMODULE mp_dll` caches the resolved `jb_mp_s.dll` module handle, initialized to `nullptr`.
+- `uintptr_t game_offset(uintptr_t ida_address)` lazily resolves `mp_dll` via `GetModuleHandleA("jb_mp_s.dll")`, asserts success, and rebases IDA addresses with `ida_address - 0x10000000 + reinterpret_cast<uintptr_t>(mp_dll)`.
+- `void Cbuf_AddText(int controller, const char* text)` calls engine address `0x103F5180` with `text` in `eax` and `controller` in `ecx`.
+- `void CL_KeyEvent(int localClientNum, int key, int down, unsigned int time)` calls `0x1031A680` using `ecx` for `localClientNum` and stack args `time`, `down`, `key`.
+- `cmd_function_s* Cmd_FindCommand(const char* name)` traverses `*cmd_functions`, compares names with `strcmp`, and returns the matching node or `0`.
+- `void Cmd_AddCommandInternal(const char* name, void(__cdecl* function)(), cmd_function_s* cmd)` rejects duplicate functional commands through `console::error`, otherwise prepends `cmd` to `*cmd_functions` and logs via `console::debug`.
+- `DB_XAssetGetNameHandler_t* DB_XAssetGetNameHandler` aliases rebased engine data at `0x1055E470`.
+- `const char* DB_GetXAssetName(game::XAsset* asset)` returns `""` for null assets, asserts `asset->header.data`, and dispatches `DB_XAssetGetNameHandler[asset->type]`.
+- `bool DB_IsXAssetDefault(XAssetType type, const char* name)` invokes engine address `0x103DFC00`; `name` is accepted but not passed by the inline assembly.
+- `void DB_EnumXAssetEntries(XAssetType type, std::function<void(XAssetEntryPoolEntry*)> callback, bool overrides)` enumerates matching hashed assets and optional override chains.
+- `unsigned int Scr_GetFunctionHandle(const char* filename, const char* funcHandle)` calls `0x1022E410` and returns the engine handle.
+- `void RemoveRefToObject(unsigned int obj)` calls `0x10230DB0` with `obj` in `edi`.
+- `__int16 Scr_ExecThread(int handle)` calls `0x1023B960` and returns `ax`.
+- `int Scr_LoadScript(const char* name)` calls `0x1022E7C0` with `name` in `ecx`.
+- `ScreenPlacement ScrPlace_GetViewPlacement()` returns `*game::scrPlaceView`.
+- `Font_s* R_RegisterFont(const char* font)` resolves `ASSET_TYPE_FONT` through `DB_FindXAssetHeader`.
+- `Material* Material_RegisterHandle(const char* material)` resolves `ASSET_TYPE_MATERIAL` through `DB_FindXAssetHeader`.
+- `dvar_s* Dvar_FindMalleableVar(const char* dvarName)` hashes `dvarName` with `generateHashValue`, traverses `dvarHashTable`, and performs case-insensitive matching with `stricmp`.
+- `dvar_s* Dvar_FindVar(const char* dvarName)` delegates directly to `Dvar_FindMalleableVar`.
+- `void Dvar_SetString(const char* dvarName, const char* value)` calls `0x10278FD0`.
+- `void GamerProfile_UpdateProfileFromDvars(int profileIndex, int updateState)` calls `0x102439B0` with two stack arguments.
+- `void Live_UpdateClan(int object, const char* clan)` calls `0x10324960`.
+- `dvar_s* Dvar_RegisterBool(const char* name, bool value, int flags, const char* desc)` calls `0x10278E60` and returns the engine-created dvar.
+- `unsigned int Scr_GetNumParam()` returns `*scr_numParams`.
+
+## Engine coupling and invariants
+
+- `Cbuf_AddText`, `CL_KeyEvent`, `DB_IsXAssetDefault`, `Scr_GetFunctionHandle`, `RemoveRefToObject`, `Scr_ExecThread`, `Scr_LoadScript`, `Dvar_SetString`, `GamerProfile_UpdateProfileFromDvars`, `Live_UpdateClan`, and `Dvar_RegisterBool` depend on x86 MSVC `__asm`, fixed IDA offsets, and engine-specific register/stack conventions.
+- `DB_EnumXAssetEntries` increments the rebased lock at `0x1056250A`, waits while `0x105624F8` is nonzero using `std::this_thread::sleep_for(1ms)`, scans exactly `0x9C40` hash buckets, invokes `callback`, then decrements the lock.
+- `DB_EnumXAssetEntries` follows `db_hashTable`, `g_assetEntryPool`, `entry.nextHash`, and `entry.nextOverride`; callback code must tolerate engine-owned asset lifetimes and lock scope.
+- `DB_GetXAssetName` requires non-null `asset->header.data`, while `game_offset` requires a loaded `jb_mp_s.dll`; both conditions are enforced with `assert`.
+
+## Dependencies
+
+- `std_include.hpp` supplies Windows, STL, assertions, and timing facilities used by `HMODULE`, `GetModuleHandleA`, `InterlockedIncrement`, `std::function`, and `1ms`.
+- `game/game.hpp` supplies `XAsset`, `XAssetType`, `XAssetEntryPoolEntry`, `dvar_s`, `Font_s`, `Material`, engine globals, and asset APIs.
+- `component/engine/console/console.hpp` supplies `console::error` and `console::debug`.
+- `utils/hook.hpp` is included for project hook integration, although no symbol from `utils::hook` is directly referenced here.

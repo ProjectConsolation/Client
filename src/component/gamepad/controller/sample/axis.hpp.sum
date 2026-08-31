@@ -1,0 +1,25 @@
+---
+generated_at: 2026-08-31T15:22:37.569Z
+content_hash: d9af2cec0eb3d1b3c7b6394308dd698f4fa9cb3ed8470c9caf0c0cb93376b251
+purpose: axis.hpp defines normalized gamepad stick types and the four-stage stick-sample pipeline.
+---
+**axis.hpp defines normalized gamepad stick types and the four-stage stick-sample pipeline.**
+
+## Public API
+
+- `stick` enum class (`uint8_t`) identifies `left` or `right` analog sticks.
+- `stick_count` is `inline constexpr size_t {2}`.
+- `to_string(stick) noexcept` returns `const char*`.
+- `stick_vector` stores normalized `float x`, `float y`; `magnitude() const noexcept` returns Euclidean length.
+- `stick_raw` stores device-preserved `int32_t x`, `int32_t y`.
+- `stick_sample` aggregates `raw`, `normalized`, `calibrated`, and `filtered` stages.
+
+## Contracts
+
+- `stick_vector` components target `[-1, 1]`; magnitude may temporarily exceed `1` before radial clamping.
+- `stick_raw` retains unmodified device units for calibration/diagnostics; XInput uses signed 16-bit axis counts.
+- `stick_sample::filtered` is the game-path input; aim-layer deadzones/curves and smoothing follow driver-populated `raw`/`normalized`.
+
+## Dependencies
+
+`types.hpp` supplies fixed-width and size types; `utility.hpp` supplies shared controller utilities.

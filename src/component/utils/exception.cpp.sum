@@ -1,0 +1,32 @@
+---
+generated_at: 2026-08-31T15:23:46.995Z
+content_hash: 9f8ecea7154987f339bcd41966f10c3dcd1eefc9803f04a2ca0cf641050b90c3
+purpose: exception.cpp does Windows crash interception, minidump generation, and fatal-error termination for Project: Consolat...
+---
+**exception.cpp does Windows crash interception, minidump generation, and fatal-error termination for Project: Consolation.**
+
+## Public symbols
+
+- `exception::component final : component_interface` registers exception handling.
+- `exception::component::post_load() override -> void` installs `exception_filter` via `SetUnhandledExceptionFilter`.
+- `REGISTER_COMPONENT(exception::component)` activates the component loader registration.
+
+## Crash workflow
+
+- `exception_filter(LPEXCEPTION_POINTERS) -> LONG` continues harmless exceptions; otherwise calls `write_minidump`, stores thread-local `exception_data`, redirects `ContextRecord->Eip` to `get_reset_state_stub()`, and returns `EXCEPTION_CONTINUE_EXECUTION`.
+- `is_harmless_error(LPEXCEPTION_POINTERS) -> bool` allows `STATUS_INTEGER_OVERFLOW`, `STATUS_FLOAT_OVERFLOW`, and `STATUS_SINGLE_STEP` to continue execution.
+- `write_minidump(LPEXCEPTION_POINTERS) -> void` serializes `create_minidump(exceptioninfo)` to `minidumps/consolation-crash-%s.dmp`, substituting `utils::string::get_timestamp()`.
+- `get_reset_state_stub() -> size_t` lazily assembles x86 instructions `sub esp, 0x10`, `or esp, 0x8`, and jump to `reset_state`.
+- `reset_state() -> void` delegates to `display_error_dialog()` after exception-context redirection.
+
+## Fatal dialog and state
+
+- `exception_data` is thread-local `{ DWORD code = 0; PVOID address = nullptr; }`, carrying the exception code and fault address.
+- `display_error_dialog() -> void` formats `Fatal error (0x%08X) at 0x%p.\nA minidump has been written.\n\n`, appends the graphics-driver/OS-update guidance, suspends other threads, shows the cursor, displays `"Project: Consolation ERROR"`, then calls `TerminateProcess(..., exception_data.code)`.
+- `generate_crash_info(LPEXCEPTION_POINTERS) -> std::string` emits CRLF lines for timestamp, exception code, fault address, and `OS Version: %u.%u`; it is currently unused.
+- `show_mouse_cursor() -> void` repeatedly calls `ShowCursor(TRUE)` until the cursor becomes visible.
+
+## Integration constraints
+
+- `utils::hook`, `utils::io`, `utils::string`, `utils::thread`, and `exception/minidump.hpp` supply assembly hooks, file output, formatting/timestamps, thread suspension, and dump creation.
+- `ContextRecord->Eip`, `esp`, and `TerminateProcess` imply a 32-bit Windows runtime; `SetUnhandledExceptionFilter` establishes process-wide handling.

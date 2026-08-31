@@ -1,0 +1,48 @@
+---
+generated_at: 2026-08-31T15:24:11.486Z
+content_hash: b923d5d40324a9ca177d689c95337451ee272734c709bda0288071def9b75490
+purpose: nt.cpp does Windows DLL/PE module loading, inspection, import lookup, resource access, relaunch, and process-control ...
+---
+**nt.cpp does Windows DLL/PE module loading, inspection, import lookup, resource access, relaunch, and process-control operations.**
+
+## Public interface
+
+`library::load(const std::string& name)` calls `LoadLibraryA`; `library::load(const std::filesystem::path& path)` converts `path` via `generic_string()` and delegates.
+
+`library::get_by_address(void* address)` resolves the containing module with `GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT`.
+
+`library::library()`, `library::library(const std::string& name)`, and `library::library(const HMODULE handle)` construct wrappers around the current process module, `GetModuleHandleA(name.data())`, or an existing `HMODULE`.
+
+`library::operator==(const library&) const`, `library::operator bool() const`, and `library::operator HMODULE() const` compare handles, validate modules, and expose `HMODULE` conversion.
+
+`library::get_nt_headers() const` returns `PIMAGE_NT_HEADERS`; `library::get_dos_header() const` returns `PIMAGE_DOS_HEADER`; `library::get_optional_header() const` returns `PIMAGE_OPTIONAL_HEADER`.
+
+`library::get_section_headers() const` returns `std::vector<PIMAGE_SECTION_HEADER>` from `IMAGE_FIRST_SECTION(nt_headers)` and `NumberOfSections`.
+
+`library::get_ptr() const` returns the module base as `std::uint8_t*`; `library::get_handle() const` returns `HMODULE`.
+
+`library::unprotect() const` applies `PAGE_EXECUTE_READWRITE` to `SizeOfImage` using `VirtualProtect`.
+
+`library::get_relative_entry_point() const` returns `AddressOfEntryPoint` as `size_t`; `library::get_entry_point() const` returns the base plus that RVA as `void*`.
+
+`library::is_valid() const` checks non-null `module_` and `IMAGE_DOS_SIGNATURE`; `library::get_name() const`, `library::get_path() const`, and `library::get_folder() const` return basename, `GetModuleFileNameA` path, and parent directory.
+
+`library::free()` calls `FreeLibrary` for valid handles and clears `module_`.
+
+`library::get_iat_entry(const std::string& module_name, const std::string& proc_name) const` returns `void**` for a matching Import Address Table slot, resolving `other_module.get_proc<void*>(proc_name)` and supporting ordinal imports through `IMAGE_SNAP_BY_ORDINAL`.
+
+`raise_hard_exception()` adjusts privilege 19 and invokes `ntdll.dll` functions `RtlAdjustPrivilege` and `NtRaiseHardError` with status `0xC000007B`.
+
+`load_resource(const int id)` returns `RT_RCDATA` bytes as `std::string`; `relaunch_self()` starts the current executable with `CreateProcessA`; `terminate(const uint32_t code)` calls `TerminateProcess`; `get_host_module()` returns a static `utils::nt::library`.
+
+## Integration and contracts
+
+`std_include.hpp` supplies Windows APIs/types; `nt.hpp` declares `library`, `get_proc`, and `invoke_pascal`; `utils/string.hpp` is included but has no visible direct use.
+
+`library::get_path()` uses `char name[MAX_PATH]`; `relaunch_self()` uses `STARTUPINFOA`, `PROCESS_INFORMATION`, `GetCurrentDirectoryA(MAX_PATH)`, and the existing `GetCommandLineA()`.
+
+`library::get_iat_entry()` compares module/function names case-insensitively with `_stricmp`, scans `IMAGE_DIRECTORY_ENTRY_IMPORT`, and returns `nullptr` on invalid modules, missing imports, absent targets, or unmatched entries.
+
+`library::get_section_headers()` emits `OutputDebugStringA("pushing back section woooo\n")` and `OutputDebugStringA("There was an invalid section :O\n")`; callers must avoid invalid `library` instances because it dereferences PE headers without an initial validity guard.
+
+`library::free()` assumes ownership appropriate for `LoadLibraryA` handles; `get_by_address()` explicitly requests `GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT`, so its result should not be freed.

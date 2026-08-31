@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:23:50.060Z
+content_hash: bbada6296732d6cf3e5444485c2553176c5331982ee8121bdcf91c0c93138708
+purpose: concurrency.hpp does synchronized access to a default-constructed `T`.
+---
+**concurrency.hpp does synchronized access to a default-constructed `T`.**
+
+## API
+
+`container<T, MutexType = std::mutex>` stores `T` with mutable `MutexType`.
+
+`access<R = void>(F&&)` locks via `std::lock_guard`, invokes `F`, returns `R`; const/non-const overloads.
+
+`access_with_lock<R = void>(F&&)` uses `std::unique_lock`, passes lock to `F`; const/non-const overloads.
+
+`get_raw()` returns `T&` or `const T&`, bypassing synchronization.

@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:21:49.279Z
+content_hash: 3b34426e6b6c4a6f48f3126583b9c587985f292bc15b7eb589a5b1dd0f45a1ba
+purpose: capability.hpp defines allocation-free gamepad device capability flags and bitmask operations.
+---
+**capability.hpp defines allocation-free gamepad device capability flags and bitmask operations.**
+
+## Interface
+
+- `gamepad::unstable::controller::capability : uint32_t` enumerates `none = 0`; inputs `gyroscope = 1u << 0`, `accelerometer = 1u << 1`, `touchpad = 1u << 2`, `battery = 1u << 3`, `microphone_button = 1u << 4`, `back_buttons = 1u << 5`; outputs `rumble = 1u << 8`, `haptics = 1u << 9`, `adaptive_triggers = 1u << 10`, `light_bar = 1u << 11`, `player_leds = 1u << 12`.
+- `capabilities` wraps `capability` bits using `using rep = std::underlying_type_t<capability>` and stores `rep bits_ {0}`.
+- `capabilities()` and `capabilities(capability c) noexcept` construct empty or single-feature masks.
+- `capabilities::has(capability c) const noexcept -> bool` requires all queried bits and returns `false` for `capability::none`; `add(capability c) noexcept` and `remove(capability c) noexcept` mutate masks and return `capabilities&`.
+- `capabilities::empty() const noexcept -> bool` checks `bits_ == 0`; `capabilities::value() const noexcept -> rep` exposes the underlying mask.
+- `operator==(capabilities, capabilities) noexcept`, `operator|(capabilities, capabilities) noexcept`, and `operator|(capability, capability) noexcept -> capabilities` support comparison and composition.
+- `operator<<(ostream&, capabilities)` serializes a capability set through the project’s `ostream` type.
+
+## Coupling
+
+`types.hpp` supplies `uint32_t` and `ostream`; `utility.hpp` supplies supporting standard/project utilities. Capability bits encode driver-established transport-specific behavior, not model-wide assumptions.

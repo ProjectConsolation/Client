@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:22:45.596Z
+content_hash: ea10c22c472d47b0862a6603898cd55674ee25b0ff993317318c8f26becb023a
+purpose: device-notify.hpp implements interrupt-driven HID device-change notification via a message-only window and worker thr...
+---
+**device-notify.hpp implements interrupt-driven HID device-change notification via a message-only window and worker thread.**
+
+## Interface
+
+- `device_notifier(const context&)` creates notification state and starts the message-pump thread.
+- `~device_notifier()` tears down thread/window resources.
+- `device_notifier(const device_notifier&) = delete` and `operator=(const device_notifier&) = delete` enforce non-copyability.
+- `bool consume() noexcept` atomically clears and returns `pending_`, reporting each change once.
+
+## Design
+
+`run(const context&) noexcept` owns Windows `WM_DEVICECHANGE` handling; `window_` stores the created `HWND`, while `thread_` pumps messages and otherwise sleeps. `pending_` is deliberately coarse: it signals that the HID-device set may have changed, leaving full reconciliation to discovery and polling fallback. `pending_.exchange(false, std::memory_order_acquire)` makes frame-rate polling cheap and thread-safe.
+
+## Dependencies
+
+`context`, `types.hpp`, and `utility.hpp` supply controller/runtime integration; `<thread>` and `<atomic>` implement lifecycle and synchronization.

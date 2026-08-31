@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:22:34.412Z
+content_hash: c2fc4944910b46ef10a524b2b99e3357a168fd8fd0e09d9c9fb2cae4feb7fa9e
+purpose: button.cpp maps `gamepad::unstable::controller::button` values to stable string identifiers.
+---
+**button.cpp maps `gamepad::unstable::controller::button` values to stable string identifiers.**
+
+## Public API
+
+`const char* to_string(button b) noexcept` returns names for face, d-pad, shoulder/trigger/stick, `start`, `back`, `guide`, `touchpad`, `mute`, Edge paddle/function buttons, and `button::count`.
+
+## Contract
+
+`to_string` returns lowercase hyphenated labels (`"face-south"`, `"dpad-up"`, `"edge-paddle-left"`); unknown values and `button::count` return `"count"`.

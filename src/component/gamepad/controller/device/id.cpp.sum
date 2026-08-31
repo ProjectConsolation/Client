@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:21:49.304Z
+content_hash: 8a28819b3164d03b4b6d8271db74637aa8f7266bd433077140c68724e776f390
+purpose: id.cpp formats gamepad device identifiers and enum values for diagnostics.
+---
+**id.cpp formats gamepad device identifiers and enum values for diagnostics.**
+
+## Interface
+
+- `operator<<(ostream&, device_id) -> ostream&`: emits `device(none)` for null, otherwise `device(<value>)`.
+- `to_string(transport_kind) noexcept -> const char*`: maps `unknown`, `xinput`, `raw_input`, `hid` to `"unknown"`, `"xinput"`, `"raw-input"`, `"hid"`.
+- `operator<<(ostream&, transport_kind) -> ostream&`: delegates to `to_string`.
+- `to_string(connection) noexcept -> const char*`: maps `unknown`, `usb`, `bluetooth`, `virtualized` to matching strings.
+- `operator<<(ostream&, connection) -> ostream&`: delegates to `to_string`.
+
+## Coupling
+
+`id.hpp` declares symbols in `gamepad::unstable::controller`; `ostream` formatting supports diagnostics. Unknown enum values fall back to `"unknown"`.

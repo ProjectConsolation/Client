@@ -1,0 +1,144 @@
+---
+generated_at: 2026-08-31T15:23:48.888Z
+content_hash: e80199d95a9c987bbb98b39de05f40000fff133381b42b3287f856d1ac165e46
+purpose: gametypes.cpp hooks rawfile lookup and rebuilds the UI gametype caches.
+---
+**gametypes.cpp hooks rawfile lookup and rebuilds the UI gametype caches.**
+
+## Role and integration
+
+`gametypes::component` integrates custom gametype discovery into the game loader through `REGISTER_COMPONENT(gametypes::component)`.
+
+`db_find_xasset_header_internal_hook` detours `game::DB_FindXAssetHeader_Internal` to prioritize patch-zone assets, then filesystem overrides, then fastfile assets.
+
+`filesystem::read_file`, `filesystem::get_search_paths`, `game::DB_EnumXAssetEntries`, `game::game_offset`, `utils::memory::allocate`, `utils::io`, `utils::hook`, `utils::string`, `console`, and `command` form the primary coupling surface.
+
+## Exported interface
+
+`void gametypes::refresh_ui_gametype_list()` rebuilds the UI cache only when `ui_gametype_list_refreshed` is `false`.
+
+`void gametypes::force_refresh_ui_gametype_list()` unconditionally invokes `rebuild_ui_gametype_cache()`.
+
+`void gametypes::dump_debug_state()` serializes primary and secondary UI entries, feeder patch addresses, and raw instruction bytes to `consolation/gametypes_dump/debug_state.txt`.
+
+## Asset lookup behavior
+
+`normalize_gametype_path(const char*) -> std::string` converts `\` to `/` and maps null names to an empty string.
+
+`is_gametype_rawfile(game::XAssetType, const char*) -> bool` matches `game::ASSET_TYPE_RAWFILE` names beginning case-insensitively with `maps/mp/gametypes/`.
+
+`is_scaleform_rawfile(game::XAssetType, const char*) -> bool` matches `game::ASSET_TYPE_RAWFILE` names beginning with `scaleform/` and ending with `.gfx`.
+
+`db_find_xasset_header_internal_stub(const game::XAssetType, const char*, const int) -> game::XAssetHeader` applies the lookup order patch zone → disk override → original database lookup for gametype rawfiles, while Scaleform lookup uses patch zone → disk override → original lookup.
+
+`find_patch_gametype_rawfile(const std::string&) -> game::RawFile*` enumerates `game::ASSET_TYPE_RAWFILE`, filters populated names and `patch_` zones, and prefers zone `patch_consolation`.
+
+`find_patch_scaleform_rawfile(const std::string&) -> game::RawFile*` duplicates the patch-zone selection logic for `.gfx` assets and prefers `patch_consolation`.
+
+`load_custom_gametype_rawfile(const char*) -> game::RawFile*` caches normalized filesystem-loaded gametype files in `loaded_gametype_rawfiles` and logs `gametypes: loaded raw fallback %s from %s\n`.
+
+`load_custom_scaleform_rawfile(const char*) -> game::RawFile*` caches binary `.gfx` overrides in `loaded_scaleform_rawfiles`, trying `ui_mp/<normalized_name>` before `<normalized_name>`, and logs `scaleform: loaded raw override %s from %s\n`.
+
+`make_rawfile(const std::string&, const std::string&) -> game::RawFile*` allocates a null-terminated `game::RawFile` with `len = data.size() + 1`.
+
+`make_binary_rawfile(const std::string&, const std::string&) -> game::RawFile*` allocates a non-null-terminated binary `game::RawFile` with `len = data.size()`.
+
+`rawfile_has_data(const game::RawFile*) -> bool` requires non-null `buffer` and `len > 0`.
+
+`get_rawfile_buffer(const game::RawFile*) -> std::string` strips one trailing `'\0'` when `rawfile->buffer[rawfile->len - 1] == '\0'`.
+
+`read_gametype_rawfile(const std::string&) -> std::string` calls `game::DB_FindXAssetHeader_Internal(game::ASSET_TYPE_RAWFILE, name.c_str(), 1)` and extracts its buffer.
+
+## Gametype enumeration and parsing
+
+`GAMETYPES_LIST` is exactly `"maps/mp/gametypes/_gametypes.txt"`.
+
+`GAMETYPE_PREFIX` is exactly `"maps/mp/gametypes/"`.
+
+`UI_GAMETYPE_MAX` is `0x20`, limiting parsed, merged, and written gametype entries to 32.
+
+`parse_gametype_ids(const std::string&) -> std::vector<std::string>` reads line-by-line, removes text beginning at the first `//`, trims `" \t\r\n"`, and stops after `UI_GAMETYPE_MAX` non-empty IDs.
+
+`trim(std::string) -> std::string` removes leading and trailing spaces, tabs, carriage returns, and newlines.
+
+`is_hidden_gametype_id(const std::string&) -> bool` hides only the case-insensitive ID `"menu"`.
+
+`append_unique_gametype_id(std::vector<std::string>&, std::unordered_set<std::string>&, const std::string&) -> void` trims, rejects empty IDs, `"menu"`, and full lists, lowercases accepted IDs with `std::tolower`, and deduplicates through `known_ids`.
+
+`get_gametype_id_from_display_path(const std::string&) -> std::string` extracts the basename without `.txt` from paths containing `maps/mp/gametypes/`, excluding `GAMETYPES_LIST`.
+
+`append_patch_gametype_ids(std::vector<std::string>&, std::unordered_set<std::string>&) -> void` discovers `.txt` display assets from populated `patch_` zones through `game::DB_EnumXAssetEntries`.
+
+`append_disk_gametype_ids(std::vector<std::string>&, std::unordered_set<std::string>&) -> void` scans every `filesystem::get_search_paths()` directory at `maps/mp/gametypes` and merges discovered file IDs.
+
+`get_visible_gametype_ids(const std::string&) -> std::vector<std::string>` merges IDs in this order: `_gametypes.txt` entries, patch-zone display files, then disk files.
+
+`parse_gametype_display_name(const std::string&, const std::string&) -> std::string` trims input, removes `//` comments, removes one surrounding quote pair, and falls back to the gametype ID for empty content.
+
+## UI cache layout
+
+`GAMETYPE_ENTRY_SIZE` is `0x2C` bytes per UI entry.
+
+`UI_GAMETYPE_COUNT` is `0x113D1684`; `UI_GAMETYPE_ENTRIES` is `0x113D1688`.
+
+`UI_GAMETYPE_ALT_COUNT` is `0x113D31EC`; `UI_GAMETYPE_ALT_ENTRIES` is `0x113D31F0`.
+
+`copy_ui_gametype_string(char*, std::size_t, const std::string&) -> void` uses `strncpy_s(..., _TRUNCATE)` and safely ignores null destinations or zero-sized buffers.
+
+`rebuild_ui_gametype_cache() -> void` reads `GAMETYPES_LIST`, merges IDs, clears both `UI_GAMETYPE_MAX` entry arrays, writes each ID into the first 12 bytes and display text into the remaining `GAMETYPE_ENTRY_SIZE - 0x0C` bytes, then updates both count locations.
+
+`rebuild_ui_gametype_cache()` writes display-backed entries first and stores unavailable display files afterward with the ID as both identifier and display string.
+
+`rebuild_ui_gametype_cache()` logs `gametypes: cannot refresh UI list because %s was empty or unavailable\n`, `gametypes: cannot refresh UI list because %s parsed no entries\n`, and `gametypes: refreshed UI gametype lists with %i visible entries, %i total entries\n`.
+
+`ui_gametype_list_refreshed` becomes `true` only after successful cache construction and resets to `false` in `component::pre_destroy()`.
+
+## Debug and dump behavior
+
+`dump_loaded_gametypes_rawfile() -> void` reads `GAMETYPES_LIST` from disk or fastfile, then writes it to `consolation/gametypes_dump/_gametypes.txt`.
+
+`dump_loaded_gametypes_rawfile()` logs `dumpGametypes: %s was empty or unavailable\n`, `dumpGametypes: dumped %s from %s to %s\n`, and `dumpGametypes: failed to write %s\n`.
+
+`dump_parsed_ui_gametypes() -> void` clamps `UI_GAMETYPE_COUNT` to `[0, UI_GAMETYPE_MAX]` and emits entries using the exact format `"{} \"{}\"\r\n"` to `consolation/gametypes_dump/parsed_ui_gametypes.txt`.
+
+`bounded_string(const char*, std::size_t) -> std::string` reads at most the requested length, replaces bytes outside ASCII `[32, 126]` with `'.'`, and prevents unbounded debug reads.
+
+`safe_read_byte(const std::uintptr_t, unsigned char*) -> bool` uses `ReadProcessMemory(GetCurrentProcess(), ...)` and requires exactly one byte read.
+
+`append_bytes(std::string&, const char*, std::uintptr_t, std::size_t) -> void` formats bytes as `"  {} @ {:08X}: "` followed by `"{:02X} "` or `"?? "` and terminates each row with `"\r\n"`.
+
+`dump_debug_state()` writes `primary count: {} @ {:08X}\r\n`, `primary entries: {:08X}\r\n`, `secondary count: {} @ {:08X}\r\n`, and `secondary entries: {:08X}\r\n` records.
+
+`dump_debug_state()` records feeder addresses `0x102DEA4A`, `0x102DE2EF`, `0x102DE2F5`, and `0x102DC430`, plus 3 bytes at `0x102DEA4A`, 3 bytes at `0x102DE2F5`, and 10 bytes at `0x102D4A12`.
+
+`dump_debug_state()` explicitly excludes `game::ASSET_TYPE_MENU`, documenting that `ASSET_TYPE_MENU` represents IW `.menu` assets rather than Scaleform `.gfx`.
+
+`write_file_noexcept(const std::string&, const std::string&, DWORD*) -> bool` resolves relative paths against the executable directory, creates parent directories, writes at most `MAXDWORD` bytes with `CreateFileA(..., CREATE_ALWAYS, ...)`, and returns `GetLastError()` through the optional error pointer.
+
+`create_directory_tree(const std::string&, DWORD*) -> bool` creates each path component with `CreateDirectoryA`, treats `ERROR_ALREADY_EXISTS` as success, and skips empty components and drive roots.
+
+`resolve_game_path(const std::string&) -> std::string` preserves drive-qualified paths and otherwise prefixes `get_exe_directory()` plus `"\\"`.
+
+`get_exe_directory() -> std::string` uses `GetModuleFileNameA(nullptr, ..., MAX_PATH)` and returns the executable’s parent directory.
+
+## Commands and lifecycle
+
+`register_commands() -> void` registers `dumpGametypes` with `command::add`; the handler calls `dump_loaded_gametypes_rawfile()` and `dump_parsed_ui_gametypes()`.
+
+`register_commands()` is defined but not invoked by `component::post_load()` in this file.
+
+`component::post_load() -> void` installs `db_find_xasset_header_internal_hook`, NOPs the stock hide-last feeder subtraction at `0x102DEA4A` and `0x102DE2F5`, and NOPs the Scaleform fixed-window limit at `0x102D4A12` for 10 bytes.
+
+`component::pre_destroy() -> void` clears `db_find_xasset_header_internal_hook`, `loaded_gametype_rawfiles`, `loaded_scaleform_rawfiles`, and `ui_gametype_list_refreshed`.
+
+`loaded_gametype_rawfiles` and `loaded_scaleform_rawfiles` retain allocated `game::RawFile` objects until `component::pre_destroy()` clears the maps; clearing the maps does not visibly free the allocations created by `utils::memory::allocate`.
+
+## Behavioral constraints
+
+`db_find_xasset_header_internal_stub()` must preserve original lookup through `db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(...)` when no valid patch or disk override exists.
+
+`append_unique_gametype_id()` lowercases IDs for deduplication and UI output, so case distinctions are intentionally discarded.
+
+`UI_GAMETYPE_MAX == 0x20` bounds all list parsing and cache writes; count values in `dump_parsed_ui_gametypes()` and `dump_debug_state()` are clamped to the same maximum.
+
+`component::post_load()` assumes fixed game offsets and instruction layouts, making `0x10AB8188`, `0x113D1684`, `0x113D1688`, `0x113D31EC`, `0x113D31F0`, `0x102DEA4A`, `0x102DE2F5`, and `0x102D4A12` version-sensitive integration points.

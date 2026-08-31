@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:22:06.844Z
+content_hash: e3c3302f81d7087ab9835b1ca49f8ce8eb1d4ef62b1d1b54b4b89beb50bebee8
+purpose: dualsense-edge.hpp does DualSense Edge input decoding and driver declaration.
+---
+**dualsense-edge.hpp does DualSense Edge input decoding and driver declaration.**
+
+## Interface
+
+`decode_dualsense_edge(span<const byte> report, connection link, raw_sample& raw, canonical_sample& canonical) noexcept` delegates shared decoding while retaining Edge rear-button and back-button capability data.
+
+`dualsense_edge_driver : dualsense_driver` inherits `dualsense_driver::dualsense_driver`, overrides `family() const noexcept` to return `controller::family::dualsense_edge`, and declares `poll(raw_sample&, canonical_sample&) noexcept`.
+
+## Integration
+
+`dualsense_edge_driver` reuses `dualsense_driver` HID reads and `dualsense_input_report`; product-ID identification occurs before `decode_dualsense_edge`.
+
+`types.hpp` supplies `span`, `byte`, `connection`, `raw_sample`, and `canonical_sample`; `utility.hpp` supplies support utilities; `dualsense.hpp` supplies the base driver and shared decoder.

@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:23:16.188Z
+content_hash: 11475cb9152a8575de9c3ddf2d8bb9fffc273483c3558f744df80447a2e194e7
+purpose: diagnostic.cpp does controller diagnostic stringification, sink formatting, and console emission.
+---
+**diagnostic.cpp does controller diagnostic stringification, sink formatting, and console emission.**
+
+## Public symbols
+
+- `const char* to_string(facility f) noexcept` maps all `facility` values to lowercase labels; unknown values fall back to `"runtime"`.
+- `const char* to_string(severity s) noexcept` maps `severity::info`, `severity::warning`, and `severity::error`; unknown values fall back to `"info"`.
+- `void logging_sink::consume(const diagnostic& d)` formats and emits one diagnostic through `console::info`, `console::warn`, or `console::error`.
+- `void report(diagnostic_sink& sink, severity level, facility origin, errc code, device_id device, string message)` constructs `diagnostic{level, origin, code, device, move(message)}` and calls `sink.consume`.
+
+## Behavioral contracts
+
+`logging_sink::consume` emits `controller: <facility>: <message> [<code>] device=<id>\n`; `[<code>]` is omitted for `errc::none`, and `device=<id>` is omitted when `d.device` is empty. `to_string(facility)` recognizes `runtime`, `discovery`, `transport`, `driver`, `decode`, `sample`, `calibration`, `mapping`, `aim`, `steam`, `engine`, `debug`.
+
+## Coupling
+
+`diagnostic.cpp` depends on `diagnostic.hpp` types and `component::engine::console::console.hpp`; `logging_sink::consume` relies on one-shot console accumulator flushing per emitted line.

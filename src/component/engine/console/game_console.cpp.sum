@@ -1,0 +1,146 @@
+---
+generated_at: 2026-08-31T15:24:10.000Z
+content_hash: 780af5ee24f079a3da6bd0be16a9fc796c7b9309ea6854ace8b445c4a07c47f5
+purpose: game_console.cpp does hook-driven in-game console overlay rendering, input handling, command/dvar autocomplete, outpu...
+---
+**game_console.cpp does hook-driven in-game console overlay rendering, input handling, command/dvar autocomplete, output buffering, history management, and version display for the `game_console` component.**
+
+## Public Interface
+
+- `bool is_active()` returns the process-global `overlay_active` state.
+- `void append_output(std::string_view text)` queues console output under `get_pending_output_mutex()`, ignores empty text or `process_shutting_down`, and caps the pending queue at `max_console_lines * 2` entries.
+- `void toggle()` invokes `toggle_overlay_state()` to open or close the overlay.
+- `class component final : public component_interface` registers through `REGISTER_COMPONENT(game_console::component)`, initializes `console_state`, installs scheduler callbacks, and clears hooks during destruction.
+
+## Runtime Integration
+
+- `component::post_load()` allocates `con`, registers `con_outputHeightScale` through `dvars::Dvar_RegisterFloat("con_outputHeightScale", "Height scale for the shift-tab console output pane.", 0.72f, 0.20f, 0.98f, game::dvar_flags::saved)`, and schedules initialization on `scheduler::main`.
+- `component::post_load()` schedules `install_hooks_if_ready()` every `50ms`, guarded output flushing, F1/OEM-key toggles, and `safe_process_console_input()` every `16ms`.
+- `install_hooks_if_ready()` creates `cl_console_print_hook` against `game::CL_ConsolePrint.get()`, `cl_key_event_hook` against `game::CL_KeyEvent_.get()`, and `con_set_console_rect_hook` against `game::Con_SetConsoleRect.get()` once `get_window()` returns a valid `HWND`.
+- `cl_console_print_stub(int local_client_num, int channel, const char* txt, int duration, int pixel_width, int flags)` mirrors `txt` into `append_console_text()` before forwarding all arguments through `cl_console_print_hook.invoke<void>()`.
+- `con_set_console_rect_stub()` invokes the original `Con_SetConsoleRect` detour and then calls `draw_console_overlay()`.
+- `cl_key_event_stub()` preserves the x86 register/stack ABI, calls `cl_key_event_body()`, swallows focused-game events when `should_swallow_key_event()` returns true, and otherwise forwards to `call_original_cl_key_event()`.
+- `component::pre_destroy()` sets `process_shutting_down`, resets readiness flags, disables `overlay_active`, clears `cl_key_event_hook`, `cl_console_print_hook`, and `con_set_console_rect_hook`, then nulls `con`.
+- `scheduler::on_shutdown()` resets `component_ready`, `hooks_installed`, `console_print_hook_installed`, `con_outputHeightScale`, keyboard state, and overlay state.
+
+## State Model
+
+- `console_state` stores `input`, `cursor`, `selection_start`, `selection_end`, `history_index`, history snapshot fields, `scroll_offset`, `output_visible`, `output_fullscreen`, `history`, `lines`, autocomplete matches/query/choice, query offsets, selected match index, and `may_auto_complete`.
+- `overlay_active` controls visibility; `component_ready`, `hooks_installed`, `console_print_hook_installed`, and `process_shutting_down` gate lifecycle-sensitive operations.
+- `key_was_down`, `key_is_down`, and `key_next_repeat_time` implement polling-based edge detection and repeat timing for 256 virtual-key slots.
+- `get_pending_output_queue()` and `get_pending_output_mutex()` return leaked process-lifetime singletons, allowing output calls from outside the main rendering/input loop.
+- `cached_command_names` and `cached_dvar_names` cache sanitized command and dvar identifiers; cache rebuilding traverses at most `4096` command nodes and `16384` nodes per each of `256` dvar hash buckets.
+
+## Version and Prompt Contracts
+
+- `build_display_version()` formats `VERSION_PRODUCT + "(" + VERSION_BUILD + ")" + ("-dbg-" or "-nightly-") + first-seven-character-GIT_HASH`, appending `"-dirty"` when `GIT_DIRTY` is true; `VERSION_BUILD` defaults to `"0"` when undefined.
+- `build_prompt_version()` formats debug builds as `VERSION_PRODUCT + "-dbg"`, release builds as plain `VERSION_PRODUCT`, other builds as `VERSION_PRODUCT + "-nightly"`, followed by `" [" + short_hash + "]"` where dirty hashes use `"-dirty"`.
+- `build_full_version_string()` formats `"Project: Consolation " + VERSION_PRODUCT + build_suffix + " build " + short_hash + dirty_suffix + " " + __DATE__ + " " + __TIME__ + " win-x86"`.
+- `build_console_prompt()` returns `"Project: Consolation " + build_prompt_version() + " >"`.
+- `draw_output_window()` displays `build_full_version_string()` as the footer, while `draw_input()` displays `build_console_prompt()` before `con->input`.
+
+## Output Processing
+
+- `append_console_text(const char* text)` removes carriage returns, splits on `'\n'`, and appends non-empty segments through `append_line()`.
+- `append_line(const std::string& line)` suppresses consecutive duplicate lines and invokes `trim_console_lines()`.
+- `trim_console_lines()` retains only the newest `max_console_lines == 128u` entries and clamps negative `con->scroll_offset` to zero.
+- `flush_pending_output()` swaps the mutex-protected pending deque into a local deque, then feeds each queued string to `append_console_text()`.
+- `strip_colors(std::string_view text)` removes `^` followed by an ASCII digit and removes `'\r'`.
+- `strip_carriage_returns(std::string_view text)` removes every `'\r'`.
+- `sanitize_display_text(std::string_view text)` applies `strip_colors()` and removes all bytes below ASCII `32` or above ASCII `126`.
+- `try_copy_c_string(const char* text, std::string& out)` copies at most `511` bytes inside `__try/__except`, rejects null/empty input and access violations, and always terminates `buffer[511]`.
+- `append_output()` queues raw text; `append_console_text()` performs line splitting; `sanitize_display_text()` is reserved for safe visible metadata/value rendering.
+
+## Command and Dvar Discovery
+
+- `to_lower(std::string value)` performs unsigned-character `std::tolower` conversion in place.
+- `is_reasonable_console_token(std::string_view value)` accepts alphanumerics plus `_`, `-`, `+`, `.`, `:`, `/`, `\`, `*`, `?`, and `@`; all other characters reject the token.
+- `safe_read_cmd_name(game::cmd_function_s* current, game::cmd_function_s** next_out, char* name, std::size_t name_size)` safely reads `current->next` and `current->name` with bounded copying and `__try/__except`.
+- `safe_read_dvar_name(game::dvar_s* current, char* name, std::size_t name_size)` safely copies `current->name` with bounded copying and exception shielding.
+- `safe_read_dvar_description(game::dvar_s* current, char* description, std::size_t description_size)` safely copies `current->description` with bounded copying and exception shielding.
+- `safe_read_dvar_hash_entry(game::dvar_s* current, game::dvar_s** next_out, char* name, std::size_t name_size)` safely reads `current->hashNext` and `current->name`.
+- `rebuild_auto_complete_cache()` deduplicates command and dvar names case-insensitively using `std::unordered_set<std::string>`, filters through `is_reasonable_console_token()`, and refreshes both global caches.
+- `try_get_dvar_value_ptr(game::dvar_s* dvar, game::DvarValue value, const char** value_out)` calls `dvars::Dvar_ValueToString()` under `__try/__except` and rejects null converted values.
+- `try_copy_dvar_domain(game::dvar_s* dvar, game::dvar_type& type_out, game::DvarLimits& domain_out)` safely copies `dvar->type` and `dvar->domain`.
+- `is_dvar_command_token(std::string_view token)` recognizes exactly `set`, `seta`, `sets`, `reset`, `toggle`, and `togglep`, case-insensitively.
+- `gather_auto_complete_matches(std::string input, bool exact)` ranks matches as exact, dvar-prefix, command-prefix, dvar-contained, and command-contained; each group sorts with `_stricmp`, and exact mode returns only case-insensitive equality matches.
+- `gather_auto_complete_matches()` prioritizes dvars over commands within prefix and substring groups and deduplicates by lowercase identifier.
+- `refresh_auto_complete()` strips one leading `/` or `\`, treats the first token as an exact command query when a space exists, treats the remainder as a dvar argument for `is_dvar_command_token()`, and retries after `rebuild_auto_complete_cache()` when no matches appear.
+- `get_auto_complete_common_prefix()` computes the case-insensitive longest common prefix across `con->auto_complete_matches`.
+- `sync_auto_complete_choice()` wraps `auto_complete_selected_index` modulo match count and updates `auto_complete_choice`.
+- `cycle_auto_complete_choice(int direction)` wraps selection across all matches, supporting forward and backward cycling.
+- `commit_auto_complete_choice(bool append_space)` replaces the tracked query with `auto_complete_choice` through `apply_auto_complete_text()`.
+- `apply_auto_complete_text(std::string text, bool append_space)` replaces the query range, advances `con->cursor`, optionally inserts one space while `cursor < max_input_chars`, clears selection, and refreshes autocomplete.
+- `handle_auto_complete()` commits a single match with a trailing space, inserts a longer common prefix without a space, or cycles among multiple matches.
+
+## Input Editing and Clipboard
+
+- `set_overlay_active(bool active)` resets keyboard state and autocomplete; opening resets history/output navigation, while closing clears input and cursor state.
+- `clear_auto_complete()` clears all autocomplete fields and sets `may_auto_complete` false.
+- `clear_input_line()` empties `con->input`, moves the cursor to zero, and clears autocomplete.
+- `set_cursor_position(std::size_t cursor)` clamps the cursor to `con->input.size()` and clears selection.
+- `select_entire_input()` selects `[0, input.size()]` and moves the cursor to the end.
+- `delete_input_selection()` erases the normalized selection range, moves the cursor to its beginning, and invalidates the history snapshot.
+- `insert_character(char ch)` replaces any selection, enforces `max_input_chars == 240u`, inserts at the cursor, invalidates the snapshot, and refreshes autocomplete.
+- `insert_text(std::string text)` removes `'\r'`, `'\n'`, and `'\t'`, truncates to the remaining `max_input_chars == 240u` capacity, inserts at the cursor, and refreshes autocomplete.
+- `insert_wide_text(const WCHAR* text, int length)` converts each UTF-16 code unit through `WideCharToMultiByte(CP_ACP, ...)` and accepts printable bytes `>= 32` excluding `127`.
+- `paste_from_clipboard()` reads `CF_TEXT` through `OpenClipboard()`, `GetClipboardData()`, and `GlobalLock()`, then delegates insertion to `insert_text()`.
+- `copy_text_to_clipboard(std::string_view text)` writes a null-terminated `CF_TEXT` global allocation through `EmptyClipboard()` and `SetClipboardData()`.
+- `handle_ctrl_shortcut(int vk)` maps Ctrl+A to select all, Ctrl+Shift+C to copy, Ctrl+V to paste, and Ctrl+L to clear output; Ctrl+C without Shift is passed through as non-handled.
+- `clear_dead_key_state()` calls `ToUnicode(VK_SPACE, MapVirtualKeyA(VK_SPACE, MAPVK_VK_TO_VSC), ...)` with a zeroed keyboard state to consume dead-key state.
+- `handle_text_key(int vk)` obtains `GetKeyboardState()`, translates through `MapVirtualKeyA()` and `ToUnicode()`, inserts translated text, and clears dead-key state for negative `ToUnicode()` results.
+
+## History and Command Execution
+
+- `trim_history()` retains at most `max_history_entries == 32u` newest commands.
+- `save_history_snapshot()` stores input, cursor, and selection only when `history_snapshot_valid` is false.
+- `restore_history_snapshot()` restores clamped snapshot fields, normalizes empty selection to the cursor, clears validity, and refreshes autocomplete.
+- `history_up()` saves the editable snapshot on first navigation, moves toward older entries, loads the selected history command, and refreshes autocomplete.
+- `history_down()` moves toward newer entries, restores the snapshot after the newest entry, or clears input when no snapshot exists.
+- `execute_input()` optionally commits autocomplete, appends `"] " + con->input` to visible output, deduplicates adjacent history entries, trims history, sends `con->input + "\n"` through `game::Cbuf_AddText(0, command.c_str())`, then clears input/navigation/autocomplete state.
+- `handle_special_key(int vk)` maps `VK_ESCAPE` to close, `VK_RETURN` to execute, `VK_BACK`/`VK_DELETE` to deletion, arrows/Home/End to cursor/history/navigation, `VK_PRIOR`/`VK_NEXT` to six-line scrolling, and `VK_TAB` to autocomplete or Shift/Ctrl output-pane toggles.
+- `scroll_output(int amount)` changes `con->scroll_offset` only when output is visible; autocomplete match view reverses the sign relative to normal output scrolling.
+- `handle_full_console_toggle_press()` opens the overlay if necessary and toggles `output_visible` plus `output_fullscreen`; the full-console view is reached through Shift+OEM key.
+- `toggle_overlay_state()` delegates state transitions to `set_overlay_active()`.
+
+## Keyboard and Focus Contracts
+
+- `get_window()` returns `*game::main_window`.
+- `is_game_focused()` requires a valid window and `GetForegroundWindow() == hwnd`.
+- `is_key_down(int vk)` tests `(GetAsyncKeyState(vk) & 0x8000) != 0`.
+- `is_modifier_down(int vk, int left_vk, int right_vk)` combines polled aggregate, left/right cached, and left/right OS key states.
+- `is_any_shift_down()` checks `VK_SHIFT`, `VK_LSHIFT`, and `VK_RSHIFT`; `is_any_ctrl_down()` checks `VK_CONTROL`, `VK_LCONTROL`, and `VK_RCONTROL`.
+- `process_console_input()` polls virtual keys `8..255`, recognizes first presses and repeatable-key repeats, uses a `350u` initial repeat delay and `45u` repeat interval, and excludes F1, `VK_OEM_5`, and `VK_OEM_102` from text insertion.
+- `safe_process_console_input()` requires `component_ready`, `overlay_active`, a valid focused `HWND`, and non-shutdown state, then catches all structured exceptions around `process_console_input()`.
+- `cl_key_event_body(int local_client_num, int key, int down, unsigned int time)` handles mouse-wheel scrolling on key-down and returns `1` when focused overlay input should be swallowed.
+- F1 toggles `overlay_active`; OEM-5 and OEM-102 toggle normally, while Shift+OEM-5 or Shift+OEM-102 toggles the full output console.
+- `debug_log_toggle(const char* key_name)` is compiled as a no-op in release and retains a disabled debug logging block under `DEBUG`.
+
+## Rendering
+
+- `get_console_font()` returns `*game::con_font` when available, otherwise registers `"fonts/normalFont"` through `game::R_RegisterFont()`.
+- `get_white_material()` registers the `"white"` material through `game::Material_RegisterHandle()`.
+- `resolve_layout_width(const game::ScreenPlacement& scr_place)` prefers the larger positive real viewport dimension, then virtual viewable dimension, then `640.0f`.
+- `resolve_layout_height(const game::ScreenPlacement& scr_place)` prefers the smaller positive real viewport dimension, then virtual viewable dimension, then `480.0f`.
+- `get_overlay_bounds()` uses the client rectangle when available, otherwise `game::ScrPlace_GetViewPlacement()`, with six-pixel screen margins, minimum bounds `634.0f × 474.0f`, and font-derived visible line/width calculations.
+- `draw_box(float x, float y, float width, float height, float* color)` draws a filled rectangle and two-pixel darkened borders through `game::R_AddCmdDrawStretchPic()`.
+- `draw_text(const char* text, float x, float y, float* color, float scale)` draws text through `game::R_AddCmdDrawText()` with `0x7FFFFFFF` character limit.
+- `draw_text_shadowed()` draws `overlay_shadow_color` at `+1.0f,+1.0f` before the requested text.
+- `draw_input_box()` and `draw_hint_box()` construct bordered panels from `draw_box()`.
+- `draw_hint_text()` positions lines using `font_height`, line index, `15.0f` vertical padding, and optional offsets.
+- `draw_dvar_match_details()` safely renders current, latched, default, description, and domain data; unavailable values use `"<unavailable>"`, and latched dvars are detected with `game::dvar_flags::latched`.
+- `draw_input()` renders the prompt, selection highlight, input text, blinking `|` caret, and autocomplete; the caret blink period is `500ms`.
+- `draw_input()` displays `"%i matches (too many to show here, press shift+tilde to open full console)"` when matches exceed `max_auto_complete_matches == 24u`.
+- `draw_output_scrollbar()` scales the slider by `visible_lines / total_lines` and positions it using `con->scroll_offset`.
+- `draw_output_window()` uses `con_outputHeightScale` clamped to `[0.20f, 0.98f]` with fallback `0.72f` for non-fullscreen output, while fullscreen output uses scale `1.0f`.
+- `draw_console_overlay()` renders only when `is_active()`, `con`, valid bounds, and non-shutdown state exist; it draws output before input when `con->output_visible` is true.
+
+## Dependencies and Assumptions
+
+- `loader/component_loader.hpp` supplies `component_interface` and `REGISTER_COMPONENT`.
+- `component/utils/scheduler.hpp` supplies `scheduler::main`, `scheduler::once`, `scheduler::loop`, and `scheduler::on_shutdown`.
+- `game/game.hpp` supplies engine globals/functions including `CL_ConsolePrint`, `CL_KeyEvent_`, `Con_SetConsoleRect`, `Cbuf_AddText`, `main_window`, `con_font`, `R_RegisterFont`, `Material_RegisterHandle`, `R_AddCmdDrawStretchPic`, `R_AddCmdDrawText`, `R_TextWidth`, `ScrPlace_GetViewPlacement`, `cmd_functions`, `dvarHashTable`, and `Dvar_FindVar`.
+- `game/dvars.hpp` supplies `dvars::Dvar_RegisterFloat`, `dvars::Dvar_ValueToString`, and `dvars::dvar_get_domain`.
+- `utils::hook::detour` requires original-function invocation and explicit `clear()` during teardown.
+- Windows APIs (`HWND`, `RECT`, `GetAsyncKeyState`, `GetForegroundWindow`, `GetClientRect`, clipboard APIs, `ToUnicode`, `WideCharToMultiByte`, `GlobalAlloc`, and structured exception handling) make the implementation Windows/x86-specific.
+- `GIT_HASH`, `GIT_DIRTY`, `VERSION_PRODUCT`, `VERSION_BUILD`, `DEBUG`, and `NDEBUG` control observable version text.

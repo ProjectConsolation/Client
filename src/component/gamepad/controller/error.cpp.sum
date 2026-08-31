@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:23:17.531Z
+content_hash: 25bb7cabef6e79c6746e25cc71176f75de7043393e33a144cd0a543d1ff911f7
+purpose: error.cpp maps controller error codes to stable strings and stream output.
+---
+**error.cpp maps controller error codes to stable strings and stream output.**
+
+## Interface
+
+`gamepad::unstable::controller::to_string(errc c) noexcept` returns `const char*`, mapping 17 `errc` values to kebab-case literals; unknown values return `"none"`.
+
+`gamepad::unstable::controller::operator<<(ostream& os, errc c)` serializes `errc` through `to_string`.
+
+`gamepad::unstable::controller::error::error(errc c, const string& what)` and `error(errc c, const char* what)` initialize `runtime_error` and `code_`.
+
+## Contracts
+
+`to_string` literals: `"none"`, `"device-unavailable"`, `"ambiguous-identity"`, `"unsupported-device"`, `"transport-failure"`, `"report-malformed"`, `"report-truncated"`, `"checksum-mismatch"`, `"output-rejected"`, `"calibration-invalid"`, `"calibration-version"`, `"graph-invalid"`, `"binding-invalid"`, `"steam-unavailable"`, `"steam-unsuitable"`, `"hook-failed"`, `"dvar-registration"`.

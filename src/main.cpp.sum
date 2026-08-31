@@ -1,0 +1,37 @@
+---
+generated_at: 2026-08-31T15:24:19.939Z
+content_hash: e2803ac588ef38a5082b89dff3062978e15dec71c05e256ad1314c30b58b97e0
+purpose: src/main.cpp does Windows DLL startup validation, DPI setup, component-loader initialization, and fatal-error handlin...
+---
+**src/main.cpp does Windows DLL startup validation, DPI setup, component-loader initialization, and fatal-error handling for Project: Consolation.**
+
+## Interface
+
+- `int WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID)` disables thread notifications on `DLL_PROCESS_ATTACH`, invokes `main()`, and returns `FALSE` when startup fails.
+- `main() -> bool` enables DPI awareness, seeds `rand`, validates installation, runs `component_loader::post_start()` and `component_loader::post_load()`, and converts startup exceptions into message boxes plus `component_loader::pre_destroy()`.
+
+## Installation Validation
+
+- `local_offline_mode_requested() -> bool` accepts flags `offline`, `local_offline`, and `local-offline`.
+- `has_system_xlive() -> bool` checks `%SystemDirectory%\\xlive.dll` via `GetSystemDirectoryA`, `GetFileAttributesA`, `MAX_PATH`, and `FILE_ATTRIBUTE_DIRECTORY`.
+- `validate_supported_install() -> void` requires system Games for Windows - LIVE unless local offline mode is requested, logs the `jb_mp_s.dll` marker, and rejects unsupported installs.
+- `has_supported_multiplayer_marker(const std::filesystem::path& game_root) -> bool` reads `jb_mp_s.dll` RVA `0x0050502C` through `utils::io::read_pe_string_rva` and requires case-insensitive equality with `"multiplayer"`.
+- `read_multiplayer_marker_for_log(const std::filesystem::path& game_root) -> std::string` returns the same PE marker or sentinel `"<missing>"`.
+- `show_missing_gfwl_and_exit() -> noreturn` displays a Yes/No error dialog, optionally opens `gfwl_update_url`, then calls `utils::nt::terminate(1)`.
+- `show_unsupported_version_and_exit() -> noreturn` displays a version error dialog, optionally opens `unsupported_update_url`, then calls `utils::nt::terminate(1)`.
+
+`gfwl_update_url` is `https://community.pcgamingwiki.com/files/file/1012-microsoft-games-for-windows-live/`; `unsupported_update_url` is `https://community.pcgamingwiki.com/files/file/1089-007-quantum-of-solace-patch/`; `multiplayer_marker_rva` is `std::uint32_t(0x0050502C)`.
+
+## Runtime Initialization
+
+- `enable_dpi_awareness() -> void` applies a compatibility fallback chain: `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`, `SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE)`, then `SetProcessDPIAware`, dynamically resolved from `user32.dll` and `shcore.dll` via `utils::nt::library`.
+- `exit_hook(int code) -> noreturn` calls `component_loader::pre_destroy()` before `exit(code)`.
+- `unprotect_module(HMODULE module) -> void` parses PE headers and changes `SizeOfImage` protection to `PAGE_EXECUTE_READWRITE` with `VirtualProtect`; it is currently unused.
+- `original_code[5]` and `original_ep` (`PBYTE`, initialized `nullptr`) are reserved hook state and currently unused.
+- `configure_debug_crt() -> void` (under `DEBUG`) routes CRT warning, error, and assertion reports to the debugger through `_CrtSetReportMode`; `xlive::apply_early()` remains intentionally disabled.
+
+## Coupling and Failure Semantics
+
+- `main()` depends on `utils::flags`, `utils::io`, `utils::nt`, Win32 Shell/DPI APIs, and `component_loader`; `component_loader::post_start()` and `component_loader::post_load()` failures are thrown as `"post start failed"` and `"post load failed"`.
+- `main()` catches `std::exception`, `const char*`, `std::string`, and unknown exceptions, always invoking `component_loader::pre_destroy()` before showing an `"ERROR"` dialog and returning `false`.
+- `DllMain` performs substantial initialization during process attach; `DisableThreadLibraryCalls` limits callback overhead, while `utils::nt::terminate(1)` handles non-recoverable validation failures.

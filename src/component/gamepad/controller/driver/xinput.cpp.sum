@@ -1,0 +1,36 @@
+---
+generated_at: 2026-08-31T15:22:36.549Z
+content_hash: 835f7cac338413676518226980084dcb7b4ed3dab2c010c3cad351ae39cd6cfd
+purpose: xinput.cpp decodes XInput controller state, suppresses unchanged packets, and submits rumble output.
+---
+**xinput.cpp decodes XInput controller state, suppresses unchanged packets, and submits rumble output.**
+
+## Interface
+
+- `decode_xinput(const XINPUT_GAMEPAD& g, bool has_guide, raw_sample& raw, canonical_sample& canonical) noexcept` copies device-native axes/triggers/buttons into `raw`, then fills normalized `canonical_sample` state.
+- `xinput_driver::xinput_driver(const context& ctx, const transport::xinput_module& module, device_id device, user_index index)` stores `ctx_`, `module_`, `device_`, and `index_`.
+- `xinput_driver::poll(raw_sample& raw, canonical_sample& canonical) noexcept -> bool` reads `XINPUT_STATE` through `module_.get_state`, decodes new packets, and returns whether a sample was published.
+- `xinput_driver::submit(const output_request& request) noexcept -> void` converts `rumble_request` into `XINPUT_VIBRATION`; non-rumble requests are rejected informationally.
+
+## Decoding Contracts
+
+- `normalize_stick(int16_t rx, int16_t ry) noexcept -> stick_vector` divides axes by `thumb_full_scale` (`32767.0f`), clamps each component to `[-1.0f, 1.0f]`, and radially clamps magnitude above `1.0f`; deadzones and response curves remain owned by the aim layer.
+- `decode_trigger(uint8_t raw) noexcept -> trigger_sample` returns `{raw, static_cast<float>(raw) / 255.0f}`.
+- `decode_buttons(uint16_t w, bool have_guide) noexcept -> button_set` maps XInput A/B/X/Y, D-pad, shoulders, thumb clicks, start, and back bits to `button::face_*`, `button::dpad_*`, `button::l1/r1`, `button::l3/r3`, `button::start`, and `button::back`.
+- `xinput_gamepad_guide` equals `0x0400`; `button::guide` is decoded only when `have_guide` is true because the extended ordinal-100 runtime entry point exposes the otherwise-masked guide bit.
+- `button::l2` and `button::r2` become digital trigger states when the corresponding raw value is greater than `XINPUT_GAMEPAD_TRIGGER_THRESHOLD`.
+- `canonical_sample::touch`, `canonical_sample::motion`, and `canonical_sample::battery` are reset empty; `canonical_sample::caps` is always `capability::rumble`.
+- `raw_sample::sticks`, `raw_sample::triggers`, and `raw_sample::buttons` retain XInput-native values; `canonical_sample` receives raw and normalized sticks plus trigger samples.
+
+## Polling and Output
+
+- `xinput_driver::poll` treats any `module_.get_state(...) != ERROR_SUCCESS` as an empty slot, clears `have_packet_`, and returns `false`; discovery owns arrival/removal.
+- `xinput_driver::poll` uses `XINPUT_STATE::dwPacketNumber` as a change detector, returning `false` for unchanged packets and updating `last_packet_` only for published state.
+- `scale_motor(float v) noexcept -> WORD` clamps `v` to `[0.0f, 1.0f]` and scales by `65535.0f` for `XINPUT_VIBRATION::wLeftMotorSpeed` or `wRightMotorSpeed`.
+- `xinput_driver::submit` maps `rumble_request::low_frequency` to the left motor and `high_frequency` to the right motor; failed `module_.set_state` calls report `severity::warning`, `facility::driver`, and `errc::output_rejected`.
+- `xinput_driver::submit` reports unsupported light-bar, player-LED, and adaptive-trigger requests with `severity::info`, `facility::driver`, and `errc::output_rejected`, using `"XInput driver ignores a non-rumble output request"`.
+
+## Coupling
+
+- `xinput.cpp` depends on `component/gamepad/controller/driver/xinput.hpp`, `XINPUT_GAMEPAD`, `XINPUT_STATE`, `XINPUT_VIBRATION`, XInput button constants, `XINPUT_GAMEPAD_TRIGGER_THRESHOLD`, `transport::xinput_module`, and `context::report`.
+- `xinput_driver` follows a driver Strategy pattern: `poll` supplies canonical input while `submit` handles the transport-specific output capability.

@@ -1,0 +1,26 @@
+---
+generated_at: 2026-08-31T15:22:18.048Z
+content_hash: 666265b0fd3daf42fd8048839cf0586f8fdc380f91f3c459a012afd1c2e5f7b8
+purpose: dualshock4.hpp decodes DualShock 4 HID reports and declares its HID driver.
+---
+**dualshock4.hpp decodes DualShock 4 HID reports and declares its HID driver.**
+
+## Interface
+
+`decode_dualshock4(span<const byte>, connection, raw_sample&, canonical_sample&) noexcept -> bool` validates USB report `0x01`/64 bytes or Bluetooth report `0x11`/78 bytes, including Bluetooth trailing CRC-32, then writes raw and canonical samples; failures return `false` and leave outputs untouched.
+
+`dualshock4_driver(const context&, transport::hid_device&, device_id)` constructs a `driver` for one HID-connected DualShock 4.
+
+`dualshock4_driver::family() const noexcept -> controller::family` always returns `controller::family::dualshock4`.
+
+`dualshock4_driver::device() const noexcept -> device_id` returns `device_`.
+
+`dualshock4_driver::poll(raw_sample&, canonical_sample&) noexcept -> bool` reads and decodes native HID input.
+
+`dualshock4_driver::submit(const output_request&) noexcept -> void` accepts output requests for later device-output support.
+
+## Coupling and state
+
+`decode_dualshock4` depends on `span`, `byte`, `connection`, `raw_sample`, `canonical_sample`, and PlayStation HID field layouts corresponding to `dualshock4_input_report_common` and USB/Bluetooth wrappers.
+
+`dualshock4_driver` stores `context`, `transport::hid_device`, `device_id`, and detected `connection` in `ctx_`, `hid_`, `device_`, and `link_`; `minimal_reported_` suppresses repeated diagnostics for minimal Bluetooth reports after the first observation.

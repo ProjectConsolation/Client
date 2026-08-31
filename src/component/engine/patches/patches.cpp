@@ -9,6 +9,7 @@
 #include "game/dvars.hpp"
 
 #include <utils/hook.hpp>
+#include <utils/flags.hpp>
 #include <utils/string.hpp>
 #include <unordered_set>
 #ifndef VERSION_BUILD
@@ -110,6 +111,27 @@ namespace patches
 		int ret_one(DWORD*, int)
 		{
 			return 1;
+		}
+
+		bool local_offline_mode_requested()
+		{
+			return utils::flags::has_flag("offline")
+				|| utils::flags::has_flag("local_offline")
+				|| utils::flags::has_flag("local-offline");
+		}
+
+		void apply_local_offline_mode_patches()
+		{
+			// Skip XLive-backed playlist/stat downloads. This lets local map bring-up
+			// proceed without waiting on online storage checks.
+			utils::hook::jump(game::game_offset(0x10240B30), ret_one);
+			utils::hook::jump(game::game_offset(0x10240A30), ret_one);
+
+			// Skip the XSessionCreate zero-session-id failure branch that raises
+			// XBOXLIVE_NETCONNECTION during local session startup.
+			utils::hook::nop(game::game_offset(0x102489A1), 5);
+
+			console::info("local offline mode: online storage/session checks bypassed\n");
 		}
 
 		using cl_parse_server_message_huffman_t = unsigned int(__cdecl*)(int, std::uint32_t*);
@@ -593,15 +615,21 @@ namespace patches
 
 			Jump_Start_hook.create(game::game_offset(0x101DB390), Jump_Start_stub);
 
-			// support xliveless emulator
-#ifdef XLIVELESS
-			// bypass playlist + stats
-			utils::hook::jump(game::game_offset(0x10240B30), ret_one);
-			utils::hook::jump(game::game_offset(0x10240A30), ret_one);
+			const auto offline_mode = local_offline_mode_requested();
+			dvars::overrides::register_bool("cl_offlineMode", offline_mode, game::dvar_flags::read_only);
 
-			// allow map loading
-			utils::hook::nop(game::game_offset(0x102489A1), 5);
-			#endif
+			// support local/xliveless map bring-up without online storage/session checks
+			if (offline_mode)
+			{
+				apply_local_offline_mode_patches();
+			}
+
+#ifdef XLIVELESS
+			if (!offline_mode)
+			{
+				apply_local_offline_mode_patches();
+			}
+#endif
 
 			dvars::overrides::register_bool("sv_cheats", 1, game::dvar_flags::none);
 			dvars::overrides::register_string("version", build_version_string(),

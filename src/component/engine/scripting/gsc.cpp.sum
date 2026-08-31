@@ -1,0 +1,55 @@
+---
+generated_at: 2026-08-31T15:23:29.675Z
+content_hash: 1ae7ecc60d94d9aaf9cac9ccbfa2863ef4daebfeb45a01dcc96bb7ec4468b82c
+purpose: gsc.cpp does custom GSC script loading, execution, replacement, asset lookup, and compile-error integration through g...
+---
+**gsc.cpp does custom GSC script loading, execution, replacement, asset lookup, and compile-error integration through game-engine hooks.**
+
+## Public Interface
+
+- `add_function(const char* name, game::function_t func, int type)` lowercases `name` via `utils::string::to_lower` and stores `{call=func, developer=type}` in `scr_functions`.
+- `add_method(const char* name, game::method_t func, int type)` lowercases `name` and stores `{call=func, developer=type}` in `scr_methods`.
+- `gsc::component` is a `component_interface` implementation whose `post_load()` installs all active hooks and registers the `replacefunc` GSC function.
+- `REGISTER_COMPONENT(gsc::component)` registers `gsc::component` with the component loader.
+
+## Script Loading and Execution
+
+- `load_script(const std::string& name)` calls `game::Scr_LoadScript(name.data())`, retrieves `"main"` and `"init"` handles through `game::Scr_GetFunctionHandle`, and records nonzero handles in `main_handles` or `init_handles`; `custom_script_name` is computed as `name + ".gsc"s` but unused.
+- `load_scripts(const std::filesystem::path& root_dir, const std::filesystem::path& subfolder)` scans `root_dir/subfolder`, filters filenames ending in `.gsc`, derives a root-relative path without the final four characters, and forwards the base name to `load_script`.
+- `load_gametype_script_stub()` invokes engine offset `0x101A8A70`, then scans every `filesystem::get_search_paths()` entry under `scripts/` and `scripts/mp/`.
+- `g_load_structs_stub()` executes every `main_handles` entry with `game::Scr_ExecThread`, releases each result through `game::RemoveRefToObject`, then invokes engine offset `0x10188010`.
+- `save_reigstered_weapons_stub()` executes every `init_handles` entry with `game::Scr_ExecThread`, releases each result, then invokes engine offset `0x10179920`; the misspelled identifier is part of the source API.
+- `main_handles` and `init_handles` retain engine script handles until the `scheduler::on_shutdown` callback clears them.
+
+## Custom Raw-File Resolution
+
+- `read_raw_script_file(const std::string& name, std::string* data)` returns `true` when `filesystem::read_file(name, data)` succeeds and otherwise returns `false`; the fallback `DB_XAssetExists`/`DB_GetRawBuffer` implementation is disabled in comments.
+- `load_custom_script(const char* file_name)` memoizes `game::RawFile*` values in `loaded_scripts`, rejects unreadable or empty files, allocates `RawFile`, null-terminated `name`, and null-terminated `buffer` through `utils::memory::allocate`, and sets `len` to `source_buffer.size() + 1`.
+- `find_script(game::XAssetType type, const char* name, int allow_create_default)` checks `load_custom_script(name)` before delegating to `game::DB_FindXAssetHeader_Internal(type, name, allow_create_default).rawfile`.
+- `GSC_DUMPING` enables `find_script` output to `gsc_dump/%s` using `utils::io::write_file` and logs `Dumped %s`.
+- `loaded_scripts` stores allocated script assets without an explicit deallocation path; `scheduler::on_shutdown` clears map entries but does not visibly free the allocated `RawFile`, name, or buffer memory.
+
+## Function and Method Dispatch
+
+- `player_get_method_stub(const char** name)` resolves lowercase-compatible registered methods from `scr_methods`, returning `game::scr_method_t::call`, and falls back to engine offset `0x1015AD00`.
+- `scr_get_function_stub(const char** name, int* type)` resolves `scr_functions`, writes `game::scr_function_t::developer` into `*type`, returns `game::scr_function_t::call`, and falls back to engine offset `0x10197460`.
+- `player_get_method_stub` and `scr_get_function_stub` are currently inactive because their `utils::hook::call` sites in `component::post_load()` are commented out.
+- `replacefunc` requires exactly two parameters; otherwise it logs `replacefunc: two parameters are required.\n` through `console::error` and returns.
+- `get_code_pos_for_param(int index)` validates `index < game::scrVmPub->outparamcount` and `VAR_FUNCTION` type, invokes engine error offset `0x10235640` with exact messages `"get_code_pos_for_param: Index is out of range!\n"` or `"get_code_pos_for_param: Invalid type! (Expects a function as parameter)\n"`, and returns `""` on failure.
+- `set_replaced_pos(const char* what, const char* with)` rejects empty strings with `Invalid parameters passed to set_replaced_pos\n`, warns when `replaced_functions` already contains `what`, and stores the `what -> with` code-position mapping.
+- `get_replaced_pos(const char* pos)` assigns `replaced_pos` from `replaced_functions[pos]` when present; `replaced_pos` is reset to `nullptr` after VM redirection.
+- `vm_execute_stub()` is an x86 inline-assembly VM redirection stub that substitutes `edx` with `replaced_pos`, reads one opcode byte, updates engine globals at `0x116377F8` and `0x11738440`, and returns through `0x10237866`; its jump hook at `0x1023784C` is commented out.
+
+## Compile-Error Reporting
+
+- `format(va_list* ap, const char* message)` formats into a `static thread_local char buffer[0x1000]` using `vsnprintf_s(buffer, _TRUNCATE, message, *ap)` and returns `{}` when formatting fails.
+- `Scr_PrintSourcePos(const char* a2, const char* a3, unsigned int a4)` truncates source text to 1023 bytes, converts tab characters (`'\t'`) to spaces, strips a trailing carriage return (`'\r'`), annotates savegames with `" (savegame)"`, and logs `(file '%s'%s, line %d)\n`.
+- `compile_error_stub(const char* fmt, ...)` formats the variadic error, prints the exact banner `******* script compile error *******`, reports source position using globals `0x118B5224` and `0x118B522C`, and terminates with `game::Com_Error(..., "script compile error\n%s\n%s\n(see console for details)\n", ...)`.
+- `compile_error_2_stub(const char* fmt, ...)` formats the error, resolves a code position with `game::Scr_FormatCodePos`, prints the same compile-error banner, and terminates through `game::Com_Error` using the same error template.
+- `compile_error_hook` detours engine offset `0x1022DD40` to `compile_error_stub`; `compile_error_2_hook` detours `0x1022DC70` to `compile_error_2_stub`.
+
+## Hook and Lifecycle Contract
+
+- `component::post_load()` calls `load_gametype_script_stub` at `0x101A8ED4`, `g_load_structs_stub` at `0x101AD1FA`, `save_reigstered_weapons_stub` at `0x101AD27A`, and `find_script` at `0x1022DC10`.
+- `scheduler::on_shutdown` clears `main_handles`, `init_handles`, `replaced_functions`, and `loaded_scripts`; `scr_functions` and `scr_methods` are not cleared.
+- `console::debug`, `console::warn`, and `console::error` form the observable logging boundary, while `filesystem::get_search_paths` and `filesystem::read_file` define custom-script discovery and precedence.

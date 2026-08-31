@@ -1,0 +1,29 @@
+---
+generated_at: 2026-08-31T15:21:44.084Z
+content_hash: b0ba7d6163d7b19f86077315a6f2b7c64746121a44bafb0b301bf8889973bc86
+purpose: aim/assist.hpp does deterministic, stateful gamepad aim processing, slowdown, axis shaping, and velocity-relative loc...
+---
+**aim/assist.hpp does deterministic, stateful gamepad aim processing, slowdown, axis shaping, and velocity-relative lock-on correction.**
+
+## Interface
+
+Namespace: `gamepad::unstable::controller::aim`.
+
+- `aim_profile` stores `deg_per_s yaw_rate`, `deg_per_s pitch_rate`, `deadzone_params deadzone`, and `response_curve curve` for hip-fire/ADS and pitch/yaw contexts.
+- `aim_frame_input` carries calibrated `stick_vector look`, `float ads_lerp {0.0f}`, `float fov_scale {1.0f}`, `float sensitivity {1.0f}`, `float slowdown_yaw {1.0f}`, `float slowdown_pitch {1.0f}`, `bool invert_pitch {false}`, optional `deg_per_s yaw_max`, optional `deg_per_s pitch_max`, and `seconds dt {0.0f}`.
+- `aim_frame_output` returns `degrees yaw_delta {0.0f}` and `degrees pitch_delta {0.0f}`; positive yaw turns right and positive pre-inversion pitch looks up.
+- `aim_processor::config` contains `aim_profile hip`, `aim_profile ads`, `turn_integrator::limits accel`, and nullable `const aim_graph* graph {nullptr}`.
+- `aim_processor (config)` constructs the stateful processor; `aim_frame_output process (const aim_frame_input&) noexcept` computes one frame; `void reset () noexcept` clears integrator state.
+- `float slowdown_scale (bool target_present, float hip_scale, float ads_scale, float ads_lerp) noexcept` returns the hip/ADS blend when targeting, otherwise `1`.
+- `stick_vector scale_dominant_axis (stick_vector look) noexcept` attenuates the subordinate axis by `1 - (greater magnitude - lesser magnitude)`, preserving signs; cardinal input suppresses the weaker axis, while diagonal input remains unchanged.
+- `lock_on_target` stores `world_vector target_velocity`, `world_vector player_velocity`, positive-direction `world_vector view_pitch_axis`/`view_yaw_axis`, and `float distance {0.0f}`.
+- `lock_on_params` stores `float yaw_strength {0.0f}` and `float pitch_strength {0.0f}`.
+- `aim_frame_output lock_on (const lock_on_target&, const lock_on_params&, seconds dt) noexcept` projects relative velocity onto view axes, converts projections into angular rates over `distance`, and integrates them over `dt`; non-positive `distance` produces no adjustment.
+
+## State and contracts
+
+`aim_processor` owns independent `turn_integrator yaw_` and `turn_integrator pitch_`, making acceleration/deceleration persistent across frames and outputs deterministic for fixed config/input sequences. `aim_processor::config::graph` overrides profile-curve shaping when non-null; the pointed `aim_graph` must outlive the processor. `aim_frame_input::ads_lerp` blends hip (`0`) and ADS (`1`) profiles, while `slowdown_yaw` and `slowdown_pitch` use `[0,1]` semantics where `1` means no slowdown. `aim_frame_input::invert_pitch` applies pitch inversion after the positive-up convention. `lock_on_target::view_yaw_axis` must be RIGHT (`+yaw`); callers must negate engine `viewAxis[1]`, which is LEFT.
+
+## Dependencies
+
+`types.hpp` supplies `deg_per_s`, `degrees`, `seconds`, `stick_vector`, `world_vector`, and `optional`; `utility.hpp` supplies shared support utilities. `clock.hpp`, `deadzone.hpp`, `curve.hpp`, `graph.hpp`, `integrator.hpp`, and `sample/axis.hpp` define timing, shaping, graph, integration, and sampled-axis primitives consumed by the declarations.

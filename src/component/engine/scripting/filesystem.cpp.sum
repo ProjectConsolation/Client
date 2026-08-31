@@ -1,0 +1,44 @@
+---
+generated_at: 2026-08-31T15:23:13.484Z
+content_hash: 6fba563587a691b577c667eebc6358eeda1768c48b089253ae0d5103944d0f47
+purpose: filesystem.cpp does prioritized filesystem search-path management and hooks engine startup, script execution, and ins...
+---
+**filesystem.cpp does prioritized filesystem search-path management and hooks engine startup, script execution, and install-path resolution.**
+
+## Public API
+
+- `std::string read_file(const std::string& path)` searches registered paths in priority order and returns the first readable file or `{}`.
+- `bool read_file(const std::string& path, std::string* data, std::string* real_path)` fills file contents and optionally the resolved path, returning `false` when unresolved.
+- `bool find_file(const std::string& path, std::string* real_path)` resolves the first existing file and writes its path to `real_path`.
+- `bool exists(const std::string& path)` checks whether any registered search path contains `path`.
+- `void enable_engine_search_paths(bool enable)` toggles engine-path registration and immediately registers paths when enabled.
+- `bool engine_search_paths_enabled()` returns `engine_paths_enabled`.
+- `void register_path(const std::filesystem::path& path)` prepends unique paths after `initialized` becomes true.
+- `void unregister_path(const std::filesystem::path& path)` removes matching registered paths after initialization.
+- `std::vector<std::string> get_search_paths()` returns paths in lookup priority order.
+- `std::vector<std::string> get_search_paths_rev()` returns paths in reverse lookup order.
+- `class component final : public component_interface` installs filesystem hooks through `post_load()`.
+
+## Search-Path State
+
+- `get_search_paths_internal()` owns a process-lifetime `std::deque<std::filesystem::path>`; `register_path()` uses `push_front`, so later registrations override earlier ones.
+- `fs_startup_stub(const char* name)` sets `initialized`, resets `engine_paths_registered`, and registers `.`, `consolation`, `raw`, `userraw`, plus `%APPDATA%\Activision\Quantum of Solace\players`.
+- `get_default_players_directory()` uses `SHGetFolderPathA(..., CSIDL_APPDATA, ..., SHGFP_TYPE_CURRENT, ...)`; failure returns an empty string.
+- `register_engine_search_paths()` requires `engine_paths_enabled`, `!engine_paths_registered`, and a nonempty `std::filesystem::current_path()`.
+- `add_engine_search_path()` calls game offset `0x10272AE0` for `"consolation"`, `"raw"`, and `"userraw"` rooted at the current directory.
+- `register_path()` and `unregister_path()` are no-ops before `initialized`; `can_insert_path()` compares paths exactly without canonicalization.
+
+## `exec` Behavior
+
+- `normalize_exec_path(std::string path)` appends `.cfg` when no extension exists after the final `/` or `\`.
+- `exec_stub()` delegates to `exec_hook` unless command nesting has exactly two args, the requested path is nonempty, or `read_file()` fails.
+- `exec_stub()` delegates `config_mp.cfg` and `gfxConfig.cfg` case-insensitively via `_stricmp`.
+- `exec_stub()` logs `execing %s from %s\n`, appends a terminal newline when absent, injects contents with `game::Cbuf_AddText(0, ...)`, and returns `1`.
+- `exec_disk_log_stub()` logs resolved files as `execing %s from %s\n` or unresolved files as `execing %s from disk\n`.
+
+## Engine Integration
+
+- `component::post_load()` detours `0x10272D80` with `fs_startup_stub` and `0x103F5960` with `exec_stub`.
+- `component::post_load()` jumps `0x10274AA0` to `sys_default_install_path_stub`, which returns `utils::nt::get_host_module().get_folder()`.
+- `component::post_load()` redirects call site `0x103F589B` to `exec_disk_log_stub`; `REGISTER_COMPONENT(filesystem::component)` activates registration.
+- `fs_startup_hook`, `exec_hook`, `game::command_id`, `game::cmd_argc`, `game::cmd_argv`, `game::Com_Printf`, and `utils::io` define runtime coupling and require the targeted 32-bit game layout, including inline `__asm` in `add_engine_search_path()`.

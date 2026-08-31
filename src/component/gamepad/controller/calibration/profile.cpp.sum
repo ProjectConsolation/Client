@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:21:40.031Z
+content_hash: b9baac5294adb16d6e0d806bb7b8364f33f99d4b30dad49d4f1eb1242da8b591
+purpose: profile.cpp maps calibration sources and constructs built-in controller profiles.
+---
+**profile.cpp maps calibration sources and constructs built-in controller profiles.**
+
+## API
+
+`to_string(value_source s) noexcept -> const char*` returns `"built-in"`, `"measured"`, or `"user"`; unknown values fall back to `"built-in"`.
+
+`default_profile(controller::family f) noexcept -> profile` creates `profile::current_version` built-in identity calibration, zeroed sticks/triggers/motion, and `smoothing = 0.0f`.
+
+## Coupling
+
+`profile`, `value_source`, `stick_calibration`, and `trigger_calibration` come from `profile.hpp`.

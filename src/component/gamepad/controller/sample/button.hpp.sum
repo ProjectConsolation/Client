@@ -1,0 +1,25 @@
+---
+generated_at: 2026-08-31T15:22:40.129Z
+content_hash: ed568adaa6ce580759b21f221296979b34ac3b823dfb8b65877af60ac77e36d1
+purpose: button.hpp defines device-neutral gamepad button identities and a constexpr 32-bit button-set abstraction.
+---
+**button.hpp defines device-neutral gamepad button identities and a constexpr 32-bit button-set abstraction.**
+
+## Public API
+
+- `enum class button : uint8_t` enumerates positional buttons (`face_*`, `dpad_*`, `l1/r1`, `l2/r2`, `l3/r3`, `start`, `back`, `guide`, `touchpad`, `mute`, Edge paddles/functions) plus sentinel `button::count`.
+- `to_string(button) noexcept` returns a textual button name as `const char*`.
+- `class button_set` stores held buttons in `uint32_t bits_`; `button::count <= 32` is enforced by `static_assert`.
+- `button_set() constexpr` creates an empty set.
+- `down(button) const noexcept` tests membership; `set(button, bool) noexcept` mutates membership.
+- `any() const noexcept` reports whether any bit is set; `value() const noexcept` exposes the raw `uint32_t` mask.
+- `pressed_since(button_set prev) const noexcept` computes current-down/previous-up edges; `released_since(button_set prev) const noexcept` computes current-up/previous-down edges.
+- `operator==(button_set, button_set) noexcept = default` compares masks.
+
+## Design Contracts
+
+`button` names physical positions rather than Xbox/PlayStation labels; logical actions and engine-key translation belong to `controller/mapping`. `button::l2` and `button::r2` represent fully pressed trigger states while analog values remain in trigger samples. `button_set::mask` maps each enumerator to `uint32_t {1} << static_cast<uint32_t>(b)`, making `button_set` allocation-free, trivially copyable, constexpr-friendly, and stateless for edge detection.
+
+## Dependencies
+
+`types.hpp` supplies fixed-width types such as `uint8_t` and `uint32_t`; `utility.hpp` supplies shared controller utilities.

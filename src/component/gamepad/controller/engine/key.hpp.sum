@@ -1,0 +1,46 @@
+---
+generated_at: 2026-08-31T15:22:09.311Z
+content_hash: 55a8467e5829d66703096ac2e786bd99b1196ef0b5cad4c0b7337421828dde48
+purpose: key.hpp translates canonical controller samples into IW4 engine key events.
+---
+**key.hpp translates canonical controller samples into IW4 engine key events.**
+
+## Role and integration
+
+`gamepad::unstable::controller::engine` couples `canonical_sample` input with `context`, `dvars`, `dvar_t`, and `mapping::engine_key`; `key_dispatcher` reproduces `CL_KeyEvent` routing without misclassifying controller input as keyboard input.
+
+`local_client` is `inline constexpr int {0}`, selecting IW4’s sole PC local client for key state, catchers, and menus.
+
+## Public interface
+
+`key_dispatcher(const context&, const dvars&)` stores references to engine context and dvar handles; `g_useholdtime` remains unresolved until runtime registration.
+
+`dispatch(const canonical_sample&) noexcept` performs sample-to-sample edge detection, emits button and stick-direction events, updates controller ownership, and applies menu/scoreboard/UI/binding routing.
+
+`release_all() noexcept` releases every latched controller key through the physical-release path, preventing actions from remaining active after device removal.
+
+`in_use() const noexcept -> bool` reports whether controller input currently owns the active input source.
+
+`note_other_input() noexcept` clears controller ownership after keyboard or mouse activity.
+
+## Event and state model
+
+`key_event` distinguishes `pressed`, `repeated`, and `released`; `repeated` drives held d-pad/menu scrolling while non-menu keys generally repeat only on their initial press.
+
+`buttons_` stores the previous `button_set`; `deflected_` and `was_deflected_` track negative/positive stick states across `axis_count == 4` axes ordered right-x, right-y, left-x, left-y.
+
+`dispatch_apad(unsigned time) noexcept` synthesizes `APAD_*` and `RSTICK_*` direction keys from latched deflection, including sticks already held when a menu opens.
+
+`dispatch_buttons(const canonical_sample&, unsigned time) noexcept` converts canonical button state into engine keys; `emit_button(mapping::engine_key, key_event, unsigned time) noexcept` marks controller usage and refreshes menu scrolling before `emit(mapping::engine_key, key_event, unsigned time) noexcept` performs common event routing.
+
+`ignore_repeat(mapping::engine_key, int repeats, unsigned time) noexcept` filters repeats; `reset_scroll(mapping::engine_key, bool down, unsigned time) noexcept` manages repeat timing; `menu_key_event(mapping::engine_key, bool down) noexcept` and `scoreboard_key_event(mapping::engine_key) noexcept` forward catcher-specific events.
+
+`next_scroll_`, `scroll_hold_start_`, and `scroll_hold_key_` schedule accelerating held d-pad/trigger repeats in engine milliseconds.
+
+## Runtime contracts
+
+`apply_use_hold_time() noexcept` synchronizes `g_useholdtime` with controller ownership: combined `+usereload` reloads on tap and uses on hold only when hold time is positive, while the engine default `0` otherwise causes immediate use.
+
+`use_hold_time_` is a lazily resolved `dvar_t*`; `reported_deadzone_` suppresses duplicate invalid-deadzone reports because stick deadzone dvars are validated on every read.
+
+`set_in_use(bool) noexcept` maintains input-source transitions, and `dispatch(const canonical_sample&) noexcept` must receive every device sample; callers must invoke `release_all() noexcept` when the device disappears.

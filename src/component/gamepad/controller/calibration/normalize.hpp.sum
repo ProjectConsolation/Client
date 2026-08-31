@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:21:32.044Z
+content_hash: 2791748187aa8c0bba0430000f10cea223f2fd2de9386913ae573e5618c6d8ba
+purpose: normalize.hpp applies calibration profiles to raw gamepad samples.
+---
+**normalize.hpp applies calibration profiles to raw gamepad samples.**
+
+## API
+
+`apply (const profile&, const raw_sample&, canonical_sample&) noexcept` writes calibrated sticks, triggers, and physical-unit motion allocation-free.
+
+## Contract
+
+`apply` centre/range-corrects, radially clamps, drift-thresholds, rescales measured trigger travel, and debiases/scales motion; valid `profile` assumed, untouched motion remains absent. Depends on `types.hpp`, `utility.hpp`, `profile.hpp`, `sample.hpp`.

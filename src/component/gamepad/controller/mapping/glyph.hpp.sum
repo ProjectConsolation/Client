@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:22:27.231Z
+content_hash: 2833fd24ee9b52175bbf7befbb28dccf276fb02725d3b46dc5db2ac38f0a588d
+purpose: glyph.hpp maps controller devices and keys to presentation glyph families and stable text labels.
+---
+**glyph.hpp maps controller devices and keys to presentation glyph families and stable text labels.**
+
+## Interface
+
+`glyph_family : uint8_t` exports `xbox` and `playstation`.
+
+`glyph_family_for(controller::family, optional<glyph_family>) noexcept` returns the override, otherwise `playstation` for PlayStation devices and `xbox` for all others.
+
+`glyph_for(engine_key, glyph_family) noexcept` returns `const char*` labels such as `"BUTTON_A"` and `"DPAD_UP"`; `glyph_family` is API-compatible but ignored.
+
+## Coupling
+
+`types.hpp` supplies `optional`; `utility.hpp`, `key.hpp`, and `identity.hpp` supply shared mapping, key, and device-family types.

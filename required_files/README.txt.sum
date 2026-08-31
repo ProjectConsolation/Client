@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:24:13.173Z
+content_hash: edf2648387d2ee4b968ca8c5bec6aef198205aa0dc929f7bee86c76d62318fd1
+purpose: README.txt instructs safe multiplayer launch and Patch 1.1 installation.
+---
+**README.txt instructs safe multiplayer launch and Patch 1.1 installation.**
+
+## Launch
+
+`Launch Consolation.lnk` targets `JB_Launcher_s.exe -multiplayer`; edit path if non-default.
+
+## Patch
+
+Patch 1.1 may fail outside `C:\`; recommended default install, or manually copy files to game root.

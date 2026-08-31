@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:21:59.274Z
+content_hash: c74f529eae4845cd697c01a86b379e0f568f5243da32610fe7137c89e548c9e7
+purpose: netmove.hpp implements the pure delta-compression codec for gamepad network movement.
+---
+**netmove.hpp implements the pure delta-compression codec for gamepad network movement.**
+
+## Interface
+
+`move_delta` stores `int8_t forward {0}` and `int8_t right {0}`, with `constexpr noexcept operator==`.
+
+`move_changed(move_delta from, move_delta to) noexcept` reports baseline differences.
+
+`pack_move(move_delta to, int key) noexcept -> uint16_t` packs both signed bytes into a 16-bit value XORed with `key`.
+
+`unpack_move(uint16_t packed, int key) noexcept -> move_delta` reverses packing exactly, independent of key high bits.
+
+## Integration
+
+`types.hpp` and `utility.hpp` supply support definitions. `move_delta` and codec functions reside in `gamepad::unstable::controller::engine`; engine hooks call them from `MSG_WriteDeltaUsercmdKey`/`MSG_ReadDeltaUsercmdKey` wiring.

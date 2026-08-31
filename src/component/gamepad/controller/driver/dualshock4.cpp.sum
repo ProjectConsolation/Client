@@ -1,0 +1,53 @@
+---
+generated_at: 2026-08-31T15:22:38.010Z
+content_hash: c0c24bdcf784d1de37fa15b43aff3c87423e9eda0b346a40f453646fcc3b3c32
+purpose: dualshock4.cpp decodes DualShock 4 HID input reports and submits USB/Bluetooth output reports.
+---
+**dualshock4.cpp decodes DualShock 4 HID input reports and submits USB/Bluetooth output reports.**
+
+## Public Interface
+
+- `bool decode_dualshock4(span<const byte> r, connection link, raw_sample& raw, canonical_sample& canonical) noexcept` validates framing, decodes sticks, buttons, triggers, motion, battery, touchpad, capabilities, and canonical normalization.
+- `dualshock4_driver::dualshock4_driver(const context& ctx, transport::hid_device& hid, device_id device)` stores `ctx`, `hid`, `device`, and `hid.link()` as `link_`.
+- `bool dualshock4_driver::poll(raw_sample& raw, canonical_sample& canonical) noexcept` drains up to `max_reports_per_poll` HID reports and retains the newest valid decoded sample.
+- `void dualshock4_driver::submit(const output_request& request) noexcept` encodes and writes a connection-specific DualShock 4 output report.
+
+## Report Framing
+
+`resolve_frame(span<const byte> r, connection link, size_t& common, size_t& max_touch) noexcept` rejects unknown `connection` values, short reports, incorrect report IDs, and invalid Bluetooth CRC-32 values before decoding.
+
+- `ds4_report_usb = 0x01`, `ds4_size_usb = 64`, `ds4_common_usb = 1`, and `ds4_max_touch_usb = 3` define USB framing.
+- `ds4_report_bt = 0x11`, `ds4_size_bt = 78`, `ds4_common_bt = 3`, and `ds4_max_touch_bt = 4` define Bluetooth framing.
+- Bluetooth `resolve_frame` reads the little-endian CRC at `ds4_size_bt - 4` and verifies `verify_ps_crc32(ps_input_crc_seed, r.first(ds4_size_bt - 4), crc)`.
+- `array<byte, ds4_size_bt> buf` accommodates the largest input report; Bluetooth reports include a trailing four-byte CRC.
+
+## Input Mapping
+
+`decode_dualshock4` interprets the common block relative to `b`:
+
+- `b + 0..3` contains `lx`, `ly`, `rx`, and `ry`; `normalize_ps_stick` converts both raw stick pairs into canonical normalized values while `raw.sticks` preserves device bytes.
+- `b + 4` contains the four face-button bits (`0x10`, `0x20`, `0x40`, `0x80`) and the low-nibble hat value; `apply_hat` maps the hat to canonical directional buttons.
+- `b + 5` maps bits `0x01..0x80` to `button::l1`, `button::r1`, `button::l2`, `button::r2`, `button::back`, `button::start`, `button::l3`, and `button::r3`.
+- `b + 6` maps `0x01` to `button::guide`/PS and `0x02` to `button::touchpad`; the complete three-byte button state is preserved in `raw.buttons` as `b0 | (b1 << 8) | (b2 << 16)`.
+- `b + 7` and `b + 8` populate left/right `trigger_side` values, with canonical trigger magnitudes normalized by division through `255.0f`.
+- `b + 9` supplies `motion.device_timestamp`; signed little-endian values at `b + 12`, `b + 14`, `b + 16` populate `motion.gyro.angular_velocity`, while `b + 18`, `b + 20`, `b + 22` populate `motion.accel.acceleration`.
+- `raw.motion` retains raw device counts; `canonical.motion.reset()` delegates physical-unit conversion to the calibration stage and device calibration feature report.
+- `b + 29` supplies battery `cap = st0 & 0x0F` and cable state `st0 & 0x10`; `ds4_battery_full = 11` plus cable attachment yields `battery_state::status::full` and `100`, otherwise `cap * 10` is clamped to `100` with charging/discharging status.
+- `b + 32` supplies `num_touch`; values `1..max_touch` decode points from `b + 34` and `b + 38` through `decode_touch_point(r.subspan(off, 4))`, while other values clear `canonical.touch`.
+- `canonical.caps` always advertises `capability::gyroscope | capability::accelerometer | capability::touchpad | capability::battery | capability::rumble | capability::light_bar`.
+
+## Polling and Error Contracts
+
+`dualshock4_driver::poll` treats valid reports as newest-state updates, bounded by `max_reports_per_poll`; zero-length or unavailable `hid_.read` results terminate draining.
+
+`minimal_bluetooth_report(r, link_)` identifies non-malformed minimal Bluetooth reports, which are discarded because they lack extended motion/touch data; `minimal_reported_` suppresses repeated informational diagnostics.
+
+`ctx_.report` emits `facility::decode` with `errc::none` for the first minimal-report notice and `errc::report_malformed` with `"DualShock 4 report failed framing or CRC validation and was dropped"` for rejected reports.
+
+## Output and Integration
+
+`dualshock4_driver::submit` allocates `array<byte, ds4_output_bt_size> buf` and calls `encode_dualshock4_output(request, link_, buf)`; absent length produces `facility::driver`, `errc::output_rejected`, and `"DualShock 4 driver ignores an output request it cannot encode for this connection"`.
+
+`hid_.write(span<const byte>(buf.data(), *n))` sends encoded output; write failure reports `facility::driver`, `errc::output_rejected`, and `"DualShock 4 output report write failed"`.
+
+`decode.hpp` supplies `rd_u8`, `rd_le16`, `rd_le16s`, `rd_le32`, and `decode_touch_point`; `output-report.hpp` supplies `ds4_output_bt_size` and `encode_dualshock4_output`; `playstation.hpp` supplies `normalize_ps_stick`, `verify_ps_crc32`, and `ps_input_crc_seed`; `std_include.hpp` supplies project aliases such as `span`, `array`, `optional`, `byte`, and `uint8_t`.

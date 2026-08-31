@@ -1,0 +1,15 @@
+---
+generated_at: 2026-08-31T15:23:28.394Z
+content_hash: 641b8d2b0d972780c8bcab8a87a72562f93a01c49fc3016508c6f7eac4a37242
+purpose: trace.hpp defines the no-op controller profiling facade.
+---
+**trace.hpp defines the no-op controller profiling facade.**
+
+## Interface
+
+- `LIBIW4X_CONTROLLER_TRACE` defaults to `0`; `trace::enabled` is `inline constexpr bool`, true iff nonzero.
+- `CONTROLLER_ZONE(name)` and `CONTROLLER_FRAME_MARK()` expand to `do {} while (false)`, preserving optional instrumentation call sites.
+
+## Contracts
+
+`CONTROLLER_ZONE` names pipeline stages and `CONTROLLER_FRAME_MARK` marks controller frames; both must remain optional and preserve per-frame acquisition behavior when tracing is disabled.

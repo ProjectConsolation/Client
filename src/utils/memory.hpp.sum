@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:23:55.826Z
+content_hash: 169749ee3c0b8b44f57949c13b3e25636e6a344c96d2337ed950c27edaf08030
+purpose: memory.hpp defines `utils::memory` allocation and pointer-validation APIs.
+---
+**memory.hpp defines `utils::memory` allocation and pointer-validation APIs.**
+
+## Interface
+
+`memory::allocator` exports `~allocator()`, `clear()`, `free(void*)`, `free(const void*)`, `allocate(size_t) -> void*`, templated `allocate<T>() -> T*`, `allocate_array<T>(size_t) -> T*`, `empty() -> bool`, and `duplicate_string(const std::string&) -> char*`.
+
+`memory` exports static `allocate`, `allocate<T>`, `allocate_array<T>`, `duplicate_string`, `free`, `is_set`, `is_bad_read_ptr`, `is_bad_code_ptr`, and `get_allocator() -> allocator*`.
+
+## State
+
+`allocator` guards `pool_` (`std::vector<void*>`) with `mutex_` (`std::mutex`); `memory::mem_allocator_` is the shared static allocator.

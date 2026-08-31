@@ -1,0 +1,25 @@
+---
+generated_at: 2026-08-31T15:24:01.391Z
+content_hash: 6af22852bf1acf0f0b3db7c7fa26675c0855053591c0f7d4f24ccc2e9efcc41e
+purpose: memory.cpp allocates, duplicates, frees, tracks, and probes process memory.
+---
+**memory.cpp allocates, duplicates, frees, tracks, and probes process memory.**
+
+## Interface
+
+- `memory::allocator::~allocator()` calls `clear()`.
+- `memory::allocator::clear()` frees all `pool_` entries and empties the pool.
+- `memory::allocator::allocate(const size_t)` returns zeroed `void*` tracked in `pool_`.
+- `memory::allocator::duplicate_string(const std::string&)` returns tracked null-terminated `char*`.
+- `memory::allocator::free(void*)`, `free(const void*)` release tracked pointers.
+- `memory::allocator::empty() const` returns whether `pool_` is empty.
+- `memory::allocate(const size_t)` uses `calloc(length, 1)` and asserts non-null.
+- `memory::duplicate_string(const std::string&)` allocates `string.size() + 1` chars and copies bytes.
+- `memory::free(void*)`, `free(const void*)` call `::free` when non-null.
+- `memory::is_set(const void*, const char, const size_t)` tests whether all bytes equal `chr`.
+- `memory::is_bad_read_ptr(const void*)` and `is_bad_code_ptr(const void*)` use Windows `VirtualQuery`.
+- `memory::get_allocator()` returns `memory::allocator*` for static `memory::mem_allocator_`.
+
+## Design and Contracts
+
+`memory::allocator` uses `std::lock_guard`, `mutex_`, and `pool_` for synchronized ownership; `empty()` is not locked. `is_bad_read_ptr` accepts readable protections; `is_bad_code_ptr` accepts executable protections; both reject `PAGE_GUARD`, `PAGE_NOACCESS`, and failed `VirtualQuery`.

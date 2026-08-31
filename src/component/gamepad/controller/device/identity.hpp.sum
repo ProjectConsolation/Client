@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:21:53.484Z
+content_hash: 7fbee10f1f4c532dc4ec2437e18b753ddef02067919461c26c9eb4db6bca0e87
+purpose: identity.hpp classifies HID controller identities and defines USB ID value types, families, and known identifiers.
+---
+**identity.hpp classifies HID controller identities and defines USB ID value types, families, and known identifiers.**
+
+## Public API
+
+- `vendor_id`: `constexpr explicit vendor_id(uint16_t) noexcept`, `constexpr uint16_t value() const noexcept`, and defaulted `constexpr operator==(vendor_id, vendor_id) noexcept`.
+- `product_id`: `constexpr explicit product_id(uint16_t) noexcept`, `constexpr uint16_t value() const noexcept`, and defaulted `constexpr operator==(product_id, product_id) noexcept`.
+- `family`: `enum class family : uint8_t` with `unknown`, `xbox`, `dualshock4`, `dualsense`, and `dualsense_edge`.
+- `to_string(family) noexcept`: returns `const char*`.
+- `operator<<(ostream&, family)`: serializes `family` to `ostream&`.
+- `vendor_sony` and `vendor_microsoft`: inline `constexpr vendor_id` values `0x054C` and `0x045E`.
+- `product_ds4_gen1`, `product_ds4_gen2`, `product_ds4_dongle`, `product_dualsense`, and `product_dualsense_edge`: inline `constexpr product_id` values `0x05C4`, `0x09CC`, `0x0BA0`, `0x0CE6`, and `0x0DF2`.
+- `device_identity`: aggregates `family family{family::unknown}`, `optional<vendor_id> vendor`, `optional<product_id> product`, and `optional<uint16_t> release`.
+- `classify(vendor_id, product_id) noexcept`: returns `family`, yielding `family::unknown` for unsupported USB pairs.
+
+## Contracts and Coupling
+
+`family` selects the native decoder and HID report model; `xbox`, `dualshock4`, `dualsense`, and `dualsense_edge` are distinct decoding contracts. `device_identity` excludes connection and transport, allowing one identity across USB and Bluetooth; `release` is optional USB BCD revision data used only for hardware disambiguation. `types.hpp` supplies `uint16_t`, `uint8_t`, `optional`, and `ostream`; `utility.hpp` supplies shared support definitions.

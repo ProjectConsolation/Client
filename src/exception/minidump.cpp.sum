@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:23:37.758Z
+content_hash: fe8a053711bd108149a68f3b60b2d73de7da8446158c20c210ae72a06ffe72a1
+purpose: minidump.cpp creates in-memory Windows minidumps from exception context.
+---
+**minidump.cpp creates in-memory Windows minidumps from exception context.**
+
+## Interface
+
+`create_minidump(const LPEXCEPTION_POINTERS exceptioninfo) -> std::string` writes and returns minidump bytes for the supplied exception pointers.
+
+## Implementation
+
+`get_minidump_type()` combines `MiniDumpIgnoreInaccessibleMemory`, `MiniDumpWithHandleData`, `MiniDumpScanMemory`, `MiniDumpWithProcessThreadData`, `MiniDumpWithFullMemoryInfo`, `MiniDumpWithThreadInfo`, and `MiniDumpWithUnloadedModules`.
+
+`get_temp_filename()` uses `GetTempPathA` and `GetTempFileNameA` with prefix `"Consolation -"`.
+
+`write_dump_to_temp_file()` calls `MiniDumpWriteDump` on the current process and creates a temporary `FILE_FLAG_DELETE_ON_CLOSE` handle; failure shows `"Minidump Error"` and terminates with exit code `123`.
+
+`read_file()` flushes, rewinds, and reads through a `0x2000`-byte buffer, returning `{}` on `ReadFile` failure.
+
+`gsl::finally` guarantees `CloseHandle` after `create_minidump`; `dbghelp.lib` is required.

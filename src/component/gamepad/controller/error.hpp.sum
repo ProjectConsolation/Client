@@ -1,0 +1,26 @@
+---
+generated_at: 2026-08-31T15:23:20.600Z
+content_hash: d50e5cc3bab377f789b2715a7f2bd20d05964b343de0cb160a465e49492e46a1
+purpose: error.hpp defines stable gamepad controller error codes, string/stream formatting, and cold-path exception transport.
+---
+**error.hpp defines stable gamepad controller error codes, string/stream formatting, and cold-path exception transport.**
+
+## Public API
+
+`errc : uint8_t` enumerates `none`, `device_unavailable`, `ambiguous_identity`, `unsupported_device`, `transport_failure`, `report_malformed`, `report_truncated`, `checksum_mismatch`, `output_rejected`, `calibration_invalid`, `calibration_version`, `graph_invalid`, `binding_invalid`, `steam_unavailable`, `steam_unsuitable`, `hook_failed`, and `dvar_registration`.
+
+`to_string (errc) noexcept` returns a stable kebab-case `const char*` token for logs and tests.
+
+`operator<< (ostream&, errc)` serializes `errc` to an `ostream`.
+
+`error : runtime_error` accepts `(errc, const string&)` or `(errc, const char*)`; `code () const noexcept` returns the stored `errc`.
+
+## Contracts
+
+`errc` is the shared identity for throwing and non-throwing diagnostic channels; `to_string` tokens are machine-grep-able and stable.
+
+`error` may escape discovery, driver binding, file I/O, and configuration cold paths, but must not cross engine hooks or per-frame acquisition; those paths report through the diagnostic sink and degrade safely.
+
+## Dependencies
+
+`types.hpp` supplies `uint8_t`, `string`, `ostream`, and `runtime_error`; `utility.hpp` supplies related controller support utilities.

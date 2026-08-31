@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:21:35.302Z
+content_hash: 7649fbc2efdbf0752ff00be149a1aaa8ada5d0d55a89c9ce30ba3892eb63fd0f
+purpose: measure.hpp derives stick and motion calibration from controller samples.
+---
+**measure.hpp derives stick and motion calibration from controller samples.**
+
+## Interface
+
+`stick_measurer` exports `observe_rest(stick_vector) noexcept`, `observe_sweep(stick_vector) noexcept`, `finalize() const noexcept -> stick_calibration`, `reset() noexcept`, `rest_samples() const noexcept -> size_t`, and `sweep_samples() const noexcept -> size_t`.
+
+`motion_bias_measurer` exports `observe(const motion_sample&) noexcept`, `finalize(motion_calibration&) const noexcept`, `reset() noexcept`, and `samples() const noexcept -> size_t`.
+
+## Behavior
+
+`stick_measurer` averages resting vectors for center, tracks sweep extents via `max_x_`/`max_y_`, and guarantees `finalize()` returns a validation-safe, nondegenerate `stick_calibration` without allocation.
+
+`motion_bias_measurer` averages raw gyroscope (`gx_`–`gz_`) and accelerometer (`ax_`–`az_`) readings; `finalize()` writes bias while preserving device-provided scales.
+
+`profile.hpp`, `axis.hpp`, `motion.hpp`, `types.hpp`, and `utility.hpp` define calibration, sample, type, and helper contracts; `reset()` clears accumulators and counts.

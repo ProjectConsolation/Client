@@ -1,0 +1,23 @@
+---
+generated_at: 2026-08-31T15:21:36.651Z
+content_hash: c666690c155222b45cb0752718873eb6d3f29705e96020316dde3ae859dbf4ae
+purpose: graph.cpp validates and evaluates gamepad aim response graphs.
+---
+**graph.cpp validates and evaluates gamepad aim response graphs.**
+
+## Interface
+
+- `aim_graph::make(span<const knot> ks, bool require_monotonic, string& why) -> optional<aim_graph>` constructs a graph or returns `nullopt`, writing validation failure text to `why`.
+- `aim_graph::evaluate(float input) const noexcept -> float` saturates outside the knot domain and linearly interpolates within it.
+
+## Validation Contracts
+
+- `aim_graph::make` requires 2–`max_graph_knots` knots, finite `knot::input`/`knot::output` values, strictly increasing `knot::input` values, and inputs within `[0, 1]`.
+- `aim_graph::make` sets `aim_graph::monotonic_` when outputs are non-decreasing; `require_monotonic` rejects decreasing outputs.
+- `aim_graph::make` emits exact diagnostics: `"an aim graph requires at least two knots"`, `"an aim graph has too many knots"`, `"aim graph knot values must be finite"`, `"aim graph knot inputs must lie in [0, 1]"`, `"aim graph knot inputs must be strictly increasing"`, and `"a monotonic aim graph requires non-decreasing outputs"`.
+
+## Evaluation Invariants
+
+- `aim_graph::evaluate` assumes `knot_count_ >= 2` and strictly increasing inputs, guarded with `assert`.
+- `aim_graph::evaluate` returns the first/last `knot::output` for inputs outside the domain and computes `a.output + (b.output - a.output) * t` for segment interpolation.
+- `std::isfinite` performs numeric validation; `assert` enforces construction invariants.

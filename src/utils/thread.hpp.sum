@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:24:00.229Z
+content_hash: d085c1079efbdee8e79b5ac7bd00d59c542f23fb03e99f30346626c36415799d
+purpose: thread.hpp creates, names, enumerates, suspends, and resumes Windows threads.
+---
+**thread.hpp creates, names, enumerates, suspends, and resumes Windows threads.**
+
+## API
+
+`set_name` overloads: `(HANDLE|DWORD|std::thread&|std::string) → bool`; `create_named_thread<Args...>(std::string, Args&&...) → std::thread`; `get_thread_ids() → std::vector<DWORD>`; `for_each_thread(std::function<void(HANDLE)>) → void`; `suspend_other_threads()`, `resume_other_threads() → void`.
+
+## Contracts
+
+`create_named_thread` forwards `Args...`, names the thread, and returns joinable `std::thread`; depends on `<thread>`, `nt.hpp`, `HANDLE`, and `DWORD`.

@@ -57,10 +57,10 @@ namespace gamepad
 
           // Fold the controller's movement and view into a usercmd being built.
           //
-          // This is the body of the CL_MouseMove replacement: it adds the movement
-          // axes to forwardmove/rightmove and advances the view angles. frame_time is
-          // the engine's frame duration in seconds. Left-handed weapons swap the attack
-          // and throw buttons, matching the engine. Must not throw.
+          // Called after QoS's native CL_MouseMove: it adds the movement axes to
+          // forwardmove/rightmove and advances the view angles. frame_time is the
+          // engine's frame duration in seconds. Left-handed weapons swap the attack and
+          // throw buttons, matching the engine. Must not throw.
           //
           void
           apply_move (int client, usercmd_s& cmd, float frame_time) noexcept;

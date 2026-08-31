@@ -1,0 +1,30 @@
+---
+generated_at: 2026-08-31T15:24:14.364Z
+content_hash: 9c715f297f9d2b8f1167d8632768582d4c808d1294c9c546261d4fc2bef41c07
+purpose: resource.rc embeds Windows DLL metadata and Visual C++ TEXTINCLUDE resources for Consolation.
+---
+**resource.rc embeds Windows DLL metadata and Visual C++ TEXTINCLUDE resources for Consolation.**
+
+## Interface
+
+`resource.rc` exports no functions, classes, types, or constants; resource identifiers `1`, `2`, and `VS_VERSION_INFO` define the consumable interface.
+
+## Build Integration
+
+`APSTUDIO_READONLY_SYMBOLS` brackets generated sections; `#include "windows.h"`, `#include "version.h"`, and `#include "resource.hpp"` supply Win32, version, and project resource definitions. `#pragma code_page(65001)` selects UTF-8 source encoding, while generated content is guarded by `APSTUDIO_INVOKED`.
+
+`TEXTINCLUDE` resource `1` emits `"#include ""windows.h""\r\n"`; `TEXTINCLUDE` resource `2` emits `"\r\n"`; `TEXTINCLUDE` resource `3` is reserved and contains no payload.
+
+## Version Resource
+
+`VS_VERSION_INFO VERSIONINFO` defines a DLL with `FILEOS 0x40004L`, `FILETYPE VFT_DLL`, and `FILESUBTYPE 0x0L`; `FILEVERSION VERSION_FILE_RC` and `PRODUCTVERSION VERSION_PRODUCT_RC` defer numeric versions to macros.
+
+`FILEFLAGS 0x3fL` is the mask; `_DEBUG` selects `VS_FF_DEBUG`, otherwise `PRERELEASE` selects `VS_FF_PRERELEASE`, non-`CI` builds select `VS_FF_PRIVATEBUILD`, and `CI` builds select `0x0L`.
+
+`StringFileInfo` block `"040904b0"` defines `CompanyName="Consolation"`, `FileDescription="Consolation"`, `FileVersion=VERSION_FILE`, `InternalName="Consolation"`, `LegalCopyright="Copyright © 2024 Consolation. All rights reserved."`, `Licence="GPLv3"`, `Info=""`, `OriginalFilename="d3d9.dll"`, `ProductName="Consolation"`, and `ProductVersion=VERSION_PRODUCT`.
+
+`VarFileInfo` sets `Translation` to `0x409, 1200`, representing English (United States) and Unicode code page 1200.
+
+## Conditional Behavior
+
+`AFx_RESOURCE_DLL` and `AFX_TARG_ENU` suppress the English resource block when either macro is defined; `APSTUDIO_INVOKED` controls generated editor-only resources, and `CI` changes release metadata flags.

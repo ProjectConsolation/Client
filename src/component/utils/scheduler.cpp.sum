@@ -1,0 +1,31 @@
+---
+generated_at: 2026-08-31T15:23:42.602Z
+content_hash: adc117d5675f28c38e15ddcc762be569187004a6d51244f0621caa1bfee8250a
+purpose: scheduler.cpp schedules delayed callbacks across async, main-frame, and renderer pipelines.
+---
+**scheduler.cpp schedules delayed callbacks across async, main-frame, and renderer pipelines.**
+
+## Public API
+
+- `on_shutdown(const std::function<void()>& callback)` appends `callback` to `shutdown_callbacks`, invoked after `g_shutdown_game_hook`.
+- `schedule(const std::function<bool()>& callback, const pipeline type, const std::chrono::milliseconds delay)` creates a `task` with `last_call = high_resolution_clock::now()` and queues it in `pipelines[type]`.
+- `loop(const std::function<void()>& callback, const pipeline type, const std::chrono::milliseconds delay)` wraps `callback` with `cond_continue` and delegates to `schedule`.
+- `once(const std::function<void()>& callback, const pipeline type, const std::chrono::milliseconds delay)` wraps `callback` with `cond_end`, causing task removal after execution.
+- `component final : public component_interface` integrates scheduler startup, hooks, and shutdown lifecycle through `post_start()`, `post_load()`, and `pre_destroy()`.
+
+## Scheduling Model
+
+- `task` stores `handler`, `interval`, and `last_call`; `task_pipeline::execute()` runs eligible handlers when `now - last_call >= interval`.
+- `task_pipeline::add()` writes to `new_callbacks_`; `task_pipeline::merge_callbacks()` transfers pending tasks into `callbacks_`, allowing scheduling from concurrent contexts.
+- `callbacks_` uses `utils::concurrency::container<task_list, std::recursive_mutex>`; `new_callbacks_` uses the default concurrency container.
+- `execute(const pipeline type)` asserts and bounds-checks `type`, then dispatches to `pipelines[type]`.
+- `kill` terminates the `"Async Scheduler"` thread; async execution polls `game_window_closed()` every `10ms`.
+- `game_window_closed()` requires a previously observed valid `game::main_window`, then treats a missing/invalid window lasting longer than `3` seconds as shutdown.
+
+## Hooks and Lifecycle
+
+- `component::post_load()` installs `r_end_frame_hook` at `0x103C1050`, `main_frame_hook` at `game::game_offset(0x103F7470)`, and `g_shutdown_game_hook` at `game::game_offset(0x101AB0B0)`.
+- `main_frame_stub()` invokes `main_frame_hook`, then executes `pipeline::main` through `gsl::finally`.
+- `render_frame_stub()` executes `pipeline::renderer` before invoking `r_end_frame_hook`.
+- `component::pre_destroy()` sets `kill` and joins `thread` when joinable; `component::post_start()` creates the named `"Async Scheduler"` thread via `utils::thread::create_named_thread`.
+- `REGISTER_COMPONENT(scheduler::component)` registers the lifecycle component; `utils::hook`, `utils::concurrency`, `utils::thread`, and `game::main_window` are key integration points.

@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:24:20.026Z
+content_hash: 0b71f27f9d9de39eb40a7d46365338ed5dfb3a46f0cf17e43e20ded4242b0375
+purpose: std_include.cpp configures MSVC linker metadata, telemetry stubs, graphics preference, and Tommath RNG fallbacks.
+---
+**std_include.cpp configures MSVC linker metadata, telemetry stubs, graphics preference, and Tommath RNG fallbacks.**
+
+## Symbols
+
+`__vcrt_initialize_telemetry_provider()`, `__telemetry_main_invoke_trigger()`, `__telemetry_main_return_trigger()`, `__vcrt_uninitialize_telemetry_provider()` are `extern "C"` no-op telemetry hooks.
+
+`NvOptimusEnablement` exports `DWORD = 0x00000001`, enabling high-performance NVIDIA graphics.
+
+`s_read_arc4random`, `s_read_getrandom`, `s_read_urandom`, `s_read_ltm_rng` accept `(void*, size_t)`, return `int -1`, disabling unavailable RNG sources.
+
+## Linker contracts
+
+Non-`DEBUG` builds merge sections into `.UPX0`–`.UPX4`; all builds embed Common Controls v6 manifest dependency.

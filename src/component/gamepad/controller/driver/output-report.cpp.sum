@@ -1,0 +1,34 @@
+---
+generated_at: 2026-08-31T15:22:30.269Z
+content_hash: 02f3e7ac8bd5bbc6951555c3b588ec864a2b7b2edcdd96866414015714297920
+purpose: output-report.cpp encodes DualShock 4 and DualSense rumble/LED requests into USB or Bluetooth HID output reports.
+---
+**output-report.cpp encodes DualShock 4 and DualSense rumble/LED requests into USB or Bluetooth HID output reports.**
+
+## Public Interface
+
+- `optional<size_t> encode_dualshock4_output(const output_request& r, connection link, span<byte> out) noexcept` validates `link` and buffer capacity, emits USB (`0x05`) or Bluetooth (`0x11`) framing, encodes `rumble_request` or `light_bar_request`, seals Bluetooth reports with CRC-32, and returns encoded size or `nullopt`.
+- `optional<size_t> encode_dualsense_output(const output_request& r, connection link, uint8_t& bt_sequence, span<byte> out) noexcept` validates framing inputs, encodes `rumble_request`, `light_bar_request`, or `player_led_request`, advances the Bluetooth sequence nibble, seals Bluetooth reports, and returns encoded size or `nullopt`.
+
+## Encoding Contracts
+
+- `encode_dualshock4_output` selects `ds4_output_usb_size`/`ds4_output_bt_size`, uses common-field bases `1`/`3`, and zero-fills the complete report before writing fields.
+- `encode_dualshock4_output` maps `rumble_request.high_frequency` to `motor_right` at `base + 3`, `rumble_request.low_frequency` to `motor_left` at `base + 4`, and `light_bar_request.{red,green,blue}` to `base + 5..7`.
+- `encode_dualsense_output` selects `ds_output_usb_size`/`ds_output_bt_size`, uses bases `1`/`3`, and zero-fills output before encoding.
+- `encode_dualsense_output` maps rumble to `base + 2/+3`, light-bar RGB to `base + 44..46`, and `player_led_request.mask & 0x1F` to `base + 43`.
+- `to_byte(float v) noexcept` clamps normalized magnitudes to `[0,1]` and rounds `v * 255.0f` via `+ 0.5f`; `put(span<byte>, size_t, uint8_t)` asserts bounds before byte assignment.
+- `encode_dualshock4_output` rejects non-`usb`/non-`bluetooth` links, undersized buffers, `player_led_request`, and adaptive-trigger variants.
+- `encode_dualsense_output` rejects non-`usb`/non-`bluetooth` links, undersized buffers, and unsupported adaptive-trigger variants.
+
+## Bluetooth Integrity and State
+
+- `seal_bt_crc(span<byte> b) noexcept` computes CRC-32 over the report prefix using `ps_output_crc_seed` (`0xA2`), initializes with `0xFFFFFFFFu`, complements the result, and writes little-endian CRC bytes into the final four positions.
+- `encode_dualshock4_output` writes Bluetooth report ID `0x11`, hardware-control flags `ds4_hwctl_hid | ds4_hwctl_crc32` (`0x80 | 0x40`).
+- `encode_dualsense_output` writes Bluetooth report ID `0x31`, stores `(bt_sequence & 0x0F) << 4` in byte `1`, writes `ds_output_tag` (`0x10`) in byte `2`, then updates `bt_sequence = (bt_sequence + 1) & 0x0F`.
+- `ds4_flag0_motor` (`0x01`), `ds4_flag0_led` (`0x02`), `ds_flag0_compatible_vibration` (`0x01`), `ds_flag0_haptics_select` (`0x02`), `ds_flag1_lightbar_enable` (`0x04`), and `ds_flag1_player_leds_enable` (`0x10`) control device interpretation.
+
+## Dependencies and Design
+
+- `output_request`, `rumble_request`, `light_bar_request`, `player_led_request`, `connection`, `byte`, `span`, `optional`, `crc32_le`, and report-size constants come from `output-report.hpp`/`decode.hpp` and shared project headers.
+- `std::variant` visitation through `std::get_if` implements a type-dispatch strategy; `std::clamp`, `std::fill_n`, and `assert` enforce normalization, deterministic zeroed layouts, and programmer-error bounds checks.
+- `noexcept` encoders return `nullopt` for validation or capability failures; unsupported layouts are intentionally not guessed.

@@ -1,0 +1,27 @@
+---
+generated_at: 2026-08-31T15:21:59.875Z
+content_hash: 303ec0063c2f122043d7c987c5975315cd4aca9fd4abe9714e78a56136ec573c
+purpose: hook.cpp does engine-level controller key-name and mouse-move hooking for `gamepad::unstable::controller::engine`.
+---
+**hook.cpp does engine-level controller key-name and mouse-move hooking for `gamepad::unstable::controller::engine`.**
+
+## Interface
+
+- `void install(runtime& rt)` installs key conversion detours and the mouse-move call hook, stores `active_runtime`, and reports `severity::info`/`facility::engine` with `"QoS controller input hooks installed; native usercmd codec retained"`.
+
+## Key Conversion
+
+- `controller_key_name(int key) noexcept` maps engine keynums through `mapping::key_from_keynum` and returns `mapping::key_name`, or `nullptr`.
+- `controller_key_from_name(const char* name) noexcept` maps names through `mapping::key_from_name`, returning the mapped integer or sentinel `-1`; null `name` also returns `-1`.
+- `keynum_to_string_stub` and `string_to_keynum_stub` are x86 `__declspec(naked)` fallthrough stubs: mapped values return directly, while unmapped values call originals at `0x103185A0` and `0x10318B80`.
+
+## Mouse-Move Integration
+
+- `mouse_move_body(usercmd_s* cmd, int client)` first invokes native `CL_MouseMove` at `game::game_offset(0x102FC4D0)`, preserving client and aim-assist state, then applies `active_runtime->view().apply_move(client, *cmd, frame_seconds())`.
+- `mouse_move_body` gates controller input on non-null `active_runtime`, `driving()`, and `!menu_or_console_active()`, then calls `patches::enforce_ads_sprint_interrupt(cmd)`.
+- `mouse_move_stub` extracts stack arguments and bridges the engine call convention.
+
+## State and Coupling
+
+- Anonymous state uses `runtime* active_runtime`, two `utils::hook::detour` objects, and original-function pointers; `install` must run before hooked execution.
+- `install` patches call site `game::game_offset(0x102FFBFE)` and requires 32-bit x86 inline assembly, `mapping`, `runtime`, `patches`, and `utils::hook`.

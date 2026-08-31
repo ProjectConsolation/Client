@@ -1,0 +1,28 @@
+---
+generated_at: 2026-08-31T15:23:58.851Z
+content_hash: 3c8d5a07d1b41d1cd5e465e890c8f1bf4027cb46d42b2cb518cfc281e78ecccf
+purpose: io.cpp implements Windows file, directory, and PE-string I/O utilities.
+---
+**io.cpp implements Windows file, directory, and PE-string I/O utilities.**
+
+## Public API
+
+- `remove_file(const std::string& file) -> bool` calls `DeleteFileA`; returns `true` only when deletion succeeds.
+- `file_exists(const std::string& file) -> bool` tests readability via `std::ifstream(file).good()`.
+- `write_file(const std::string& file, const std::string& data, bool append) -> bool` creates parent directories, writes binary data, and appends when `append` is `true`.
+- `read_file(const std::string& file) -> std::string` returns file contents or an empty string on failure.
+- `read_file(const std::string& file, std::string* data) -> bool` clears `*data`, reads binary contents, and rejects null output pointers.
+- `read_pe_string_rva(const std::string& file, std::uint32_t rva, std::size_t max_length) -> std::optional<std::string>` extracts a null-terminated string from a PE section.
+- `file_size(const std::string& file) -> size_t` returns byte length or sentinel `0`.
+- `create_directory(const std::string& directory) -> bool` delegates recursive creation to `std::filesystem::create_directories`.
+- `directory_exists(const std::string& directory) -> bool` delegates to `std::filesystem::is_directory`.
+- `directory_is_empty(const std::string& directory) -> bool` delegates to `std::filesystem::is_empty`.
+- `list_files(const std::string& directory) -> std::vector<std::string>` returns immediate entries as `generic_string()` paths, or an empty vector on invalid directories/iteration errors.
+
+## PE Parsing Contract
+
+`read_pe_string_rva` validates `IMAGE_DOS_SIGNATURE`, positive `e_lfanew`, `IMAGE_NT_SIGNATURE`, and `sizeof(IMAGE_DOS_HEADER)`/`sizeof(IMAGE_NT_HEADERS)` bounds before mapping `rva` through `IMAGE_FIRST_SECTION`. `read_pe_string_rva` accepts RVAs within `[VirtualAddress, VirtualAddress + max(Misc.VirtualSize, SizeOfRawData))`, reads at most `max_length`, stops at `'\0'`, and returns `std::nullopt` for malformed files, unmapped RVAs, invalid raw offsets, empty strings, or read failures.
+
+## Integration and Caveats
+
+`write_file` depends on `create_directory`; `read_file`, `file_size`, and `read_pe_string_rva` depend on `file_exists`. `remove_file` requires Windows `DeleteFileA`; all stream operations use binary mode. `read_file` resizes using `uint32_t`, so files exceeding 32-bit size may truncate allocation metadata.

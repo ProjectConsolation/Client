@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:22:51.239Z
+content_hash: 7e30333dff6a03c8ae095d184f4a22f90489eca1c2f5d718bdf3c61735982c19
+purpose: command.hpp defines console command registration, argument access, and execution APIs.
+---
+**command.hpp defines console command registration, argument access, and execution APIs.**
+
+## Exports
+
+`command::params()`; `size() const -> int`; `get(int) const -> const char*`; `join(int) const -> std::string`; `get_all() const -> std::vector<std::string>`; `operator[](int) const -> const char*`.
+
+`add_raw(const char*, void(*)())`; `add(const char*, std::function<void(const params&)>)`; `add(const char*, std::function<void()>)`; `execute(std::string)`.
+
+`params::nesting_` stores `DWORD` nesting state; requires `<string>`, `<vector>`, `<functional>`, and `DWORD` declarations.

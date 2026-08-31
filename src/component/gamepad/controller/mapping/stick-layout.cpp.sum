@@ -1,0 +1,30 @@
+---
+generated_at: 2026-08-31T15:22:40.278Z
+content_hash: b2c98618e8c34fa424fe505adc6c0fd5dd13feb6e94111082130abe8b1c499d1
+purpose: stick-layout.cpp maps controller stick layouts to virtual axes and resolves stick vectors into movement/view outputs.
+---
+**stick-layout.cpp maps controller stick layouts to virtual axes and resolves stick vectors into movement/view outputs.**
+
+## Public API
+
+- `const char* to_string(virtual_axis a) noexcept` maps `side`, `forward`, `yaw`, `pitch`; unknown values return `"unknown"`.
+- `const char* to_string(stick_layout l) noexcept` maps layouts to exact names: `"thumbstick_default"`, `"thumbstick_southpaw"`, `"thumbstick_legacy"`, `"thumbstick_legacysouthpaw"`; invalid values default to `"thumbstick_default"`.
+- `stick_layout stick_layout_from_name(string_view name) noexcept` lowercases input and recognizes the exact layout names above; unknown input returns `stick_layout::standard`, with compound `thumbstick_legacysouthpaw` tested first.
+- `virtual_axis axis_for(stick_layout l, stick which, bool horizontal) noexcept` selects `virtual_axis` based on stick and layout.
+- `resolved_axes resolve(stick_layout l, stick_vector left, stick_vector right) noexcept` converts both stick vectors into `resolved_axes`.
+
+## Mapping Semantics
+
+`axis_for` applies the Southpaw pattern by swapping movement/look sticks; `stick_layout::legacy` additionally swaps horizontal roles, assigning movement-stick X to `yaw` and view-stick X to `side`. Vertical roles remain `forward` for movement and `pitch` for view.
+
+`resolve` iterates `stick::left` and `stick::right`, dispatching X/Y components through `axis_for`; `side` and `forward` use `squared`, while `yaw` and `pitch` preserve raw components.
+
+## Internal Contracts
+
+`lowercase(string_view s) -> string` performs unsigned-character-safe `std::tolower` transformation via `std::transform`.
+
+`squared(float component, stick_vector v) noexcept -> float` returns `std::clamp(v.magnitude() * component, -1.0f, 1.0f)`, implementing squared movement mapping while leaving view-axis shaping to the aim layer.
+
+## Dependencies
+
+`std_include.hpp` supplies project aliases such as `string`, `string_view`; `stick-layout.hpp` defines `virtual_axis`, `stick_layout`, `stick`, `stick_vector`, and `resolved_axes`; `<cctype>` supports `std::tolower`, and `<algorithm>` supplies `std::transform` and `std::clamp`.

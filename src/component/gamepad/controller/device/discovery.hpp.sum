@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:21:48.517Z
+content_hash: 65855b47d90f5409e4ea1161466bc7cffd87a514ffab8aa7790db5d470a0d45d
+purpose: discovery reconciles the controller registry with currently reported XInput and HID devices.
+---
+**discovery reconciles the controller registry with currently reported XInput and HID devices.**
+
+## Interface
+
+- `discovery(const context&, registry&, const transport::xinput_module&)` constructs discovery with shared `context`, mutable `registry`, and XInput transport.
+- `void scan()` performs interval-gated reconciliation; suppressed calls only read the clock.
+- `void scan_now()` performs unconditional reconciliation for startup or notifications.
+- `static constexpr clock::duration interval{chrono::milliseconds(1000)}` defines the 1-second fallback period.
+
+## Behavior
+
+- `scan()` combines `scan_xinput(vector<transport_binding>&)` and `scan_hid(vector<transport_binding>&)`, then `retire_unseen(const vector<transport_binding>&)` removes bindings absent from the current pass.
+- `scan_xinput` inspects four XInput user slots; `scan_hid` enumerates present HID gamepad interfaces matching supported USB-family identifiers.
+- `discovery` only writes `registry`; `discovery` never opens input devices, decodes reports, or creates drivers.
+- `transport::device_notifier notifier_` raises the device-change flag consumed by `scan()`; `scanned_` and `last_scan_` enforce fallback throttling.
+- `registry` generation remains unchanged when `scan()` observes the same bindings, preventing downstream work.

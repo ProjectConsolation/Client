@@ -1,0 +1,23 @@
+---
+generated_at: 2026-08-31T15:22:35.972Z
+content_hash: 6eabee8694dafce9cde33f218a4396479044544f1e655785a97a0deaf2e3a0d2
+purpose: physical.hpp defines physical gamepad inputs, engine-key mappings, and hysteretic stick-press detection.
+---
+**physical.hpp defines physical gamepad inputs, engine-key mappings, and hysteretic stick-press detection.**
+
+## Types
+
+- `stick_direction : uint8_t` enumerates `up`, `down`, `left`, `right`.
+- `apad_input` stores `stick which {stick::left}` and `stick_direction direction {stick_direction::up}`; `which` is diagnostic, while mapping depends only on `direction`.
+- `physical_input` aliases `variant<button, apad_input>`.
+
+## Public API
+
+- `optional<engine_key> to_engine_key(button) noexcept` maps canonical buttons, returning `nullopt` for PS/guide, touchpad click, microphone mute, and DualSense Edge rear buttons.
+- `engine_key to_engine_key(const apad_input&) noexcept` maps directional deflections to shared engine apad keys.
+- `optional<engine_key> to_engine_key(const physical_input&) noexcept` maps either `button` or `apad_input`.
+- `bool axis_deflected(float value, bool positive, bool was_down, float pressed, float hysteresis) noexcept` applies directional thresholding with hysteresis to normalized shaped-axis values in `[-1, 1]`; `was_down` preserves latch state, and thresholds move outward while pressed and inward while released.
+
+## Coupling
+
+`physical_input` depends on `button`, `apad_input` depends on `stick`, and all `to_engine_key` overloads depend on `engine_key`; declarations include `types.hpp`, `utility.hpp`, `sample/axis.hpp`, `sample/button.hpp`, and `mapping/key.hpp`.

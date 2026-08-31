@@ -1,0 +1,38 @@
+---
+generated_at: 2026-08-31T15:22:03.921Z
+content_hash: 72f41010c11bb6536cda7ba7424a02aabeff588b9b1b7e34a531eafdc2bfaf4e
+purpose: dvar.cpp registers gamepad controller configuration dvars and publishes controller presence state.
+---
+**dvar.cpp registers gamepad controller configuration dvars and publishes controller presence state.**
+
+## Interface
+
+`register_dvars(const context& ctx) -> dvars` registers engine-facing controller settings, reports completion through `ctx.report`, and returns populated `dvars`.
+
+`publish_present(const dvars& d, bool present) noexcept -> void` updates `d.present` only when non-null and its current value differs from `present`.
+
+## Registered dvars
+
+`gpad_enabled` defaults `true` (`DVAR_ARCHIVE`); `gpad_present` and `gpad_in_use` default `false` (`DVAR_ROM`); `gpad_rumble` defaults `true` (`DVAR_ARCHIVE`).
+
+`gpad_light_bar` defaults `true`; `gpad_light_bar_r`, `gpad_light_bar_g`, and `gpad_light_bar_b` default `196`, `151`, `54`, each constrained to `[0,255]`; all use `DVAR_ARCHIVE`.
+
+`gpad_stick_deadzone_min` defaults `0.2`, `gpad_stick_deadzone_max` `0.01`, `gpad_button_deadzone` `0.13`, `gpad_stick_pressed` `0.4`, and `gpad_stick_pressed_hysteresis` `0.1`; each is a `DVAR_ARCHIVE` float constrained to `[0.0,1.0]`.
+
+`gpad_buttonsConfig` defaults `"buttons_default_alt"` and `gpad_sticksConfig` defaults `"thumbstick_default"`; both are archived strings.
+
+`input_invertPitch` defaults `false`; `input_viewSensitivity` defaults `1.0` with range `[0.0001,5.0]`; `gpad_sensitivity` defaults `5` with range `[1,10]`; each uses `DVAR_ARCHIVE`.
+
+`sv_allowAimAssist` defaults `true` with `DVAR_NONE`; `aim_turnrate_pitch`, `aim_turnrate_pitch_ads`, `aim_turnrate_yaw`, and `aim_turnrate_yaw_ads` default `90`, `55`, `260`, and `90`, respectively, with `[0,1080]` and `DVAR_CHEAT`.
+
+`aim_accel_turnrate_enabled` defaults `true`; `aim_accel_turnrate_lerp` defaults `1200.0` with `[0,4000]`; `aim_scale_view_axis` defaults `true`; all use `DVAR_CHEAT`.
+
+`aim_slowdown_enabled` defaults `true`; `aim_lockon_enabled` defaults `false`; `aim_lockon_deflection` defaults `0.05`; `aim_lockon_strengthYaw` defaults `0.6`; `aim_lockon_strengthPitch` defaults `0.0`; `aim_aimAssistRangeScale` defaults `1.0` with `[0,10]`; assist controls use `DVAR_CHEAT`.
+
+## Integration and behavior
+
+`Dvar_RegisterBool`, `Dvar_RegisterInt`, `Dvar_RegisterFloat`, and `Dvar_RegisterString` supply the engine registration API through `component/gamepad/controller/engine/dvar.hpp`.
+
+`severity::info`, `facility::engine`, and `errc::none` produce the exact registration report `"controller dvars registered"`.
+
+`publish_present` uses `Dvar_SetBool` as a change-filtered write path, preserving `gpad_present` as a read-only runtime readout while archived values remain user-configurable.

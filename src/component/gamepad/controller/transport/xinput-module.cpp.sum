@@ -1,0 +1,33 @@
+---
+generated_at: 2026-08-31T15:22:53.324Z
+content_hash: 4d887be7380cf7e491889485673acd28ea2e3974c3f42fe2f352747e3b188ff4
+purpose: xinput-module.cpp dynamically loads Windows XInput runtimes and exposes validated state, capability, and vibration ca...
+---
+**xinput-module.cpp dynamically loads Windows XInput runtimes and exposes validated state, capability, and vibration calls.**
+
+## Public Interface
+
+- `xinput_module::xinput_module(const context& ctx)` invokes `load(ctx)`.
+- `xinput_module::~xinput_module()` releases `handle_` with `FreeLibrary` when non-null.
+- `void xinput_module::load(const context& ctx)` resolves and reports the first usable XInput DLL.
+- `DWORD xinput_module::get_state(DWORD user_index, XINPUT_STATE& out) const noexcept` prefers `get_state_ex_`, then `get_state_`.
+- `DWORD xinput_module::get_capabilities(DWORD user_index, DWORD flags, XINPUT_CAPABILITIES& out) const noexcept` invokes `get_capabilities_`.
+- `DWORD xinput_module::set_state(DWORD user_index, XINPUT_VIBRATION& vibration) const noexcept` invokes `set_state_`.
+
+## Runtime Loading
+
+- `variants` probes exactly `"xinput1_4.dll"`, `"xinput1_3.dll"`, `"xinput9_1_0.dll"` in descending capability order via `LoadLibraryA`.
+- `get_state_`, `get_capabilities_`, and `set_state_` require `GetProcAddress`; missing any symbol triggers `FreeLibrary(h)` and fallback probing.
+- `get_state_ex_` resolves ordinal `100` using `GetProcAddress(h, reinterpret_cast<const char*> (100))`; absence disables guide-button decoding but does not reject the DLL.
+- `handle_`, `name_`, `get_state_`, `get_state_ex_`, `get_capabilities_`, and `set_state_` are assigned only after mandatory entry-point validation.
+
+## Reporting and Failure Contracts
+
+- `ctx.report` emits `severity::info`, `facility::transport`, `errc::none` with `"XInput loaded via "` plus the DLL name and either `" (guide button available)"` or `" (no guide button)"`.
+- `ctx.report` emits `severity::warning`, `facility::transport`, `errc::transport_failure` with `"no XInput runtime could be loaded; XInput controllers will not be available"` when probing fails.
+- `get_state`, `get_capabilities`, and `set_state` return `ERROR_DEVICE_NOT_CONNECTED` when their corresponding function pointer is unavailable.
+
+## Integration
+
+- `LoadLibraryA`, `GetProcAddress`, `FreeLibrary`, `HMODULE`, `DWORD`, and XInput structs couple `xinput_module` to the Windows runtime.
+- `context`, `severity`, `facility::transport`, `errc`, `string`, and function-pointer aliases from `xinput-module.hpp` define reporting and ABI contracts.

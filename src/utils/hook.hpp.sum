@@ -1,0 +1,28 @@
+---
+generated_at: 2026-08-31T15:23:58.067Z
+content_hash: f833f69e3fb900da813c061026b99e267d0f66ce4768f75ac3d9c57e6b6d161c
+purpose: hook.hpp does x86 runtime patching, detouring, instruction assembly, and memory access under `utils::hook`.
+---
+**hook.hpp does x86 runtime patching, detouring, instruction assembly, and memory access under `utils::hook`.**
+
+## Dependencies
+
+`nt.hpp`, `asmjit::x86::Assembler`, `asmjit::JitRuntime`, `VirtualProtect`, `FlushInstructionCache`, and `GetCurrentProcess` support executable-memory modification and JIT assembly.
+
+## Public API
+
+`assembler` subclasses `Assembler`, re-exports constructors, `call`, and `jmp`, and overloads `call(void*)`/`jmp(void*)` with `asmjit::Error` returns.
+
+`detour` exposes `detour()`, `detour(void*, void*)`, `detour(size_t, void*)`, `~detour()`, move construction/assignment, `enable()`, `disable()`, `create(void*, void*)`, `create(size_t, void*)`, `clear()`, `get_original() -> void*`, `get<T>() -> T*`, and `invoke<T, Args...>(Args...) -> T`; copy operations are deleted.
+
+`nop(void*, size_t)` and `nop(size_t, size_t)` replace bytes with NOPs; `call(...)` and `jump(...)` patch relative or absolute targets across pointer/`size_t` overloads.
+
+`is_relatively_far(const void*, const void*, int offset = 5) -> bool` checks relative-address reachability; `assemble(const std::function<void(assembler&)>&) -> void*` emits assembled code.
+
+`set<T>(void*, T)` and `set<T>(size_t, T)` temporarily apply `PAGE_EXECUTE_READWRITE`, write `sizeof(T)`, restore protection, and flush the instruction cache.
+
+`invoke<T, Args...>(size_t, Args...)`/`invoke<T, Args...>(void*, Args...)` cast and call function addresses; `get<T>(void*)`/`get<T>(DWORD)` dereference typed memory.
+
+## Lifecycle
+
+`detour::place_` and `detour::original_` track patch and trampoline addresses; move operations null the source, while `enable()`, `disable()`, `create()`, and `clear()` govern patch state.

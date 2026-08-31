@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:22:34.776Z
+content_hash: 584f0761a7bb3f4c91afb03713bce9b92074cf8b2eb0c6638d5fe2c0b34a692f
+purpose: frame.cpp does diagnostic formatting for `input_frame`.
+---
+**frame.cpp does diagnostic formatting for `input_frame`.**
+
+## Interface
+
+`operator<<(ostream&, const input_frame&) -> ostream&` emits `device family #sequence`, appending `latency` milliseconds when `timing.consumed != timestamp{}`.
+
+## Dependencies
+
+`chrono::duration_cast<milliseconds>` formats `timing.latency()`.

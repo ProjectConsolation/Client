@@ -1,0 +1,21 @@
+---
+generated_at: 2026-08-31T15:22:20.593Z
+content_hash: 169ad49662b4a0218b0e314983e5066f53454cdcc2931860333c4bbc1e6dd477
+purpose: output.hpp defines device-neutral gamepad output requests for controller drivers.
+---
+**output.hpp defines device-neutral gamepad output requests for controller drivers.**
+
+## Interface
+
+- `rumble_request` — aggregate with `float low_frequency` and `float high_frequency`, both default `0.0f`, normalized to `[0, 1]`.
+- `light_bar_request` — RGB aggregate with `uint8_t red`, `green`, `blue`, each default `0`.
+- `player_led_request` — aggregate with `uint8_t mask` default `0`; low five bits select LEDs.
+- `trigger_effect` — `enum class trigger_effect : uint8_t` with `off`, `feedback`, `weapon`, `vibration`.
+- `adaptive_trigger_request` — aggregate with `trigger_side side` (default `trigger_side::left`), `trigger_effect effect` (default `trigger_effect::off`), `uint8_t start_position`, `end_position`, `strength` (all default `0`); positions use `0..9`, strength uses `0..8`.
+- `output_request` — `variant<rumble_request, light_bar_request, player_led_request, adaptive_trigger_request>` selecting exactly one driver operation.
+
+## Integration
+
+`output_request` depends on `variant` from `component/gamepad/controller/support/types.hpp` and `trigger_side` from `component/gamepad/controller/sample/trigger.hpp`; `utility.hpp` supplies shared support definitions.
+
+`adaptive_trigger_request` remains device-neutral, while drivers encode raw trigger-effect bytes; `output_request` intentionally excludes raw-report alternatives, requiring drivers to reject unsupported request variants.

@@ -1,0 +1,28 @@
+---
+generated_at: 2026-08-31T15:21:50.683Z
+content_hash: b3a08c8961364f86194383328fecdaee625f1ddbc4b42a53ec26f1e5354cd8c0
+purpose: profile.hpp defines versioned per-device gamepad calibration data and family defaults.
+---
+**profile.hpp defines versioned per-device gamepad calibration data and family defaults.**
+
+## Public API
+
+- `value_source : uint8_t` distinguishes `built_in`, `measured`, and `user` calibration authority.
+- `to_string(value_source) noexcept -> const char*` converts `value_source` to its diagnostic string.
+- `stick_calibration` stores normalized stick correction: `center_x/center_y` default `0.0f`, `range_x/range_y` default `1.0f`, and `drift_threshold` default `0.0f`.
+- `trigger_calibration` stores normalized trigger travel with `min = 0.0f` and `max = 1.0f`.
+- `motion_calibration` stores `sensor_vec3 gyro_bias`, `sensor_vec3 accel_bias`, `gyro_scale = 1.0f`, and `accel_scale = 1.0f`.
+- `profile` aggregates `version`, `controller::family family`, optional `uint64_t device_key`, `value_source source`, `array<stick_calibration, stick_count> sticks`, `array<trigger_calibration, trigger_count> triggers`, `motion_calibration motion`, and `smoothing`.
+- `profile::current_version` is `uint16_t{1}`; `profile::version` defaults to `current_version`, `family` to `controller::family::unknown`, `source` to `value_source::built_in`, and `smoothing` to `0.0f`.
+- `default_profile(controller::family) noexcept -> profile` returns the compiled-in `value_source::built_in` calibration for a controller family.
+
+## Calibration Contracts
+
+- `stick_calibration` operates on driver-normalized coordinates (up/right positive, nominally `[-1, 1]`), correcting resting-center drift and travel range; `drift_threshold` treats residual calibrated magnitude as rest.
+- `trigger_calibration` operates in normalized `[0, 1]` space and narrows measured resting/full-press travel.
+- `motion_calibration` subtracts `gyro_bias`/`accel_bias` before scaling raw counts into gyro rad/s and accelerometer standard gravities.
+- `profile::device_key` optionally binds calibration to one physical device; `profile::version` rejects unsupported serialized formats; `profile::smoothing == 0.0f` disables smoothing.
+
+## Dependencies
+
+`types.hpp` supplies `optional`, `array`, `sensor_vec3`, `stick_count`, and `trigger_count`; `utility.hpp`, `identity.hpp`, `axis.hpp`, `trigger.hpp`, and `motion.hpp` supply controller-family, device, and sample-domain types.

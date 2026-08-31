@@ -1,0 +1,48 @@
+---
+generated_at: 2026-08-31T15:21:57.473Z
+content_hash: ddb543ee2035bf9880e84b5021d88cc7223b0f7882e082d70cab197846dab055
+purpose: discovery.cpp does rate-limited XInput/HID controller discovery, registry synchronization, capability classification,...
+---
+**discovery.cpp does rate-limited XInput/HID controller discovery, registry synchronization, capability classification, and departure cleanup.**
+
+## Public interface
+
+`discovery::discovery(const context& ctx, registry& r, const transport::xinput_module& x)` stores `ctx_`, `registry_`, `xinput_`, and constructs `notifier_`.
+
+`discovery::scan()` consumes device notifications, records `clock::now()`, forces scans on notification, and otherwise rate-limits scans by `interval` after the first pass.
+
+`discovery::scan_now()` scans XInput, conditionally scans HID, then retires bindings absent from the current pass.
+
+`discovery::scan_xinput(vector<transport_binding>& seen)` discovers enabled XInput gamepads across `user_index::count` slots.
+
+`discovery::scan_hid(vector<transport_binding>& seen)` enumerates and registers supported HID devices using `hid_enumeration_entry` data.
+
+`discovery::retire_unseen(const vector<transport_binding>& seen)` removes registry devices whose `transport_binding` no longer matches any current binding.
+
+## Capability classification
+
+`capabilities_for(family f) noexcept` maps hardware families to factual capability bitmasks:
+
+- `family::xbox`: `capability::rumble`
+- `family::dualshock4`: gyroscope, accelerometer, touchpad, battery, rumble, light bar
+- `family::dualsense`: `dualsense_capabilities`
+- `family::dualsense_edge`: `dualsense_capabilities | capability::back_buttons`
+- `family::unknown`: empty `capabilities`
+
+`dualsense_capabilities` includes gyroscope, accelerometer, touchpad, battery, microphone button, rumble, haptics, adaptive triggers, light bar, and player LEDs; output capabilities describe hardware support even when drivers withhold reports.
+
+## Discovery and registration
+
+`scan_now()` reserves `seen` capacity as `user_index::count + 4`, scans all XInput slots first, and invokes `scan_hid()` only when `seen.empty()` to avoid duplicate PlayStation HID binds under DS4Windows and synchronous Bluetooth feature exchanges on the game thread.
+
+`scan_xinput()` skips unloaded `xinput_`, queries each slot with `xinput_.get_capabilities(i, XINPUT_FLAG_GAMEPAD, caps)`, accepts only `ERROR_SUCCESS`, and registers `device_identity {family::xbox, nullopt, nullopt, nullopt}` with `transport_kind::xinput`, `connection::unknown`, `capabilities_for(family::xbox)`, and `xinput_binding {slot}`.
+
+`scan_hid()` relies on `transport::enumerate(ctx_)` filtering supported families and known links, asserts `classify(vendor, product) != family::unknown` and `e.link != connection::unknown`, then registers HID identity fields `{family, vendor, product, version}` with `hid_binding {e.path}`.
+
+`retire_unseen()` collects departed `device_id` values under `registry_.for_each()` and removes them afterward because `registry_.remove()` also acquires the registry lock; `std::any_of()` and `same_binding()` define binding presence.
+
+## Integration and invariants
+
+`transport::enumerate`, `transport::hid`, `classify`, `registry`, `device_connection`, `device_identity`, `transport_binding`, `xinput_binding`, `hid_binding`, `connection`, `capabilities`, `clock`, and `notifier_` form the discovery boundary.
+
+`scan_hid()` requires `e.link != connection::unknown`; `scan_xinput()` intentionally records `connection::unknown` because XInput decoding is link-independent.

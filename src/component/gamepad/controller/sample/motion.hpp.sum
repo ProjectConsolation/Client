@@ -1,0 +1,17 @@
+---
+generated_at: 2026-08-31T15:22:39.299Z
+content_hash: e0984617ae8f1aac979d6fd7d9ba13df3b418d0709d19892e6b4863caf2a86d9
+purpose: motion.hpp defines typed controller sensor-motion samples in `gamepad::unstable::controller`.
+---
+**motion.hpp defines typed controller sensor-motion samples in `gamepad::unstable::controller`.**
+
+## Exported symbols
+
+- `sensor_vec3 { float x, y, z; }` stores controller-frame vector components, defaulting to `0.0f`.
+- `gyro_sample { sensor_vec3 angular_velocity; }` stores angular velocity in radians/second.
+- `accel_sample { sensor_vec3 acceleration; }` stores proper acceleration in standard gravities (`1 g = 9.80665 m/s^2`).
+- `motion_sample { gyro_sample gyro; accel_sample accel; optional<uint32_t> device_timestamp; }` combines one reading; `device_timestamp` is the HID sensor clock, not the subsystem latency clock.
+
+## Dependencies
+
+`types.hpp` supplies `optional`; `utility.hpp` supplies controller support utilities. `sensor_vec3` deliberately prevents mixing sensor-frame vectors with screen/world-space aim vectors.

@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:21:42.471Z
+content_hash: 40b8869e259085f9d14905c549be19ac6356b498058986412288b0fada38e1f2
+purpose: store.hpp persists validated gamepad calibration profiles in per-device files.
+---
+**store.hpp persists validated gamepad calibration profiles in per-device files.**
+
+## Interface
+
+`store(const context&, path directory)` binds `context` and storage `directory`; `load(controller::family, optional<uint64_t>) const -> optional<profile>` retrieves a matching profile; `save(const profile&) const -> bool` persists one; `directory() const noexcept -> const path&` exposes `dir_`.
+
+## Behavior
+
+`file_for(controller::family, optional<uint64_t>) const -> path` derives filenames from family and optional `device_key`. `load` rejects malformed content, unsupported versions, invalid profiles, and family/key mismatches; absent files return `nullopt`. `save` writes versioned text profiles, one per file.
+
+## Coupling
+
+`store` depends on `context`, `profile`, `path`, `optional`, `family`, and calibration/controller support types from `context.hpp`, `profile.hpp`, `types.hpp`, and `utility.hpp`.

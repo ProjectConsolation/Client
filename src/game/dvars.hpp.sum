@@ -1,0 +1,26 @@
+---
+generated_at: 2026-08-31T15:23:51.325Z
+content_hash: 53c8003c15b7856fe77d90b8c7fe32cc2bc8686aa495dccb1aa39941d3b51dae
+purpose: dvars.hpp declares dvar metadata, registration helpers, engine dvar handles, and override registries.
+---
+**dvars.hpp declares dvar metadata, registration helpers, engine dvar handles, and override registries.**
+
+## Interface
+
+`dvar_info` stores `std::string name` and `description`; `dvar_map` maps `std::int32_t` identifiers to `dvar_info`.
+
+Engine handles export `game::dvar_s*`: `con_inputBoxColor`, `con_inputHintBoxColor`, `con_outputBarColor`, `con_outputSliderColor`, `con_outputWindowColor`, `con_inputDvarMatchColor`, `con_inputDvarValueColor`, `con_inputDvarInactiveValueColor`, `con_inputCmdMatchColor`, `g_debugVelocity`, `g_debugLocalization`, `r_borderless`, `bot_maxHealth`, `m_rawInput`, `gpad_enabled`, `gpad_present`, `gpad_in_use`, `gpad_debug`, `gpad_buttonsConfig`, `gpad_sticksConfig`, `gpad_rumble`, `gpad_stick_deadzone_min`, `gpad_stick_deadzone_max`, `gpad_button_deadzone`, `gpad_menu_scroll_delay_first`, `gpad_menu_scroll_delay_rest`, `gpad_menu_scroll_delay_min`, `gpad_menu_scroll_accel_time`, `input_invertPitch`, `cg_drawWatermark`, `cg_drawVersion`, `cg_drawVersionX`, `cg_drawVersionY`, `r_aspectRatioCustomEnable`, `r_aspectRatioCustom`, `r_ultrawideCustomMode`.
+
+`dvar_get_vector_domain(int components, const game::DvarLimits& domain)` and `dvar_get_domain(game::DvarType type, const game::DvarLimits& domain)` return formatted `std::string` domain descriptions.
+
+`Dvar_RegisterFloat`, `Dvar_RegisterVec4`, `Dvar_RegisterBool`, `Dvar_RegisterInt`, and `Dvar_RegisterString` return `game::dvar_s*` engine registrations with typed defaults, bounds, descriptions, and `std::uint16_t flags`.
+
+`dvar_spec` bundles `game::DvarType type`, `const char* name`, `description`, `std::uint16_t flags`, `game::DvarValue value`, and `game::DvarLimits domain`.
+
+`make_bool`, `make_int`, `make_float`, and `make_string` return typed `dvar_spec`; `replace_dvar(const dvar_spec&, bool log = true)` replaces a dvar; `replace_dvar_at(std::uintptr_t nop_address, std::size_t nop_size, game::dvar_s** target, const dvar_spec&, bool log = true)` replaces and patches an address; `Dvar_ValueToString(game::dvar_s*, game::DvarValue)` returns `char*`.
+
+## overrides
+
+`dvar_base`, `dvar_bool`, `dvar_float`, `dvar_vector2`, `dvar_vector3`, `dvar_enum`, `dvar_int`, and `dvar_string` model override registration payloads.
+
+`register_bool_overrides`, `register_int_overrides`, `register_float_overrides`, `register_enum_overrides`, and `register_string_overrides` map names to override payloads; `register_bool`, `register_int`, `register_float`, `register_enum`, and `register_string` populate them with values, domains, flags, or enum lists.

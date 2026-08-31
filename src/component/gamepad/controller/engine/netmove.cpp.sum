@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:21:58.031Z
+content_hash: c7c66e81f48b239bd7416e6d440d65bb29d866780da667fabb1775452e24fbf1
+purpose: netmove.cpp implements XOR-packed gamepad movement deltas.
+---
+**netmove.cpp implements XOR-packed gamepad movement deltas.**
+
+## Interface
+
+`move_changed(move_delta, move_delta) noexcept -> bool` compares `forward`/`right`.
+
+`pack_move(move_delta, int) noexcept -> uint16_t` packs signed bytes (`forward` low, `right` high), XORs with `key`, masks `0xFFFF`.
+
+`unpack_move(uint16_t, int) noexcept -> move_delta` reverses XOR packing and reinterprets both bytes as `int8_t`.
+
+## Coupling
+
+`netmove.hpp` declares the `gamepad::unstable::controller::engine` API; `std_include.hpp` supplies common types.

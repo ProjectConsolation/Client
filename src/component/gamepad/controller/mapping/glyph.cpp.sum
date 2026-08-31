@@ -1,0 +1,11 @@
+---
+generated_at: 2026-08-31T15:22:39.713Z
+content_hash: d12bc2beab5cfc881aa1f27026818325cad3728fa28fd1897a9f3871f0666ecc
+purpose: glyph.cpp selects controller glyph families and resolves key glyph names.
+---
+**glyph.cpp selects controller glyph families and resolves key glyph names.**
+
+## API
+
+- `glyph_family_for(controller::family, optional<glyph_family>) noexcept -> glyph_family`: override wins; DualShock/DualSense map to `playstation`, Xbox/unknown to `xbox`.
+- `glyph_for(engine_key, glyph_family) noexcept -> const char*`: delegates to `key_name`; family is ignored.

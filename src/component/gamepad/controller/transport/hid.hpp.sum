@@ -1,0 +1,31 @@
+---
+generated_at: 2026-08-31T15:22:53.726Z
+content_hash: 7579f3dfc04180a6350c2b2bd2d2fcc834962f072df90541101ab83328af5889
+purpose: hid.hpp defines the platform-independent HID transport interface and enumeration/opening API for supported gamepad co...
+---
+**hid.hpp defines the platform-independent HID transport interface and enumeration/opening API for supported gamepad controllers.**
+
+## Public symbols
+
+- `hid_attributes` aggregates `vendor_id vendor`, `product_id product`, and `optional<uint16_t> version`.
+- `hid_device` is an abstract, non-throwing HID endpoint interface with virtual destructor `~hid_device() = default`.
+- `hid_device::link() const noexcept` returns `connection`, identifying USB/Bluetooth report framing.
+- `hid_device::attributes() const noexcept` returns `hid_attributes` discovered from the device.
+- `hid_device::feature_report_length() const noexcept` returns the maximum declared feature-report size, or `0` when none exists.
+- `hid_device::read(span<byte> buf) noexcept` returns `optional<size_t>`: byte count, `0` for no pending report, or `nullopt` for error/disconnect.
+- `hid_device::write(span<const byte> buf) noexcept` writes one output report, with `buf[0]` as report ID, returning `optional<size_t>` or `nullopt` on failure.
+- `hid_device::get_feature(span<byte> buf) noexcept` exchanges a feature report, requiring `buf.size() >= feature_report_length()` and `buf[0]` as report ID; returns success as `bool`.
+- `hid_device::set_feature(span<const byte> buf) noexcept` submits a feature report and returns success as `bool`.
+- `hid_enumeration_entry` stores `wstring path`, `hid_attributes attributes`, `connection link {connection::unknown}`, and `size_t input_report_length {0}`.
+- `classify_link(size_t input_report_length) noexcept` returns `connection`: length `64` maps to USB, `78` maps to Bluetooth, and all other lengths map to `connection::unknown`.
+- `enumerate(const context&)` returns `vector<hid_enumeration_entry>` for present, supported controller-family HID interfaces.
+- `open(const context&, const wstring& path)` returns `unique_ptr<hid_device>` or `nullptr` when opening or validation fails.
+
+## Contracts and integration
+
+- `hid_device` is an abstraction boundary: drivers and decode tests consume captured report bytes without Windows I/O, while `transport/hid.cxx` owns concrete OS-handle reads/writes.
+- `hid_enumeration_entry::path` is the stable interface identity required by `open`; `link` remains `connection::unknown` for unsupported report lengths and such devices are not driver-bound.
+- `enumerate` filters unrelated HID families/collections, performs queries only, reports failures through `context`, and returns partial results rather than throwing.
+- `open` re-reads attributes, report length, and link after a possible unplug/replug race; ambiguous or unsupported devices are rejected, while read-only opening remains valid when writing is unavailable.
+- `hid_device::feature_report_length` controls `get_feature` buffer sizing because platform transfer size derives from the buffer, not report ID.
+- `types.hpp`, `utility.hpp`, `context.hpp`, `id.hpp`, and `identity.hpp` supply `optional`, `span`, `vector`, `unique_ptr`, `byte`, `connection`, controller IDs, and device identity types.

@@ -1,0 +1,24 @@
+---
+generated_at: 2026-08-31T15:21:33.159Z
+content_hash: 6e6f09de47d3194bde9a3d3a4deab6989e88b840a625ca2c61d6d2a53f1eb78e
+purpose: filter.hpp does frame-time-independent exponential smoothing for gamepad aim input.
+---
+**filter.hpp does frame-time-independent exponential smoothing for gamepad aim input.**
+
+## Interface
+
+`low_pass(seconds time_constant) noexcept` constructs a one-pole filter.
+
+`apply(float target, seconds dt) noexcept` advances toward `target` using actual `dt`, returning `float`.
+
+`reset(float value) noexcept` primes `low_pass` at `value`; `reset() noexcept` unprimes it.
+
+`value() const noexcept` returns current `float state_`.
+
+## Behavior
+
+`low_pass` derives smoothing from `tau_`; larger `time_constant` smooths more, while zero passes input through. `reset()` causes the next `apply()` to adopt `target` exactly; `reset(float)` blends the next sample from `value`. `state_` defaults to `0.0f`, and `primed_` defaults to `false`.
+
+## Coupling
+
+`seconds` comes from `support/types.hpp` and timing utilities from `support/utility.hpp`; `clock.hpp` supplies controller clock types.

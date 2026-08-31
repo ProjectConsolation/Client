@@ -34,31 +34,6 @@ namespace gamepad::unstable::controller::engine
   void emit_key (int key, bool down, unsigned time) noexcept;
 
 #pragma pack(push, 1)
-  struct AimInput
-  {
-    float deltaTime;
-    float pitch;
-    float pitchAxis;
-    float pitchMax;
-    float yaw;
-    float yawAxis;
-    float yawMax;
-    float forwardAxis;
-    float rightAxis;
-    int buttons;
-    int localClientNum;
-    void* playerState;
-  };
-
-  struct AimOutput
-  {
-    float pitch;
-    float yaw;
-    float meleeChargeYaw;
-    std::uint8_t meleeChargeDist;
-    std::uint8_t padding[3];
-  };
-
   struct AimScreenTarget
   {
     int entityNum;
@@ -91,8 +66,6 @@ namespace gamepad::unstable::controller::engine
   };
 #pragma pack(pop)
 
-  static_assert (sizeof (AimInput) == 0x30);
-  static_assert (sizeof (AimOutput) == 0x10);
   static_assert (offsetof (AimAssistGlobals, screenTargets) == 0xFC);
   static_assert (offsetof (AimAssistGlobals, screenTargetCount) == 0xDFC);
   static_assert (sizeof (AimAssistGlobals) == 0xE34);
@@ -101,5 +74,4 @@ namespace gamepad::unstable::controller::engine
   float& view_pitch () noexcept;
   float& view_yaw () noexcept;
   float frame_seconds () noexcept;
-  void AimAssist_UpdateGamePadInput (AimInput*, AimOutput*) noexcept;
 }

@@ -1,0 +1,30 @@
+---
+generated_at: 2026-08-31T15:22:02.178Z
+content_hash: 6898906e25b35e5f1fddc677424412b6a82c4d36f4eda7129c6b8b57c2b76fb2
+purpose: dvar.hpp does define the engine-facing typed dvar registry and null-safe readers for gamepad controller state.
+---
+**dvar.hpp does define the engine-facing typed dvar registry and null-safe readers for gamepad controller state.**
+
+## Interface
+
+Namespace: `gamepad::unstable::controller::engine`.
+
+- `struct dvars` stores resolved `dvar_t*` handles for enablement (`enabled`, `present`, `in_use`, `rumble`), light-bar channels (`light_bar`, `light_bar_r`, `light_bar_g`, `light_bar_b`), stick shaping, named configs, view/aim, acceleration, and assist behavior.
+- `dvars register_dvars(const context&)` registers every controller dvar in fixed order, installs known-working defaults, returns resolved handles, and reports the count through `context`.
+- `void publish_present(const dvars&, bool present) noexcept` publishes controller attachment through engine-owned `gpad_present`.
+- `bool read(dvar_t*, bool fallback) noexcept` reads `dvar_t::current.enabled`, falling back when the handle is null.
+- `float read(dvar_t*, float fallback) noexcept` reads `dvar_t::current.value`, falling back when the handle is null.
+- `int read(dvar_t*, int fallback) noexcept` reads `dvar_t::current.integer`, falling back when the handle is null.
+- `const char* read(dvar_t*, const char* fallback) noexcept` reads `dvar_t::current.string`, falling back when the handle or string is null.
+
+## Dvar bindings
+
+`enabled`, `present`, `in_use`, and `rumble` correspond to `gpad_enabled`, `gpad_present`, `gpad_in_use`, and `gpad_rumble`; `buttons_config` and `sticks_config` correspond to `gpad_buttonConfig` and `gpad_sticksConfig`.
+
+`invert_pitch`, `view_sensitivity`, `sensitivity_level`, and `aim_assist_enabled` map to `input_invertPitch`, `input_viewSensitivity`, `gpad_sensitivity` (console scale `1-10`), and `sv_allowAimAssist`; `accel_enabled`, `accel_rate`, and `scale_view_axis` map to `aim_accel_turnrate_enabled`, `aim_accel_turnrate_lerp`, and `aim_scale_view_axis`.
+
+## Integration and contract
+
+`types.hpp`, `utility.hpp`, `import.hpp`, and `context.hpp` supply engine types, helpers, imported dvar definitions, and registration-count context coupling.
+
+`register_dvars` establishes defaults matching every `read` fallback; `publish_present` is the sole writer of `gpad_present`, while runtime readers consume engine state through `dvars`. Raw dvar values terminate at this boundary before conversion into typed angles, magnitudes, or durations.

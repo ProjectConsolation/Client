@@ -1,0 +1,19 @@
+---
+generated_at: 2026-08-31T15:21:44.639Z
+content_hash: 988b142b0fbf606483edb4e136b06fb75352c8ad0421041e1350085773cc687b
+purpose: validate.cpp does calibration-profile validation for gamepad controllers.
+---
+**validate.cpp does calibration-profile validation for gamepad controllers.**
+
+## Interface
+
+`validate (const profile& p, string& why) noexcept -> bool` rejects invalid `profile` data and writes the first failure reason to `why`.
+
+## Validation Contracts
+
+- `profile::version` must satisfy `1 <= version <= profile::current_version`; error: `"unsupported calibration profile version"`.
+- `stick_calibration` fields must be finite; ranges must be `> 0.0f`; `drift_threshold` must be `[0, 1)`; errors identify non-finite values, invalid ranges, or threshold bounds.
+- `trigger_calibration` `min`/`max` must be finite with `max > min`.
+- `motion` bias/scale fields must be finite.
+- `profile::smoothing` must be finite and non-negative.
+- `finite(float)` and `finite(const sensor_vec3&)` use `std::isfinite`; `validate` returns `true` only after all checks pass.

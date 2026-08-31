@@ -1,0 +1,29 @@
+---
+generated_at: 2026-08-31T15:24:15.506Z
+content_hash: f0ce436fbe3ef4e12fca40e7e16c1e14e8cc82b1aa889d0555dd1d4d525c6787
+purpose: config.yaml configures agents-reverse-engineer discovery, summarization, AI execution, and telemetry behavior.
+---
+**config.yaml configures agents-reverse-engineer discovery, summarization, AI execution, and telemetry behavior.**
+
+## Configuration Schema
+
+- `exclude.patterns: string[]` excludes documentation, secrets, locks, logs, tests, specs, CI/editor configs, infrastructure, dependencies, and temporary files.
+- `exclude.vendorDirs: string[]` skips `node_modules`, `vendor`, `deps`, `.git`, `dist`, `build`, `__pycache__`, `.next`, `venv`, `.venv`, `target`, `.cargo`, `.gradle`, `.agents-reverse-engineer`, `.agents`, `.planning`, `.claude`, `.codex`, `.opencode`, and `.gemini`.
+- `exclude.binaryExtensions: string[]` skips `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.ico`, `.webp`, `.zip`, `.tar`, `.gz`, `.rar`, `.7z`, `.exe`, `.dll`, `.so`, `.dylib`, `.mp3`, `.mp4`, `.wav`, `.pdf`, `.woff`, `.woff2`, `.ttf`, `.eot`, `.class`, and `.pyc`.
+- `options.followSymlinks: boolean` defaults to `false`; `options.maxFileSize: number` defaults to `1048576` bytes.
+- `output.colors: boolean` defaults to `true`.
+- `generation.compressionRatio: number` is `0.25`, targeting summaries near 25% of source size; valid documented range is `0.1–1.0`, while annex handling bypasses compression for reproduction-critical content.
+
+## AI Runtime
+
+- `ai.backend: string` selects `claude`, `codex`, `gemini`, `opencode`, or `auto`; current value is `codex`.
+- `ai.model: string` selects the backend-specific model; current value is `gpt-5.6-luna`.
+- `ai.upgradeModel` is unset; `are specify` and `are rebuild` therefore retain `ai.model`.
+- `ai.timeoutMs: number` sets subprocess timeout to `300000` ms.
+- `ai.maxRetries: number` allows `3` retries for transient errors.
+- `ai.concurrency` is unset, so runtime auto-detection applies; documented range is `1–20`, with current machine default `20`.
+- `ai.telemetry.keepRuns: number` retains the latest `50` run logs under `.agents-reverse-engineer/logs/`.
+
+## Exclusion Contracts
+
+`exclude.patterns` contains exact glob rules including `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`, `OPENCODE.md`, `GEMINI.md`, `"**/AGENTS.md"`, `"**/AGENTS.override.md"`, `"**/CLAUDE.md"`, `"**/OPENCODE.md"`, `"**/GEMINI.md"`, `"*.local.md"`, `"**/*.local.md"`, `"AGENTS.*.md"`, `"**/AGENTS.*.md"`, `"*.lock"`, lockfile names, `".env"`, `"**/.env"`, `"**/.env.*"`, `"*.log"`, `"**/*.sum"`, `"**/SKILL.md"`, test/spec globs, automation/config globs, infrastructure globs, `"deps/**"`, `"_tmp_iw4x_gamepad/**"`, `".github/**"`, `".vscode/**"`; these rules define observable traversal scope.

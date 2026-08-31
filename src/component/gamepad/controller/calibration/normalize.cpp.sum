@@ -1,0 +1,22 @@
+---
+generated_at: 2026-08-31T15:21:35.623Z
+content_hash: 23c611e2d5a463a70e75aa855b13445982127376bd3a36da591d6886654f3481
+purpose: normalize.cpp does controller stick, trigger, and motion calibration.
+---
+**normalize.cpp does controller stick, trigger, and motion calibration.**
+
+## API
+
+`apply(const profile& p, const raw_sample& raw, canonical_sample& canonical) noexcept` mutates `canonical` using calibration data from `p` and `raw`.
+
+## Calibration behavior
+
+- `apply` processes `stick_count` `stick_sample` entries using `stick_calibration::center_x`, `center_y`, `range_x`, and `range_y`.
+- `apply` clamps stick coordinates to `[-1.0f, 1.0f]`, radial-normalizes magnitude above `1.0f`, and snaps magnitude `<= c.drift_threshold` to `{0.0f, 0.0f}` before assigning `stick_sample::calibrated`.
+- `apply` rescales `trigger_count` `trigger_sample::normalized` values using `trigger_calibration::min` and `max`, clamps results to `[0.0f, 1.0f]`, and falls back to the driver value when `max - min <= 0.0f`.
+- `apply` copies `raw.motion` into `motion_sample`, subtracts `motion_calibration::gyro_bias` and `accel_bias`, then multiplies by `gyro_scale` and `accel_scale`.
+- `apply` assigns `canonical.motion` only when `raw.motion` is present.
+
+## Dependencies
+
+`std::sqrt` performs stick magnitude calculation; `std::clamp` enforces stick and trigger bounds; `profile`, `raw_sample`, `canonical_sample`, and calibration/sample types come from `normalize.hpp`.

@@ -66,20 +66,22 @@ namespace gamepad::unstable::controller::engine
 
     void __cdecl mouse_move_body (usercmd_s* cmd, int client)
     {
-      if (active_runtime != nullptr && active_runtime->driving () &&
-          !menu_or_console_active ())
-      {
-        active_runtime->view ().apply_move (client, *cmd, frame_seconds ());
-        patches::enforce_ads_sprint_interrupt (cmd);
-        return;
-      }
-
+      // QoS's CL_MouseMove is not just mouse look. It also advances native client
+      // and aim-assist state that must run during map transitions and gameplay.
+      // Preserve that engine work, then layer controller input onto its usercmd.
       const auto function = static_cast<int> (game::game_offset (0x102FC4D0));
       __asm {
         push cmd
         mov eax, client
         call function
         add esp, 4
+      }
+
+      if (active_runtime != nullptr && active_runtime->driving () &&
+          !menu_or_console_active ())
+      {
+        active_runtime->view ().apply_move (client, *cmd, frame_seconds ());
+        patches::enforce_ads_sprint_interrupt (cmd);
       }
     }
 

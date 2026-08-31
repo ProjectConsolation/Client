@@ -1,0 +1,16 @@
+---
+generated_at: 2026-08-31T15:23:45.018Z
+content_hash: ef4c0fb15de04a797a885aa4e6f833b22b9636eee24bd8e26ef01b7c2bafc5df
+purpose: component_loader.hpp does component registration, lookup, lifecycle control, dynamic imports, and shutdown signaling.
+---
+**component_loader.hpp does component registration, lookup, lifecycle control, dynamic imports, and shutdown signaling.**
+
+## API
+
+`component_loader` exports `premature_shutdown_trigger` (`std::exception`, `what()` → `"Premature shutdown requested"`), `installer<T>` (static-asserts `T : component_interface`, registers `std::make_unique<T>()`), and `get<T>()` → `T*`.
+
+`register_component(std::unique_ptr<component_interface>&&)`; `post_start()`/`post_load()` → `bool`; `pre_destroy()`/`clean()` → `void`; `load_import(const std::string&, const std::string&)` → `void*`; `trigger_premature_shutdown()` → `void`; `get_components()` → `std::vector<std::unique_ptr<component_interface>>&`.
+
+## Registration
+
+`REGISTER_COMPONENT(name)` creates an anonymous-namespace static `component_loader::installer<name>`. `get<T>()` matches exact `typeid` and returns `nullptr` when absent.

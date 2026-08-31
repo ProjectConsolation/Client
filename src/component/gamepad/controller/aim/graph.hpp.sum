@@ -1,0 +1,23 @@
+---
+generated_at: 2026-08-31T15:21:36.672Z
+content_hash: fcae0ffc8f8b196a846e63c67d14342ca6d9af3ecec66c5cdbec5fe71747643a
+purpose: graph.hpp defines allocation-free validated piecewise-linear aim response graphs.
+---
+**graph.hpp defines allocation-free validated piecewise-linear aim response graphs.**
+
+## API
+
+- `knot` stores `float input` and `float output`.
+- `max_graph_knots` is `inline constexpr size_t` `16`.
+- `aim_graph::make(span<const knot>, bool require_monotonic, string& why)` returns `optional<aim_graph>`; invalid data yields `nullopt` and a precise `why`.
+- `aim_graph::evaluate(float) const noexcept` linearly interpolates, exactly preserves knot outputs, and saturates beyond endpoints.
+- `aim_graph::knots() const noexcept` returns `span<const knot>` over initialized knots.
+- `aim_graph::monotonic() const noexcept` returns whether outputs are non-decreasing.
+
+## Invariants
+
+`aim_graph` accepts 2–16 knots, finite values, inputs in `[0,1]`, strictly increasing inputs, and optionally non-decreasing outputs; `evaluate` relies on these asserted invariants for deterministic, numerically stable positive-span segments.
+
+## Integration
+
+`types.hpp` supplies `optional`, `span`, `string`, `array`, and `size_t`; `utility.hpp` supplies supporting utilities. `aim_graph` stores knots inline, avoiding allocations.

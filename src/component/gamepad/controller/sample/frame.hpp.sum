@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:22:39.161Z
+content_hash: 3767e8fd5afd8e83365831ffb9a0f6e69d8de6338c29b0b8c1f489e59c2cc2f1
+purpose: frame.hpp defines `input_frame`, the ordered timestamped input unit for the gamepad pipeline.
+---
+**frame.hpp defines `input_frame`, the ordered timestamped input unit for the gamepad pipeline.**
+
+## Interface
+
+`input_frame` aggregates `device_id device`, `controller::family family`, `connection link`, `uint64_t sequence`, `latency_span timing`, and `canonical_sample state`, with defaults `family::unknown`, `connection::unknown`, and zero-initialized values.
+
+`operator<< (ostream&, const input_frame&)` serializes frames.
+
+## Contracts
+
+`sequence` increases monotonically per device for ordering and drop detection; `timing.acquired` is producer-stamped, `timing.consumed` consumer-stamped, and `latency()` is meaningful only after consumption.
+
+`types.hpp`, `utility.hpp`, `clock.hpp`, `sample.hpp`, `id.hpp`, and `identity.hpp` supply the field and stream types.

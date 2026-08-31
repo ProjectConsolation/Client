@@ -1,0 +1,10 @@
+---
+generated_at: 2026-08-31T15:22:46.948Z
+content_hash: 529583e161ffac42014b10726229d634d15b8626c07581d60069af2f70b6dce3
+purpose: xlive.hpp declares xlive early patch initialization.
+---
+**xlive.hpp declares xlive early patch initialization.**
+
+## Interface
+
+- `xlive::apply_early() -> void` applies early patches.

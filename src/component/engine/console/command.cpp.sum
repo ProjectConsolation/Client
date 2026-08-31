@@ -1,0 +1,194 @@
+---
+generated_at: 2026-08-31T15:24:00.049Z
+content_hash: f01945f06820af5ca81578b30b3eef7039bba36ce02f268a0e654f3b44ff24b6
+purpose: command.cpp registers engine-console commands for bot spawning, clan-tag updates, dvar/command inspection, memory and...
+---
+**command.cpp registers engine-console commands for bot spawning, clan-tag updates, dvar/command inspection, memory and rawfile extraction, Scaleform discovery, and gametype debugging.**
+
+## Role and Architecture
+
+`command::component` integrates command registration with the component lifecycle through `component_interface`, `REGISTER_COMPONENT(command::component)`, and `scheduler::once(..., scheduler::main)`.
+
+`handlers` stores lowercase command names as `std::unordered_map<std::string, std::function<void(params&)>>`; `add()` installs one engine callback per command name through `game::Cmd_AddCommandInternal`, then dispatches subsequent invocations through `main_handler()`.
+
+`cmd_allocator` owns `game::cmd_function_s` allocations and is released by `component::pre_destroy()`.
+
+`main_handler()` lowercases `params[0]`, looks up `handlers`, and invokes the matching callback; unknown commands are ignored.
+
+## Exported Interface
+
+`command::params::params()` captures the current engine command nesting index from `*game::command_id`.
+
+`int command::params::size() const` returns `game::cmd_argc[nesting_]`.
+
+`const char* command::params::get(int index) const` returns `game::cmd_argv[nesting_][index]`, or `""` when `index >= size()`; negative indices are not explicitly rejected.
+
+`std::string command::params::join(int index) const` joins arguments from `index` through `size() - 1` with literal spaces.
+
+`std::vector<std::string> command::params::get_all() const` copies every current command argument into a vector.
+
+`void command::add_raw(const char* name, void (*callback)())` registers an engine-native callback using `game::Cmd_AddCommandInternal(name, callback, cmd_allocator.allocate<game::cmd_function_s>())`.
+
+`void command::add(const char* name, const std::function<void(const params&)>& callback)` lowercases `name`, registers `main_handler` if the command is new, and stores the callback in `handlers`.
+
+`void command::add(const char* name, const std::function<void()>& callback)` adapts a no-argument callback to `std::function<void(const params&)>`.
+
+`void command::execute(std::string command)` appends `"\n"` and queues the command through `game::Cbuf_AddText(0, command.data())`.
+
+`command::component::post_load()` schedules initialization and registration of all built-in console commands on `scheduler::main`.
+
+`command::component::pre_destroy()` calls `cmd_allocator.clear()`.
+
+## Runtime Constants and Engine Memory Contracts
+
+`CLIENT_STRIDE` is `688916`; `get_client(int index)` computes `get_clients_base() + index * CLIENT_STRIDE`.
+
+`CLIENT_REAL_PLAYER_OFFSET` is `0x20`; `is_bot_client(int index)` treats a client as a bot when its connection state is at least `game::CS_CONNECTED` and the integer at `client + 0x20` equals `0`.
+
+`CLIENT_USERINFO_OFFSET` is `1604`; `rename_new_bot_client()` reads and rewrites userinfo at `get_client(i) + 1604`.
+
+`CLIENT_USERINFO_SIZE` is `1024`; `rename_new_bot_client()` zeroes 1024 bytes and copies at most `CLIENT_USERINFO_SIZE - 1` bytes before calling `game::SV_ClientUserinfoChanged(i)`.
+
+`ACTIVE_PROFILE_INDEX` is `0`; `update_clan_name_state()` updates profile index `0`.
+
+`BOT_NAMES_FILE` is `"consolation/bots.txt"`; `load_bot_names()` reads this relative to the game executable working path through `utils::io::read_file`.
+
+`LIVE_CLAN_TARGET_PRIMARY` is `0x111CF170`; `LIVE_CLAN_TARGET_SECONDARY` is `0x111F1C00`; `update_clan_name_state()` resolves both with `game::game_offset()` and calls `game::Live_UpdateClan`.
+
+`CLAN_DIRTY_FLAGS` is `0x1149E6BC`; `update_clan_name_state()` resolves it and ORs the pointed `std::uint32_t` with `2u`.
+
+`GAMETYPES_RAWFILE` is `"maps/mp/gametypes/_gametypes.txt"`; `dumpGametypes` passes it to `dump_rawfile()`.
+
+`get_clients_base()` dereferences `game::game_offset(0x11CA5D8C)` as the client-array base pointer.
+
+`get_max_clients()` reads dvar `"sv_maxclients"`, clamps it to at least `1`, and falls back to `18`.
+
+## Parsing, Paths, and File I/O
+
+`parse_integer(const char* value, std::uintptr_t* result)` rejects null, empty, or invalid strings; it uses base `10`, switches to base `16` for `0x`/`0X` prefixes or any hexadecimal letters `a-fA-F`, and requires `std::strtoull()` to consume the entire input.
+
+`resolve_address(std::uintptr_t parsed)` treats values in `[0x10000000, 0x20000000)` as IDA/game addresses and maps them with `game::game_offset()`; other values remain runtime pointers.
+
+`append_format(std::string& output, const char* format, ...)` formats into a 256-byte buffer with `vsnprintf_s(..., _TRUNCATE, ...)`, so formatted lines are truncated at 255 bytes.
+
+`get_exe_directory()` obtains the executable path through `GetModuleFileNameA(nullptr, path, sizeof(path))`, rejects zero or oversized results, and removes the final `/` or `\` component.
+
+`resolve_game_path(const std::string& path)` preserves paths with a drive prefix at `path[1] == ':'`; other paths receive the executable directory plus `"\\"`.
+
+`create_directory_tree(const std::string& path, DWORD* error)` creates each slash-delimited parent using `CreateDirectoryA`, accepts `ERROR_ALREADY_EXISTS`, and stores `GetLastError()` through `error` on failure.
+
+`write_file_noexcept(const std::string& path, const std::string& data, DWORD* error)` resolves the path, creates parents, writes with `CreateFileA(..., GENERIC_WRITE, FILE_SHARE_READ, ..., CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, ...)`, caps the write size at `MAXDWORD`, requires `WriteFile()` and exact byte count, and closes the handle.
+
+`normalize_rawfile_path(std::string path)` converts `\` to `/`.
+
+`get_file_name(std::string path)` normalizes separators and returns the substring after the final `/`.
+
+`make_dump_safe_path(std::string path)` normalizes separators and strips all leading `/` characters before constructing dump paths.
+
+## Memory Dumping
+
+`is_readable_memory(const void* address, std::size_t length)` uses `VirtualQuery()` and accepts committed regions with `PAGE_READONLY`, `PAGE_READWRITE`, `PAGE_WRITECOPY`, `PAGE_EXECUTE_READ`, `PAGE_EXECUTE_READWRITE`, or `PAGE_EXECUTE_WRITECOPY`; it requires `start + length <= region_end`.
+
+`safe_read_byte(std::uintptr_t address, unsigned char* value)` reads one byte with `ReadProcessMemory(GetCurrentProcess(), ...)` and requires exactly `sizeof(*value)` bytes.
+
+`dump_memory(const char* address_text, const char* length_text, const char* output_name)` implements `dumpMemory <address> [length] [output]`; default length is `0x100`, accepted length is clamped to `[1, 0x4000]`, and only the first byte is validated with `is_readable_memory()`.
+
+`dump_memory()` emits hexadecimal rows using exact formats `"%08X  "` and `"%02X "`, substitutes `"?? "` and `'?'` for failed byte reads, renders printable ASCII for bytes `32 <= byte < 127`, and terminates rows with `"\r\n"`.
+
+`dump_memory()` defaults output to `"consolation/memory_dump/%08X.txt"`; explicit output names are appended to `"consolation/memory_dump/"`, then written by `write_file_noexcept()`.
+
+`dump_memory()` prints exact usage text `"dumpMemory <address> [length] [output]: dump readable memory to consolation/memory_dump\n"` and `"dumpMemory accepts IDA addresses like 0x113D1684 or runtime pointers\n"` when no address is supplied.
+
+## Rawfile and Scaleform Extraction
+
+`get_rawfile_buffer(const game::RawFile* rawfile)` returns text data without a trailing NUL when `rawfile->len > 0` and the final byte is `'\0'`; null assets or buffers return `{}`.
+
+`get_rawfile_binary_buffer(const game::RawFile* rawfile)` returns all `rawfile->len` bytes, including NUL bytes, and rejects null, missing buffers, or zero lengths.
+
+`dump_rawfile(const char* rawfile_name, const char* output_name)` normalizes the asset name, resolves it with `game::DB_FindXAssetHeader(game::ASSET_TYPE_RAWFILE, ...)`, and writes text data through `utils::io::write_file()`.
+
+`dump_rawfile()` defaults to `"consolation/rawfile_dump/" + normalized_name`; explicit output names use `"consolation/" + output_name`.
+
+`dump_rawfile()` prints `"dumpRawFile <rawfile> [output]: dump a rawfile asset to consolation/rawfile_dump\n"` without an asset name and warns with `"dumpRawFile: rawfile '%s' was empty or unavailable\n"` for unavailable data.
+
+`dump_rawfile_binary(const game::RawFile* rawfile, const char* output_prefix)` writes binary data to `output_prefix + make_dump_safe_path(rawfile->name)` through `write_file_noexcept()`.
+
+`dump_swf_by_name(const char* swf_name)` enumerates loaded `game::ASSET_TYPE_RAWFILE` assets via `fastfiles::enum_assets(..., true)`, compares lowercased basenames against the requested name, and accepts `.swf` to `.gfx` fallback conversion.
+
+`dump_swf_by_name()` writes matches under `"consolation/scaleform_dump/"`, reports `"dumpSwf: dumped %s to %s\n"`, and warns `"dumpSwf: '%s' was not found in loaded Scaleform rawfile assets\n"` when no match exists.
+
+`dump_scaleform_shared_files()` searches exact names `cmsharedplatform.gfx`, `cmsharedlibrary.gfx`, `pcsharedlibrary.gfx`, `mpsharedlibrary.gfx`, `cmfont1_glyphs.gfx`, `cmfont2_glyphs.gfx`, `cmfont3_glyphs.gfx`, `cmfont4_glyphs.gfx`, and `cmfont5_glyphs.gfx`, then reports `"dumpScaleformSharedFiles: dumped %i file(s)\n"`.
+
+`is_scaleform_asset_candidate(const char* asset_name)` lowercases normalized names and matches `.gfx`, `.swf`, `scaleform`, `mpsysmodeselect`, `mpxbplaylistselect`, `cmsharedplatform`, `gfxfontlib`, `pcsharedlibrary`, or `cmsharedlibrary`.
+
+`find_scaleform_assets(const char* filter)` enumerates every `game::XAssetType` from `0` through `game::ASSET_TYPE_COUNT - 1`; a nonempty filter performs substring matching, while an empty filter uses `is_scaleform_asset_candidate()`.
+
+`find_scaleform_assets()` reports each match with `"findScaleformAssets: type=%d:%s name=%s\n"` and concludes with `"findScaleformAssets: found %i asset(s)\n"`.
+
+## Bot and Clan State
+
+`get_info_value(const std::string& info, const std::string& key)` parses backslash-delimited key/value strings such as `\name\value\clanAbbrev\CSL` and returns the first matching value.
+
+`set_info_value(std::string& info, const std::string& key, const std::string& value)` parses the same structure, replaces the first matching key or appends a new pair, and rebuilds every pair with leading `\`.
+
+`trim_bot_name(std::string name)` removes trailing `\r`, `\n`, spaces, and tabs, then removes leading spaces and tabs.
+
+`load_bot_names()` clears `bot_names`, reads `BOT_NAMES_FILE`, and stores every nonempty trimmed line.
+
+`next_bot_number` starts at `1`; `get_next_bot_name()` cycles through `bot_names` using `(next_bot_number - 1) % bot_names.size()` or generates `std::format("consolation_bot{}", next_bot_number++ - 1)` when no names are loaded.
+
+`normalize_clan_name(const std::string& raw_value)` keeps at most four characters, converts `'^'` to a space, skips bytes below `32`, and preserves other bytes without game-color parsing.
+
+`get_dvar_string(game::dvar_s* dvar)` returns `dvar->current.string` or `""` for null dvars/null strings.
+
+`update_clan_name_state(const std::string& clan_name)` calls `game::Dvar_SetString("clanName", ...)`, `game::GamerProfile_UpdateProfileFromDvars(0, 1)`, both `game::Live_UpdateClan()` targets, and sets dirty flag bit `2u`.
+
+`rename_new_bot_client()` scans `get_max_clients()`, selects bot clients whose `"name"` begins with `"bot"` via `rfind("bot", 0) == 0`, sets `"name"` to `get_next_bot_name()`, sets `"clanAbbrev"` to `"CSL"`, rewrites userinfo, and returns the slot or `-1`.
+
+## Registered Commands
+
+`addbot [count]` validates `game::SV_AddTestClient`, reloads `BOT_NAMES_FILE`, defaults `count` to `1`, rejects `count <= 0`, spawns test clients, renames them, and reports server-full or userinfo failures.
+
+`clanName <tag>` reads or sets dvar `"clanName"`; setting applies `normalize_clan_name()` and `update_clan_name_state()`.
+
+`dvarDump [filename]` prints all `*game::dvarCount` entries from `game::sortedDvars`; optional output is `"consolation/" + filename` with `.txt` appended when absent.
+
+`dvarDump` serializes each line with `std::format("{} \"{}\"\r\n", dvar->name, dvars::Dvar_ValueToString(dvar, dvar->current))`, writes append mode based on `i != 0`, and catches formatting exceptions because empty dvars can crash string conversion.
+
+`commandDump [filename]` traverses `*game::cmd_functions`, prints command names, and optionally writes `"{}\\r\\n"`-formatted lines to `"consolation/" + filename`, appending `.txt` when absent.
+
+`dumpRawFile <rawfile> [output]` delegates to `dump_rawfile()`.
+
+`dumpSwf <name.swf|name.gfx>` delegates to `dump_swf_by_name()`.
+
+`dumpScaleformSharedFiles` delegates to `dump_scaleform_shared_files()`.
+
+`findScaleformAssets [filter]` delegates to `find_scaleform_assets()`.
+
+`dumpGametypes` dumps `GAMETYPES_RAWFILE`.
+
+`dumpGametypesDebug` calls `gametypes::dump_debug_state()` and reports `"dumpGametypesDebug: unhandled exception\n"` on failure.
+
+`refreshGametypes` calls `gametypes::force_refresh_ui_gametype_list()` and reports `"refreshGametypes: unhandled exception\n"` on failure.
+
+`dumpMemory <address> [length] [output]` delegates to `dump_memory()` inside a catch-all boundary and reports `"dumpMemory: unhandled exception\n"`.
+
+`listassetpool <poolnumber> [filter]` lists valid asset pools or enumerates one pool through `fastfiles::enum_assets(type, ..., true)`; filters use `console::match_compare(filter, asset_name, false)`.
+
+`listassetpool` accepts pool indices `[0, game::XAssetType::ASSET_TYPE_COUNT - 1]` and reports invalid input with `"Invalid pool passed must be between [0, %d]\n"`.
+
+## Integration and Safety Boundaries
+
+`game::game_offset()` couples address parsing, client memory, clan globals, and executable-specific offsets to the game build.
+
+`game::DB_FindXAssetHeader()`, `game::DB_GetXAssetName()`, `game::XAssetHeader`, `game::XAsset`, `game::g_assetNames`, and `fastfiles::enum_assets()` couple asset inspection to the engine asset database.
+
+`utils::io::read_file()`, `utils::io::write_file()`, `CreateFileA()`, `WriteFile()`, `VirtualQuery()`, and `ReadProcessMemory()` couple command behavior to Windows filesystem and process-memory APIs.
+
+`dvars::Dvar_ValueToString()` is wrapped in `try/catch (...)` inside `dvarDump`; `dumpGametypesDebug`, `refreshGametypes`, and `dumpMemory` also use catch-all exception boundaries.
+
+`write_file_noexcept()` is non-throwing by convention but can overwrite existing files through `CREATE_ALWAYS`; explicit output names are not sanitized beyond path resolution, while binary rawfile names pass through `make_dump_safe_path()`.
+
+`is_readable_memory()` validates only one queried memory region and `dump_memory()` checks only the initial byte before reading later addresses individually with `safe_read_byte()`.
+
+`handlers`, `bot_names`, and `next_bot_number` are process-global mutable state; command dispatch and bot naming assume main-thread execution established by `scheduler::main`.

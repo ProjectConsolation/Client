@@ -1,0 +1,45 @@
+---
+generated_at: 2026-08-31T15:22:18.971Z
+content_hash: 0cd7a74adc1b6473294d3fd30461dcfba644d6b2ca107d64e7f175837a2ed8ab
+purpose: key.cpp does gamepad-to-engine key translation, menu scrolling, fallback command dispatch, and controller-use state m...
+---
+**key.cpp does gamepad-to-engine key translation, menu scrolling, fallback command dispatch, and controller-use state management.**
+
+## Role and Integration
+
+`gamepad::unstable::controller::engine::key_dispatcher` consumes `canonical_sample`, applies stick deadzones, tracks button/axis transitions, and emits engine key events through `emit_key`. It couples `context::report` with `severity::warning`, `facility::mapping`, and `errc::calibration_invalid`; `dvars` supplies runtime thresholds and controller-use state; `mapping::engine_key`, `mapping::to_engine_key`, `mapping::apad_input`, `mapping::axis_deflected`, and `mapping::all_engine_keys` define engine mappings; `aim::validate` and `aim::apply` perform deadzone validation and calibration.
+
+## Public Interface
+
+- `key_dispatcher::key_dispatcher (const context& ctx, const dvars& d)` stores immutable `context` and `dvars` references.
+- `void key_dispatcher::set_in_use (bool value) noexcept` changes controller-use state, updates `dvars_.in_use`, and invokes `apply_use_hold_time`.
+- `void key_dispatcher::apply_use_hold_time () noexcept` lazily finds `"g_useholdtime"` and sets it to `250` while `in_use_` is true, otherwise `0`.
+- `void key_dispatcher::note_other_input () noexcept` clears controller-use state through `set_in_use (false)`.
+- `void key_dispatcher::dispatch (const canonical_sample& sample) noexcept` validates/applies stick deadzones, updates hysteretic axis deflection state, detects controller activity, dispatches sticks and buttons, then snapshots `sample.buttons`.
+- `void key_dispatcher::dispatch_apad (unsigned time) noexcept` translates left/right-stick directional deflections into `pressed`, `repeated`, or `released` `key_event` values, suppressing stick input outside menus/consoles.
+- `void key_dispatcher::dispatch_buttons (const canonical_sample& sample, unsigned time) noexcept` compares current buttons against `buttons_`, emitting transitions and held repeats for D-pad and triggers.
+- `void key_dispatcher::emit_button (engine_key key, key_event event, unsigned time) noexcept` marks controller use, resets menu scroll state for non-repeat button events, and delegates to `emit`.
+- `void key_dispatcher::emit (engine_key key, key_event event, unsigned time) noexcept` translates menu keys to `K_*` events, emits gameplay engine keys below `0xE0`, and queues fallback commands when `engine_binding` is empty.
+- `bool key_dispatcher::ignore_repeat (engine_key key, int repeats, unsigned time) noexcept` implements menu repeat timing and D-pad acceleration, returning whether a repeat should be suppressed.
+- `void key_dispatcher::reset_scroll (engine_key key, bool down, unsigned time) noexcept` initializes or clears scroll-hold tracking and schedules the first repeat.
+- `void key_dispatcher::menu_key_event (engine_key key, bool down)` translates `engine_key` to menu keycodes using the current millisecond timestamp.
+- `bool key_dispatcher::scoreboard_key_event (engine_key) noexcept` always returns `false`.
+- `void key_dispatcher::release_all () noexcept` releases every `mapping::all_engine_keys` entry, clears button/deflection state, and resets scroll ownership.
+
+## Mapping and Fallback Contracts
+
+`button_keys[]` maps `face_west→button_x`, `face_south→button_a`, `face_east→button_b`, `face_north→button_y`, `l2→button_ltrig`, `r2→button_rtrig`, `l1→button_lshldr`, `r1→button_rshldr`, `start→button_start`, `back→button_back`, `l3→button_lstick`, `r3→button_rstick`, and all four D-pad directions to matching `engine_key` values.
+
+`menu_key` maps `button_a`/`button_start` to `K_ENTER`, `button_b`/`button_back` to `K_ESCAPE`, and D-pad/apad/rstick directions to `K_UPARROW`, `K_DOWNARROW`, `K_LEFTARROW`, or `K_RIGHTARROW`; unsupported keys return `0`.
+
+`fallback_command` maps gameplay keys to `"+gostand"`, `"+stance"`, `"+usereload"`, `"weapnext"`, `"+speed_throw"`, `"+attack"`, `"+smoke"`, `"+frag"`, `"togglemenu"`, `"+scores"`, `"+breath_sprint"`, `"+melee"`, and D-pad `"+actionslot 1"` through `"+actionslot 4"`.
+
+`engine_binding` reads the game binding table at `game::game_offset (0x11263624 + keynum * 12)` for key values `[0,255]`; invalid values return `nullptr`.
+
+`queue_fallback` formats held commands as `"%s %d %u\n"` and released `+commands` as `"-%s %d %u\n"`; one-shot commands format as `"%s\n"` only on press, then call `game::Cbuf_AddText (0, text)`.
+
+## Timing, Thresholds, and State
+
+`scroll_delay_first`, `scroll_delay_rest`, `scroll_delay_min`, `scroll_accel_time`, and `controller_use_hold_time` equal `420`, `210`, `50`, `1500`, and `250` milliseconds respectively. `dispatch` reads default stick deadzone values `0.2f` and `0.01f`, button deadzone `0.13f`, pressed threshold `0.4f`, and hysteresis `0.1f`. `ignore_repeat` accelerates D-pad repeats linearly from `210` toward `50` over `1500` ms while preserving a first-repeat delay of `420` ms.
+
+`dispatch` reports `"invalid stick deadzone; using defaults"` once per dispatcher via `reported_deadzone_`; `release_all` is the lifecycle reset boundary for buttons, axis hysteresis, and scroll state.

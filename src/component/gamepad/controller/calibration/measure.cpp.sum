@@ -1,0 +1,24 @@
+---
+generated_at: 2026-08-31T15:21:38.111Z
+content_hash: c8c22227e63c8e854b6f5e9909d5d48de1d7617f0361a93eafb36098546ee896
+purpose: measure.cpp computes stick calibration and motion-sensor bias averages.
+---
+**measure.cpp computes stick calibration and motion-sensor bias averages.**
+
+## Interface
+
+- `stick_measurer::observe_rest(stick_vector v) noexcept` accumulates rest samples for center estimation.
+- `stick_measurer::observe_sweep(stick_vector v) noexcept` tracks absolute axis maxima via `std::fabs`.
+- `stick_measurer::finalize() const noexcept -> stick_calibration` returns averaged centers, sweep ranges, and `drift_threshold`.
+- `stick_measurer::reset() noexcept` value-resets all measurement state.
+- `motion_bias_measurer::observe(const motion_sample& m) noexcept` accumulates gyro and accelerometer components.
+- `motion_bias_measurer::finalize(motion_calibration& mc) const noexcept` writes component-wise means when `n_ != 0`; otherwise leaves `mc` unchanged.
+- `motion_bias_measurer::reset() noexcept` value-resets all accumulators.
+
+## Behavioral Contracts
+
+`stick_measurer::finalize` uses `constexpr float min_range {0.1f}`; swept ranges are `std::max(max_x_, min_range)`/`std::max(max_y_, min_range)`, unswept ranges are `1.0f`, missing rest centers are `0.0f`, and `drift_threshold` is always `0.0f`. `motion_bias_measurer::finalize` computes means with `1.0 / static_cast<double>(n_)`.
+
+## Coupling
+
+`measure.cpp` depends on `measure.hpp`, `stick_vector`, `stick_calibration`, `motion_sample`, and `motion_calibration`; `<cmath>` supplies `std::fabs`, while `<algorithm>` supplies `std::max`.

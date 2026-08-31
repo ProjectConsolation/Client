@@ -1,0 +1,76 @@
+---
+generated_at: 2026-08-31T15:25:07.848Z
+content_hash: 73dbbfce200b450677b56e4bf7ba7093679ff3c505134d30c3af4e022f0c5637
+purpose: `src/game/structs.hpp` defines ABI-sensitive game, rendering, UI, scripting, input, asset, dvar, command, and gamepla...
+---
+**`src/game/structs.hpp` defines ABI-sensitive game, rendering, UI, scripting, input, asset, dvar, command, and gameplay structs/enums inside namespace `game`.**
+
+## Scalar, asset, and rendering types
+
+- `vec_t` aliases `float`; `vec2_t`, `vec3_t`, `vec4_t`, and `vec5_t` alias fixed-size `vec_t` arrays of 2, 3, 4, and 5 elements.
+- `XAssetType` maps asset IDs: `ASSET_TYPE_XMODELPIECES=0x0`, `ASSET_TYPE_PHYSPRESET=0x1`, `ASSET_TYPE_PHYSCONSTRAINTS=0x2`, `ASSET_TYPE_DESTRUCTIBLE_DEF=0x3`, `ASSET_TYPE_XANIMPARTS=0x4`, `ASSET_TYPE_XMODEL=0x5`, `ASSET_TYPE_MATERIAL=0x6`, `ASSET_TYPE_TECHNIQUE_SET=0x7`, `ASSET_TYPE_IMAGE=0x8`, `ASSET_TYPE_SOUND=0x9`, `ASSET_TYPE_SOUND_CURVE=0xA`, `ASSET_TYPE_CLIPMAP_SP=11`, `ASSET_TYPE_CLIPMAP_MP=12`, `ASSET_TYPE_COMWORLD=13`, `ASSET_TYPE_gameWORLD_SP=14`, `ASSET_TYPE_gameWORLD_MP=15`, `ASSET_TYPE_MAP_ENTS=16`, `ASSET_TYPE_GFXWORLD=17`, `ASSET_TYPE_LIGHT_DEF=18`, `ASSET_TYPE_UI_MAP=19`, `ASSET_TYPE_FONT=20`, `ASSET_TYPE_MENULIST=21`, `ASSET_TYPE_MENU=22`, `ASSET_TYPE_LOCALIZE_ENTRY=23`, `ASSET_TYPE_WEAPON=24`, `ASSET_TYPE_SNDDRIVER_GLOBALS=25`, `ASSET_TYPE_FX=26`, `ASSET_TYPE_IMPACT_FX=27`, `ASSET_TYPE_AITYPE=28`, `ASSET_TYPE_MPTYPE=29`, `ASSET_TYPE_CHARACTER=30`, `ASSET_TYPE_XMODELALIAS=31`, `ASSET_TYPE_RAWFILE=32`, `ASSET_TYPE_STRINGTABLE=33`, `ASSET_TYPE_XML_TREE=34`, `ASSET_TYPE_SCENE_ANIM_RESOURCE=35`, `ASSET_TYPE_CUTSCENE_RESOURCE=36`, `ASSET_TYPE_CUSTOM_CAMERA_LIST=37`, `ASSET_TYPE_COUNT=38`, `ASSET_TYPE_STRING=38`, `ASSET_TYPE_ASSETLIST=39`, and `ASSET_TYPE_INVALID=-1`.
+- `GfxDrawSurfFields` packs `objectId:16`, `reflectionProbeIndex:8`, `customIndex:5`, `materialSortedIndex:11`, `prepass:2`, `primaryLightIndex:8`, `surfType:4`, `primarySortKey:6`, and `unused:4` into 64 bits; `GfxDrawSurf` exposes the same value as `fields` or `packed`.
+- `MaterialArgumentCodeConst` stores `index: unsigned __int16`, `firstRow: char`, and `rowCount: char`; `MaterialArgumentDef` selects `literalConst`, `codeConst`, `codeSampler`, or `nameHash`.
+- `MaterialShaderArgument` contains `type`, `dest`, and `u: MaterialArgumentDef`; `MaterialPass` contains vertex/pixel declaration and shader pointers, four argument-count/flag chars, and `args`.
+- `MaterialTechnique` contains `name`, `flags`, `numPasses`, and inline `pass[1]`; `MaterialTechniqueSet` contains `name`, `worldVertFormat`, `unused[2]`, `remappedTechniqueSet`, and `techniques[43]`.
+- `MaterialTextureDef` contains `typeHash`, `firstCharacter`, `secondLastCharacter`, `sampleState`, `semantic`, and `image`; `sizeof(MaterialTextureDef)==12`.
+- `MaterialConstantDef` contains `nameHash`, `name[12]`, and `literal: vec4_t`.
+- `GfxSurfaceStatebitOp0` defines blend, alpha-test, culling, color-write, and polygon-mode masks: `GFXS0_SRCBLEND_RGB_SHIFT=0x0`, `GFXS0_SRCBLEND_RGB_MASK=0xF`, `GFXS0_DSTBLEND_RGB_SHIFT=0x4`, `GFXS0_DSTBLEND_RGB_MASK=0xF0`, `GFXS0_BLENDOP_RGB_SHIFT=0x8`, `GFXS0_BLENDOP_RGB_MASK=0x700`, `GFXS0_BLEND_RGB_MASK=0x7FF`, `GFXS0_ATEST_DISABLE=0x800`, `GFXS0_ATEST_GT_0=0x1000`, `GFXS0_ATEST_LT_128=0x2000`, `GFXS0_ATEST_GE_128=0x3000`, `GFXS0_ATEST_MASK=0x3000`, `GFXS0_CULL_SHIFT=0xE`, `GFXS0_CULL_NONE=0x4000`, `GFXS0_CULL_BACK=0x8000`, `GFXS0_CULL_FRONT=0xC000`, `GFXS0_CULL_MASK=0xC000`, `GFXS0_SRCBLEND_ALPHA_SHIFT=0x10`, `GFXS0_SRCBLEND_ALPHA_MASK=0xF0000`, `GFXS0_DSTBLEND_ALPHA_SHIFT=0x14`, `GFXS0_DSTBLEND_ALPHA_MASK=0xF00000`, `GFXS0_BLENDOP_ALPHA_SHIFT=0x18`, `GFXS0_BLENDOP_ALPHA_MASK=0x7000000`, `GFXS0_BLEND_ALPHA_MASK=0x7FF0000`, `GFXS0_COLORWRITE_RGB=0x8000000`, `GFXS0_COLORWRITE_ALPHA=0x10000000`, `GFXS0_COLORWRITE_MASK=0x18000000`, `GFXS0_POLYMODE_LINE=0x80000000`.
+- `GfxSurfaceStatebitOp1` defines depth/stencil/polygon-offset masks: `GFXS1_DEPTHWRITE=0x1`, `GFXS1_DEPTHTEST_DISABLE=0x2`, `GFXS1_DEPTHTEST_SHIFT=0x2`, `GFXS1_DEPTHTEST_ALWAYS=0x0`, `GFXS1_DEPTHTEST_LESS=0x4`, `GFXS1_DEPTHTEST_EQUAL=0x8`, `GFXS1_DEPTHTEST_LESSEQUAL=0xC`, `GFXS1_DEPTHTEST_MASK=0xC`, `GFXS1_POLYGON_OFFSET_SHIFT=0x4`, `GFXS1_POLYGON_OFFSET_0=0x0`, `GFXS1_POLYGON_OFFSET_1=0x10`, `GFXS1_POLYGON_OFFSET_2=0x20`, `GFXS1_POLYGON_OFFSET_SHADOWMAP=0x30`, `GFXS1_POLYGON_OFFSET_MASK=0x30`, `GFXS1_STENCIL_FRONT_ENABLE=0x40`, `GFXS1_STENCIL_BACK_ENABLE=0x80`, `GFXS1_STENCIL_MASK=0xC0`, `GFXS1_STENCIL_FRONT_PASS_SHIFT=0x8`, `GFXS1_STENCIL_FRONT_FAIL_SHIFT=0xB`, `GFXS1_STENCIL_FRONT_ZFAIL_SHIFT=0xE`, `GFXS1_STENCIL_FRONT_FUNC_SHIFT=0x11`, `GFXS1_STENCIL_FRONT_MASK=0xFFF00`, `GFXS1_STENCIL_BACK_PASS_SHIFT=0x14`, `GFXS1_STENCIL_BACK_FAIL_SHIFT=0x17`, `GFXS1_STENCIL_BACK_ZFAIL_SHIFT=0x1A`, `GFXS1_STENCIL_BACK_FUNC_SHIFT=0x1D`, `GFXS1_STENCIL_BACK_MASK=0xFFF00000`, `GFXS1_STENCILFUNC_FRONTBACK_MASK=0xE00E0000`, and `GFXS1_STENCILOP_FRONTBACK_MASK=0x1FF1FF00`.
+- `GfxStatebitsFlags` combines `loadbit0: GfxSurfaceStatebitOp0` and `loadbit1: GfxSurfaceStatebitOp1`; `GfxStateBits` aliases these as `flags` or `loadBits[2]: int`.
+- `MaterialGameFlagsFields` bit-packs `unk1`, `addShadowToPrimaryLight`, `isFoliageRequiresGroundLighting`, `unk4`, `unk5`, `unk6`, `MTL_GAMEFLAG_CASTS_SHADOW`, and `unkNeededForSModelDisplay`; `MaterialGameFlags` exposes `fields` or `packed`.
+- `StateFlags` defines `STATE_FLAG_CULL_BACK=0x1`, `STATE_FLAG_CULL_FRONT=0x2`, `STATE_FLAG_DECAL=0x4`, `STATE_FLAG_WRITES_DEPTH=0x8`, `STATE_FLAG_USES_DEPTH_BUFFER=0x10`, `STATE_FLAG_USES_STENCIL_BUFFER=0x20`, `STATE_FLAG_CULL_BACK_SHADOW=0x40`, and `STATE_FLAG_CULL_FRONT_SHADOW=0x80`.
+- `Material` stores name, game flags, sort/atlas fields, `drawSurf: GfxDrawSurf`, `surfaceTypeBits`, hash, padding, `stateBitsEntry[35]`, texture/constant/state counts, `StateFlags`, camera region, `techniqueSet`, texture/constant/state tables; `sizeof(Material)==104`.
+
+## UI and expression model
+
+- `Glyph` is packed with `#pragma pack(push, 2)` and `#pragma warning(disable: 4121)`, storing `letter`, glyph metrics, and texture coordinates `s0/t0/s1/t1`; `Font_s` stores font name, pixel/glyph counts, `material`, `glowMaterial`, and `glyphs`.
+- `rectDef_s` stores `x`, `y`, `w`, `h`, `horzAlign`, and `vertAlign`; `windowDef_t` stores names/groups, geometry, style/border/owner flags, timing, four RGBA color arrays, and `background: Material*`; `sizeof(windowDef_t)==168`.
+- `ItemKeyHandler` forms a linked list with `key`, `action`, and `next`; `columnInfo_s` stores `pos`, `width`, `maxChars`, and `alignment`.
+- `operationEnum` encodes UI expression operators from `OP_NOOP=0x0` through `OP_STATRANGEBITSSET=0x49`, with `OP_RIGHTPAREN=0x1`, arithmetic/comparison/logical/bitwise operators, `OP_SIN=0x17`, `OP_FIRSTFUNCTIONCALL=0x17`, `OP_COS=0x18`, `OP_MIN=0x19`, `OP_MAX=0x1A`, dvar/localvar/stat/UI/game queries, conversions, and `NUM_OPERATORS=0x4A`.
+- `expDataType` defines `VAL_INT=0x0`, `VAL_FLOAT=0x1`, and `VAL_STRING=0x2`; `operandInternalDataUnion` stores `intVal`, `floatVal`, or `string`; `Operand` combines `dataType` with that union.
+- `entryInternalData` selects `op: operationEnum` or `operand: Operand`; `expressionEntry` stores `type` plus `data`; `statement_s` stores `numEntries` and `entries: expressionEntry**`.
+- `editFieldDef_s` stores value bounds/default/range and character/paint limits; `listBoxDef_s` stores four-element scroll bounds, element dimensions/style, `columnInfo[16]`, double-click action, selection flags/colors, and `selectIcon`.
+- `multiDef_s` stores 32-entry `dvarList`, `dvarStr`, and `dvarValue` arrays plus `count` and `strDef`; `itemDefData_t` selects list-box, edit-field, multi, enum-dvar, or generic `data`.
+- `itemDef_s` embeds `windowDef_t`, four `textRect` values, text/font/alignment fields, callbacks and dvar strings, `ItemKeyHandler* onKey`, focus sound, feeder/cursor data, `typeData`, image tracking, and visibility/text/material/rectangle `statement_s` expressions.
+- `menuDef_t` embeds `windowDef_t`, font/fullscreen/item/cursor/fade/blur state, lifecycle callbacks `onOpen`, `onClose`, `onESC`, keyboard handlers, visibility/rectangle expressions, binding/sound/image data, colors, and `items: itemDef_s**`; `sizeof(menuDef_t)==308`.
+- `MenuList` stores `name`, `menuCount`, and `menus: menuDef_t**`.
+
+## Assets, zones, commands, and screen state
+
+- `RawFile` stores `name`, byte `len`, and mutable `buffer`; `sizeof(RawFile)==12`.
+- `XAssetHeader` is a tagged-union payload with generic `data` plus implemented typed views `material: Material*`, `font: Font_s*`, `menuList: MenuList*`, `menu: menuDef_t*`, and `rawfile: RawFile*`; commented members document unreversed asset payloads.
+- `XAsset` pairs `type: XAssetType` with `header: XAssetHeader`; `XZoneInfo` stores `name`, `allocFlags`, and `freeFlags` with size 12; `XZone` stores `name[64]` and `flags` with size 68.
+- `XAssetEntry` combines `XAsset`, `zoneIndex`, `inuse`, `nextHash`, `nextOverride`, and `usageFrame`; `XAssetEntryPoolEntry` uses a union Strategy to represent either `entry` or intrusive `next`.
+- `CmdArgs` stores eight-level command nesting, local-client/controller indices, `argc`, and `argv`; `cmd_function_s` forms a command linked list with autocomplete metadata and `void(__cdecl* function)()`.
+- `scrMemTreePub_t` stores `mt_buffer`; `ScreenPlacement` stores virtual/real scaling and viewport bounds as nine `float[2]` arrays.
+
+## Dvars and scripting ABI
+
+- `DvarType : uint8_t` maps `DVAR_TYPE_BOOL=0x0`, `DVAR_TYPE_FLOAT=0x1`, `DVAR_TYPE_FLOAT_2=0x2`, `DVAR_TYPE_FLOAT_3=0x3`, `DVAR_TYPE_FLOAT_4=0x4`, `DVAR_TYPE_INT=0x5`, `DVAR_TYPE_ENUM=0x6`, `DVAR_TYPE_STRING=0x7`, `DVAR_TYPE_COLOR=0x8`, and `DVAR_TYPE_COUNT=0x9`.
+- `dvar_type : uint8_t` maps `boolean=0`, `value=1`, `vec2=2`, `vec3=3`, `vec4=4`, `integer=5`, `enumeration=6`, `string=7`, `color=8`, and `rgb=9`.
+- `DvarValue` selects `enabled`, `integer`, `value`, `vector[4]`, `string`, or `color[4]`; `dvar_enumeration` stores `stringCount` and `strings`; `dvar_integer`, `dvar_value`, and `dvar_vector` store min/max domains; `DvarLimits` unions these domain forms.
+- `dvar_flags : uint16_t` defines `none=0x0`, `saved=0x1`, `user_info=0x2`, `server_info=0x4`, `replicated=0x8`, `write_protected=0x10`, `latched=0x20`, `read_only=0x40`, `cheat_protected=0x80`, `temp=0x100`, `no_restart=0x400`, and `user_created=0x4000`.
+- `dvar_s` stores name/description, `dvar_flags`, explicit padding, `dvar_type`, `modified`, current/latched/reset `DvarValue`s, `DvarLimits domain`, and `next`/`hashNext`; required offsets are `type==12`, `modified==13`, `current==16`, `latched==32`, `reset==48`, and `domain==64`.
+- `scr_entref_t` aliases `int`; `function_t` is `void(__stdcall*)()`; `method_t` is `void(__stdcall*)(scr_entref_t)`; `scr_function_t` and `scr_method_t` pair names with callbacks and developer flags.
+- `VariableUnion` selects integer, float, string ID, vector pointer, code position, pointer, stack buffer, or entity offset; `VariableValue` combines `u: VariableUnion` with `type`.
+- `function_stack_t` stores script position/local-variable metadata and stack pointers; `function_frame_t` adds `topType`; `scrVmPub_t` owns local variables, max stack, function frames, parameter counts, `function_frame_start[32]`, and `stack[2048]`.
+- `VariableType` defines script sentinels and values: `VAR_UNDEFINED=0x0`, `VAR_BEGIN_REF=0x1`, `VAR_POINTER=0x1`, `VAR_STRING=0x2`, `VAR_ISTRING=0x3`, `VAR_VECTOR=0x4`, `VAR_END_REF=0x5`, `VAR_FLOAT=0x5`, `VAR_INTEGER=0x6`, `VAR_CODEPOS=0x7`, `VAR_PRECODEPOS=0x8`, `VAR_FUNCTION=0x9`, `VAR_BUILTIN_FUNCTION=0xA`, `VAR_BUILTIN_METHOD=0xB`, `VAR_STACK=0xC`, `VAR_ANIMATION=0xD`, `VAR_DEVELOPER_CODEPOS=0xE`, `VAR_INCLUDE_CODEPOS=0xF`, `VAR_THREAD_LIST=0x10`, `VAR_THREAD=0x11`, `VAR_NOTIFY_THREAD=0x12`, `VAR_TIME_THREAD=0x13`, `VAR_CHILD_THREAD=0x14`, `VAR_OBJECT=0x15`, `VAR_DEAD_ENTITY=0x16`, `VAR_ENTITY=0x17`, `VAR_ARRAY=0x18`, `VAR_DEAD_THREAD=0x19`, `VAR_COUNT=0x1A`, `VAR_FREE=0x1A`, and `VAR_ENDON_LIST=0x1B`.
+
+## Input and gameplay ABI
+
+- `keyNum_t` preserves engine key codes: gamepad ranges `K_BUTTON_A`–`K_BUTTON_Y`, shoulder/start/back/stick/trigger buttons, `K_DPAD_UP`–`K_DPAD_RIGHT`, `K_APAD_UP`–`K_APAD_RIGHT`, keyboard controls through `K_BACKSPACE`, extended ASCII `K_ASCII_FIRST`–`K_END_ASCII_CHARS`, system/function/keypad codes through `K_KP_EQUALS`, mouse/aux codes `K_MOUSE1`–`K_AUX16`, and `K_LAST_KEY=0xDF`; aliases include `K_NONE`, `K_TAB`, `K_ENTER`, `K_ESCAPE`, `K_SPACE`, `K_GRAVE`, and `K_TILDE`.
+- `KeyState` stores `down`, `repeats`, and `binding`; `PlayerKeyState` stores `overstrikeMode`, `anyKeyDown`, and `keys[256]`; `field_t` stores cursor/scroll/drawing metrics and `buffer[256]`.
+- `usercmd_buttons` defines `BUTTON_ATTACK=0x1`, `BUTTON_SPRINT=0x2`, `BUTTON_MELEE_BREATH=0x4`, `BUTTON_USE=0x8`, `BUTTON_RELOAD=0x20`, `BUTTON_PRONE=0x80`, `BUTTON_CROUCH=0x100`, `BUTTON_ADS=0x200`, and `BUTTON_HOLDBREATH=0x800`.
+- `usercmd_t` is a 44-byte per-frame command with `serverTime`, button mask, `weapon`, offhand/flags, unknown word, `angles[3]`, signed `forwardmove`/`rightmove`, `upmove`, and `unk_20[3]`; `sizeof(usercmd_t)==0x2C`, angle units use `0x8000==360°`, and movement bounds are `-127..127`.
+- `clientState_t` defines `CS_FREE=0`, `CS_ZOMBIE=1`, `CS_CONNECTED=2`, `CS_CLIENTLOADING=3`, and `CS_ACTIVE=4`; `bot_team : uint8_t` defines `unknown`, `free`, `axis`, `allies`, and `spectator`.
+- `playerState_t` is a partial offset-preserving layout with confirmed `commandTime`, `pm_type`, `pm_flags`, `origin[3]`, `gravity`, `health`, `maxHealth`, `viewHeightTarget`, `viewangles[3]`, and `serverTime_copy`; gaps are byte arrays, `groundEntityNum==1023` means `ENTITYNUM_NONE`, and total size is at least `0x34B4`.
+- `entity_t` has stride `0x290`, `ps: playerState_t*` at `+0x184`, mirrored `health` at `+0x1CC`, and `sizeof(entity_t)==0x290`; client entities occupy indices `0..sv_maxclients-1`.
+- `client_t` begins with `state: clientState_t` at `+0x00000`, `isRealPlayer` at `+0x20`, and a large unreversed remainder; runtime stride is `688916 (0xA8314)` bytes, with deep fields accessed by byte offsets `+0x20E9C` (`usercmd_t`), `+0x2128C` (`entity_t*`), and `+0x213A4` (`last_svtime`).
+
+## Coupling and maintenance constraints
+
+- `Material`, `windowDef_t`, `menuDef_t`, `XAssetHeader`, `dvar_s`, `usercmd_t`, `playerState_t`, `entity_t`, and `client_t` are binary-layout contracts, so changing field order, packing, pointer width, enum underlying types, or padding can break engine interoperability.
+- `std::uint8_t`, `std::uint16_t`, `std::int8_t`, `uint8_t`, and `uint16_t` require standard integer headers elsewhere; `__int16`, `__int64`, `__cdecl`, and `__stdcall` require the project’s MSVC-compatible ABI.
+- `XAssetHeader`, `DvarValue`, `DvarLimits`, `VariableUnion`, `itemDefData_t`, `GfxDrawSurf`, and `GfxStateBits` require tag/context discipline because the active union member is selected externally.
+- `playerState_t`, `entity_t`, and `client_t` intentionally contain unreversed regions; consumers must use documented offsets and must not infer absent members from padding.

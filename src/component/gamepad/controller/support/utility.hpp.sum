@@ -1,0 +1,12 @@
+---
+generated_at: 2026-08-31T15:22:44.744Z
+content_hash: 849c4a7398583395b02b687aaa12d292c7d6ccf937ccc44a83ff43eb36db9f6b
+purpose: utility.hpp does define non-owning callback references.
+---
+**utility.hpp does define non-owning callback references.**
+
+## API
+`gamepad::unstable::function_ref<Return(Args...)>`: `function_ref(Callable&&) noexcept`; `Return operator()(Args...) const`.
+
+## Contract
+Stores callable address plus erased callback; caller must ensure callable lifetime.

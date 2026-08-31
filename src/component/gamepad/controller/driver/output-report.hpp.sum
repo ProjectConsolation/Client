@@ -1,0 +1,20 @@
+---
+generated_at: 2026-08-31T15:22:18.516Z
+content_hash: 3f7c7552b9227de184fe13406d6c62b1de9aaeb7ba0d96825aab020b6a6290f2
+purpose: output-report.hpp encodes complete PlayStation controller output reports for USB/Bluetooth links.
+---
+**output-report.hpp encodes complete PlayStation controller output reports for USB/Bluetooth links.**
+
+## Exports
+
+- `ds4_output_usb_size`, `ds4_output_bt_size`, `ds_output_usb_size`, `ds_output_bt_size`: `size_t` report sizes `{32}`, `{78}`, `{63}`, `{78}`.
+- `encode_dualshock4_output(const output_request&, connection, span<byte> out) noexcept`: returns `optional<size_t>` byte count or `nullopt` for unsupported/ambiguous requests.
+- `encode_dualsense_output(const output_request&, connection, uint8_t& bt_sequence, span<byte> out) noexcept`: returns `optional<size_t>` and increments per-device Bluetooth sequence modulo 16.
+
+## Contracts
+
+`encode_dualshock4_output` and `encode_dualsense_output` require buffers sized for the selected report and reject unrecognized requests; framing follows Linux `hid-playstation.c`. USB uses direct reports; Bluetooth uses DS4 control-byte or DualSense sequence framing plus CRC-32 with output seed.
+
+## Dependencies
+
+`types.hpp` supplies `optional`, `span`, and `byte`; `utility.hpp`, `id.hpp`, and `output.hpp` define encoding primitives, `connection`, and `output_request`.

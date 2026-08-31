@@ -1,0 +1,26 @@
+---
+generated_at: 2026-08-31T15:23:45.250Z
+content_hash: 0fc3fd078c2967478205f26efb9db96b8910be7aece86e321be467540bb7bc88
+purpose: game.hpp maps game-engine symbols and declares runtime APIs.
+---
+**game.hpp maps game-engine symbols and declares runtime APIs.**
+
+## Interface
+
+`mp_dll: HMODULE`; `game_offset(uintptr_t): uintptr_t`.
+
+`symbol<T>` wraps an address as `T*`, exposing `get()`, conversion, and `operator->()`.
+
+`Cbuf_AddText(int,const char*)`; `CL_KeyEvent(int,int,int,unsigned int)`; `Cmd_AddCommandInternal(const char*,void(__cdecl*)(),cmd_function_s*)`.
+
+`DB_IsXAssetDefault(XAssetType,const char*): bool`; `DB_EnumXAssetEntries(XAssetType,std::function<void(XAssetEntryPoolEntry*)>,bool)`; `DB_GetXAssetName(game::XAsset*): const char*`.
+
+`ScrPlace_GetViewPlacement(): ScreenPlacement`; `R_RegisterFont(const char*): Font_s*`; `Material_RegisterHandle(const char*): Material*`.
+
+`Dvar_FindVar(const char*): dvar_s*`; `Dvar_SetString`; `Dvar_RegisterBool`; `GamerProfile_UpdateProfileFromDvars`; `Live_UpdateClan`.
+
+`Scr_GetFunctionHandle`; `RemoveRefToObject`; `Scr_ExecThread`; `Scr_LoadScript`; `Scr_GetNumParam`.
+
+## Coupling
+
+`structs.hpp` supplies engine types; `symbols.hpp` supplies symbol bindings.

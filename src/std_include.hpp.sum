@@ -1,0 +1,18 @@
+---
+generated_at: 2026-08-31T15:24:12.121Z
+content_hash: e5fca2df039823b713c520bc14b6f3bc07eccc6a4798d55820c23fea7139f19f
+purpose: std_include.hpp does shared Windows/CRT/stdlib setup for project translation units.
+---
+**std_include.hpp does shared Windows/CRT/stdlib setup for project translation units.**
+
+## Configuration
+
+`WIN32_LEAN_AND_MEAN` trims `Windows.h`; `min` and `max` macros are undefined; MSVC warnings 4005, 4091, 4100, 4244, 4389, 4702, 4800, 4996, 5054, 6001, 6011, 6031, 6255, 6258, 6386, 6387, and 26812 are disabled.
+
+## Dependencies
+
+`Windows.h`, `MsHTML.h`, `MsHtmHst.h`, `ExDisp.h`, `WinSock2.h`, `WS2tcpip.h`, GSL, STL headers, `resource.hpp`, and `version.hpp` are included; `gdiplus.lib` and `ws2_32.lib` are linked.
+
+## Interface
+
+`std_include.hpp` exports no functions, classes, types, or constants; `std::literals` is imported globally.

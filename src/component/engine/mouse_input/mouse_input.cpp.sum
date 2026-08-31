@@ -1,0 +1,40 @@
+---
+generated_at: 2026-08-31T15:23:01.391Z
+content_hash: ee52f9b69629ee42e0426308b91f2fe1c0cacaf7c5fd69047d7ce3c35d68f44b
+purpose: mouse_input.cpp installs and manages Windows/raw-mouse hooks for game mouse input, cursor hiding, and gamepad activit...
+---
+**mouse_input.cpp installs and manages Windows/raw-mouse hooks for game mouse input, cursor hiding, and gamepad activity tracking.**
+
+## Role and Integration
+
+`mouse_input::component` integrates `component_interface`, `scheduler`, `gamepad`, `game::main_window`, `game::keyCatchers`, `dvars::m_rawInput`, and `utils::hook`; `REGISTER_COMPONENT(mouse_input::component)` registers lifecycle ownership.
+
+`post_load() override` schedules a `scheduler::loop` on `scheduler::main` every `100ms` to install the game callsite hook, install the window procedure hook, and synchronize raw-input registration.
+
+`pre_destroy() override` calls `uninstall_wnd_proc()` and `restore_mouse_event_callsite()` during component teardown; `post_load()` registers the same cleanup through `scheduler::on_shutdown`.
+
+## Hook and Input Pipeline
+
+`install_hooks_if_ready()` waits until `is_window_ready()` succeeds for 10 consecutive loop ticks, snapshots 5 bytes at `game::game_offset(0x102C3934)`, then patches that callsite with `utils::hook::call(..., mouse_event_callsite_stub)`.
+
+`install_wnd_proc_if_ready()` requires `callsite_patched`, a valid `HWND`, and `dvars::m_rawInput`; it replaces `GWLP_WNDPROC` through `SetWindowLongPtrA` and stores `original_wnd_proc`.
+
+`wnd_proc_stub(HWND, UINT, WPARAM, LPARAM) -> LRESULT` resets `raw_mouse_x`/`raw_mouse_y` on inactive `WM_ACTIVATEAPP`, reports `WM_MOUSEMOVE` activity when raw input is disabled, returns `TRUE` after `SetCursor(nullptr)` for hidden cursors on `WM_SETCURSOR`, and accumulates `RIM_TYPEMOUSE` deltas from `WM_INPUT` via `GetRawInputData`.
+
+`mouse_event_body(int y, int x, int dx, int dy) -> int` stores `pending_event`, reports ordinary mouse activity unless `raw_input_registered` or key catcher bit `0x10` applies, suppresses events when `gamepad::should_hide_cursor()` is true, and otherwise forwards to the original game routine.
+
+`mouse_event_body()` substitutes `raw_mouse_x - old_x` and `raw_mouse_y - old_y` only when raw input is enabled, the window is foreground, the cursor is not captured (`*game::keyCatchers & 0x10`), and nonzero raw deltas exist; zero deltas and all fallback states call `call_original_mouse_event()` unchanged.
+
+`mouse_event_callsite_stub()` is a naked x86 `__cdecl` bridge preserving `esi`, `edi`, and `ebx`, adapting registers/stack arguments into `mouse_event_body()`.
+
+`call_original_mouse_event_stub()` is a naked x86 bridge that invokes `original_mouse_event_address = game::game_offset(0x102FD5D0)` using `original_call_state` and records `original_call_result`.
+
+## State and Lifecycle Contracts
+
+`register_raw_input()` registers mouse usage page `0x01`, usage `0x02`, with `RIDEV_INPUTSINK`; `unregister_raw_input()` removes that device using `RIDEV_REMOVE` and clears accumulated deltas.
+
+`update_raw_input_state()` follows `dvars::m_rawInput->current.enabled`, registering only after `wnd_proc_hooked` and unregistering when disabled.
+
+`restore_mouse_event_callsite()` restores the exact 5-byte `original_mouse_event_call` snapshot; `uninstall_wnd_proc()` unregisters raw input and restores `original_wnd_proc`.
+
+`mouse_event_state` carries `int x`, `y`, `dx`, and `dy`; `callsite_patched`, `wnd_proc_hooked`, `raw_input_registered`, `ready_ticks`, `raw_mouse_x`, `raw_mouse_y`, `pending_event`, `original_call_state`, and `original_call_result` are process-local hook state.

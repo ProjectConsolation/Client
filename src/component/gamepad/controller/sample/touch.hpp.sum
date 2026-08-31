@@ -1,0 +1,15 @@
+---
+generated_at: 2026-08-31T15:22:44.027Z
+content_hash: 45083a155e94e44e811567cf13b53617f96f290e150ed72d0e46946083867da5
+purpose: touch.hpp defines touchpad sample data for unstable gamepad controllers.
+---
+**touch.hpp defines touchpad sample data for unstable gamepad controllers.**
+
+## Symbols
+
+- `touch_point`: `{ bool active{false}; uint8_t id{0}; uint16_t x{0}; uint16_t y{0}; }`; `x/y` use device resolution, `id` tracks contacts, and inactive fields are stale.
+- `touchpad`: `{ static constexpr size_t max_points{2}; array<touch_point, max_points> points{}; }`; absent hardware uses an empty sample `optional`, distinct from inactive contacts.
+
+## Dependencies
+
+`types.hpp` supplies `uint8_t`, `uint16_t`, `size_t`, and `array`; `utility.hpp` supplies related utility definitions.

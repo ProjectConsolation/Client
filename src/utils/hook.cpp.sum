@@ -1,0 +1,27 @@
+---
+generated_at: 2026-08-31T15:23:58.722Z
+content_hash: bddf113da26d9baaec78a54ed3dba6f6644cb9f089c40bff41201552f1fb9f8c
+purpose: hook.cpp implements Windows x86-64 code patching, MinHook detours, IAT replacement, and AsmJit runtime assembly in `u...
+---
+**hook.cpp implements Windows x86-64 code patching, MinHook detours, IAT replacement, and AsmJit runtime assembly in `utils::hook`.**
+
+## Integration & Lifecycle
+
+`MinHook` initializes via anonymous RAII class `_` at static startup; `MH_Initialize()` failure throws `"Failed to initialize MinHook"`, while `_::~_()` calls `MH_Uninitialize()`.
+
+## Exported Symbols
+
+- `assembler::call(void* target)` and `assembler::jmp(void* target)` forward pointer targets to `asmjit::Assembler`, returning `asmjit::Error`.
+- `detour::detour(size_t place, void* target)` and `detour::detour(void* place, void* target)` create and immediately enable hooks.
+- `detour::~detour()` calls `clear()`; `detour::enable() const` and `detour::disable() const` call MinHook state transitions.
+- `detour::create(void* place, void* target)` and `detour::create(size_t place, void* target)` replace existing hooks, capture `original_`, and throw `"Unable to create hook"` on `MH_CreateHook` failure.
+- `detour::clear()` removes `place_` when non-null, then resets `place_` and `original_` to `nullptr`; `detour::get_original() const` returns `void*`.
+- `iat(nt::library module, const std::string& target_module, const std::string& process, void* stub)` patches a valid IAT entry and returns `bool`.
+- `nop(void* place, size_t length)` and `nop(size_t place, size_t length)` write `0x90` bytes after `VirtualProtect`, restore protection, and flush the instruction cache.
+- `is_relatively_far(const void* pointer, const void* data, int offset)` returns whether the signed address delta exceeds `int32_t`.
+- `call(...)` emits opcode `0xE8`; `jump(...)` emits opcode `0xE9`; both support pointer/`size_t` overloads and throw `"Too far away to create 32bit relative branch"`.
+- `assemble(const std::function<void(assembler&)>& asm_function)` builds code with static `asmjit::JitRuntime` and returns allocated executable `void*`.
+
+## Behavioral Constraints
+
+`call` and `jump` encode 5-byte 32-bit relative branches; `iat` and `nop` depend on Windows `VirtualProtect`, `FlushInstructionCache`, `GetCurrentProcess`, and writable executable memory.

@@ -1,0 +1,36 @@
+---
+generated_at: 2026-08-31T15:23:15.848Z
+content_hash: 540dadf8b493c6f72596659858e82ae2b555e8df9d5c04b46d17d2d027721522
+purpose: sounds.cpp overrides streamed music files with mod-provided assets and patches Miles Sound System stream handling.
+---
+**sounds.cpp overrides streamed music files with mod-provided assets and patches Miles Sound System stream handling.**
+
+## Public Interface
+
+- `sounds::component` is a `component_interface` implementation exposing `post_load()` and `pre_destroy()`.
+- `sounds::component::post_load() -> void` detours `_AIL_set_stream_loop_block@12`, then redirects `music_stream_callsite_1`, `music_stream_callsite_2`, `music_stream_callsite_3`, `ail_open_stream_callsite_1`, and `ail_open_stream_callsite_2`.
+- `sounds::component::pre_destroy() -> void` clears `ail_set_stream_loop_block_hook`.
+- `REGISTER_COMPONENT(sounds::component)` is commented out, so automatic component registration is disabled in the shown source.
+
+## Override Resolution
+
+- `find_music_override(const char*** request) -> std::string` checks alias and streamed-file metadata, generates ordered candidates, and returns the first path accepted by `filesystem::find_file`.
+- `sanitize_name(std::string value) -> std::string` replaces `\ / : * ? " < > |` with `_` before alias-derived lookup.
+- Alias candidates use exact formats `sounds/music/{}.mp3` and `sounds/music/{}.wav`.
+- File metadata candidates use exact formats `sounds/music/{}`, `sounds/music/{}.mp3`, and `sounds/music/{}.wav`.
+- `try_get_alias_name(const char*** request) -> const char*` reads `(*request)[0]`; `try_get_file_info(const char*** request) -> const streamed_sound_file_view*` reads `(*request)[4]`.
+- `streamed_sound_file_view` stores `const char* directory` and `const char* name`; guarded readers use MSVC `__try/__except (EXCEPTION_EXECUTE_HANDLER)` to tolerate invalid engine pointers.
+- `add_candidate(std::vector<std::string>& candidates, const std::string& value) -> void` rejects empty and duplicate paths.
+
+## Hook Behavior
+
+- `open_music_stream_stub(const char*** request, int index) -> int` resolves `current_override_path`, optionally calls `show_override_notice`, invokes `streamed_sound_open_function` at `game::game_offset(...)`, then clears thread-local state via `gsl::finally`.
+- `ail_open_stream_stub(int driver, const char* filename, int flags) -> int` resolves `_AIL_open_stream@12` from `mss32.dll`, substitutes `current_override_path`, and returns `0` when the export is unavailable.
+- `ail_set_stream_loop_block_stub(int stream, int loop_start, int loop_end) -> void` suppresses loop-block updates for overrides; otherwise forwards through `ail_set_stream_loop_block_hook`.
+- `current_override_path` is `thread_local`; `override_notice_mutex` and `last_notified_override` deduplicate debug notices across threads.
+- `show_override_notice(const char* alias_name, const std::string& override_path) -> void` is compiled out unless `DEBUG`; debug output uses `sounds: overriding %s with %s\n`.
+
+## Integration Contracts
+
+- `music_stream_callsite_1 = 0x103FFDC0`, `music_stream_callsite_2 = 0x103FFE5B`, `music_stream_callsite_3 = 0x104012BF`, `streamed_sound_open_function = 0x102C6F20`, `ail_open_stream_callsite_1 = 0x102C7082`, and `ail_open_stream_callsite_2 = 0x102C7122` are game-version-specific addresses.
+- `utils::hook`, `utils::nt::library`, `game::game_offset`, `game::Com_Printf`, and `component::filesystem` couple the implementation to the loader, Windows DLL exports, engine offsets, and virtual filesystem.

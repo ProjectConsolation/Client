@@ -1,0 +1,23 @@
+---
+generated_at: 2026-08-31T15:21:49.407Z
+content_hash: c16dae39a7d4ae33eeb6df242ba8d6600df04e1e487bccc60eaced5e757cc4e0
+purpose: registry.cpp maintains a thread-safe controller-device registry.
+---
+**registry.cpp maintains a thread-safe controller-device registry.**
+
+## Interface
+
+- `registry::registry(const context& ctx)` stores `ctx_`.
+- `device_id registry::add(device_identity identity, controller::transport_kind t, connection link, capabilities caps, transport_binding binding)` inserts or refreshes a device and returns its `device_id`.
+- `bool registry::remove(device_id id)` erases a matching device and reports whether removal succeeded.
+- `optional<device_connection> registry::find(device_id id) const` returns a copied device or `nullopt`.
+- `void registry::for_each(function_ref<void (const device_connection&)> fn) const` invokes `fn` for each registered device.
+- `size_t registry::size() const` returns the device count.
+
+## Behavior and Integration
+
+`add` uses `same_binding` to refresh existing `device_connection` facts in place; new entries use monotonically increasing `next_` IDs, move `binding`, increment `generation_`, and report `device connected: <family> over <transport>/<link>` through `ctx_.report`.
+
+`remove` uses `std::find_if`, increments `generation_`, captures `identity.family`, and reports `device disconnected: <family>` through `ctx_.report`.
+
+`mutex_` guards `devices_`, `find`, `for_each`, and `size`; `add` and `remove` release the lock before `context::report`, while `for_each` executes callbacks under the lock. `generation_` tracks insertion/removal mutations only; refreshes do not increment it.

@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:24:17.784Z
+content_hash: 5ca65eb2b919f054ea9d1766cb6721b62b8af0946685e4fd1a14c0aa03172d24
+purpose: generate-nightly.bat delegates to generate.bat.
+---
+**generate-nightly.bat delegates to generate.bat.**
+
+## Interface
+
+No exported symbols.
+
+## Behavior
+
+`generate-nightly.bat` calls `%~dp0generate.bat` with `%*`; `@echo off` suppresses command output.

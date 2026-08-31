@@ -1,0 +1,87 @@
+---
+generated_at: 2026-08-31T15:23:40.075Z
+content_hash: 873539c7647c2402d4e38b9833654e72691938966a2c7e453c1316e612fa03f6
+purpose: patches.cpp does runtime engine patching, dvar customization, branding, offline-mode support, gameplay fixes, and sec...
+---
+**patches.cpp does runtime engine patching, dvar customization, branding, offline-mode support, gameplay fixes, and security guards for Project: Consolation.**
+
+## Public symbols
+
+- `patches::enforce_ads_sprint_interrupt(game::usercmd_t* cmd) -> void` clears `game::BUTTON_SPRINT` whenever `cmd->buttons` contains `game::BUTTON_ADS`; null `cmd` returns immediately.
+- `patches::component final : component_interface` registers the patch component through `REGISTER_COMPONENT(patches::component)` and implements `post_load()`.
+- `patches::component::post_load() -> void` installs all hooks, dvar overrides, startup replacements, security self-tests, and periodic dvar flag repairs.
+
+## Version and branding
+
+- `build_shortversion_string() -> std::string` starts with `VERSION_PRODUCT`, appends `-dbg` under `DEBUG`, appends `-nightly` for non-`DEBUG`/non-`NDEBUG` builds, and leaves release builds unchanged.
+- `build_build_label() -> std::string` truncates `GIT_HASH` to seven characters and appends `-dirty` when `GIT_DIRTY` is true.
+- `build_timestamp_label() -> std::string` returns the exact compile-time format `__DATE__ + " " + __TIME__`.
+- `build_game_date_string() -> std::string` returns `__DATE__`.
+- `build_version_string() -> std::string` returns the exact format `Project: Consolation <shortversion> build <build-label> <timestamp> win-x86`.
+- `VERSION_BUILD` defaults to the string `"0"` when undefined, although this file does not otherwise consume it.
+- `create_window_ex_stub(...) -> HWND` intercepts `CreateWindowExA`; `"JB_MP"` windows receive the title `"Project: Consolation - Multiplayer"`.
+- `create_window_ex_stub(...)` reads `r_fullscreen`, `r_borderless`, `vid_xpos`, and `vid_ypos`; window position changes apply only when `r_fullscreen` is disabled.
+- `create_window_ex_stub(...)` converts non-fullscreen borderless windows to `WS_POPUP`, removes caption/frame/system styles, removes dialog/client/edge extended styles, and adds `WS_EX_APPWINDOW`.
+
+## Offline mode
+
+- `local_offline_mode_requested() -> bool` recognizes flags `"offline"`, `"local_offline"`, and `"local-offline"` through `utils::flags::has_flag`.
+- `apply_local_offline_mode_patches() -> void` redirects `game::game_offset(0x10240B30)` and `game::game_offset(0x10240A30)` to `ret_one`, then NOPs five bytes at `game::game_offset(0x102489A1)`.
+- `ret_one(DWORD*, int) -> int` always returns `1` for bypassed XLive playlist/stat checks.
+- `apply_local_offline_mode_patches()` suppresses the XSessionCreate zero-session failure branch associated with `XBOXLIVE_NETCONNECTION` and logs `"local offline mode: online storage/session checks bypassed\n"`.
+- `post_load()` registers read-only `cl_offlineMode` with the detected flag state and applies offline patches when `local_offline_mode_requested()` is true.
+- `XLIVELESS` conditionally applies `apply_local_offline_mode_patches()` whenever `offline_mode` is false, so enabling `XLIVELESS` broadens bypass activation.
+
+## Security guards and self-tests
+
+- `k_huffman_max_decoded_bytes` and `k_huffman_max_compressed_bytes` equal `0x20000` bytes; `k_ui_replace_directive_max_len` equals `0x100`; `k_party_member_join_max_message_bytes` equals `0x4000`.
+- `bounded_length(const char* value, std::size_t max_len) -> std::size_t` performs null-safe bounded NUL scanning and returns at most `max_len`.
+- `CL_ParseServerMessage_huffman_guard(int a1, std::uint32_t* a2) -> unsigned int` delegates null `a2` to the original detoured function, rejects `a2[5] < a2[7]`, and rejects compressed lengths above `k_huffman_max_compressed_bytes`.
+- `CL_ParseServerMessage_huffman_guard(...)` reports underflow through `game::Com_Error(".\\cl_parse_mp.cpp", 1243, 1, "Huffman compressed msg cursor underflow detected\n")`.
+- `CL_ParseServerMessage_huffman_guard(...)` reports oversized Huffman data through `"Huffman compressed msg exceeded safe decode limit (%u > %u)\n"` and returns `0` after either rejection.
+- `UI_ReplaceDirective_guard(int ArgList, char* a2, int a3, unsigned __int8 a4) -> char*` bounds-checks both `ArgList` reinterpreted as `const char*` and `a2` with `bounded_length(..., k_ui_replace_directive_max_len + 1)`.
+- `UI_ReplaceDirective_guard(...)` rejects inputs exceeding `0x100` bytes, logs `"UI_ReplaceDirective: rejected oversized directive input\n"`, returns `a2`, and otherwise invokes the original detour.
+- `PartyAtomicHost_HandleMemberJoin_guard(char a1, std::uint32_t* a2, int a3, __int64 a4, int a5, std::uint32_t* a6) -> int` delegates null `a2` or `a6`, rejects `a6[5] < a6[7]`, and rejects unread messages above `0x4000` bytes.
+- `PartyAtomicHost_HandleMemberJoin_guard(...)` logs malformed cursor input as `"PartyAtomicHost_HandleMemberJoin: rejected malformed message cursor\n"` and oversized input as `"PartyAtomicHost_HandleMemberJoin: rejected oversized message (%zu bytes)\n"`.
+- `PartyAtomicHost_HandleMemberJoin_self_test() -> bool` constructs a cursor with `packet_cursor[5] = 0` and `packet_cursor[7] = 1`, verifies the guard returns `0`, and logs pass/fail.
+- `UI_ReplaceDirective_self_test() -> bool` uses a `0x110`-byte non-NUL oversized input, `0xDEADBEEF`/`0xCAFEBABE` canaries, and a `0x110`-byte output to verify rejection, return-pointer preservation, canary integrity, and NUL termination.
+- `register_security_guard_self_test() -> void` registers the `securityGuardSelfTest` console command, runs both self-tests, and prints `"securityGuardSelfTest: party=%s ui=%s\n"`.
+
+## Dvar handling
+
+- `dvar_enabled(const char* name) -> bool` converts boolean, integer, float, string, and enumeration dvars into enabled state; strings treat empty, `"0"`, case-insensitive `"false"`, and case-insensitive `"off"` as disabled.
+- `dvar_int_value(const char* name, int fallback = 0) -> int` converts boolean, integer, float, string, and enumeration dvars to integers, returning `fallback` when absent or when a string value is null.
+- `make_dvar_saved_and_writable(const char* name) -> void` clears `read_only`, `write_protected`, and `latched`, then sets `saved`.
+- `make_dvar_debug_writable(const char* name) -> void` additionally clears `cheat_protected` before setting `saved`.
+- `find_dvar(std::unordered_map<std::string, T>& map, const std::string& name) -> T*` implements map lookup for dvar override tables.
+- `find_dvar(std::unordered_set<std::string>& set, const std::string& name) -> bool` implements membership lookup for dvar name sets.
+- `Dvar_RegisterNew_Stub(const char* dvarName, game::DvarType type, unsigned short flags, char* desc, int unk, game::DvarValue value, game::DvarLimits domain) -> game::dvar_s*` intercepts registration and applies typed overrides from `dvars::overrides::register_bool_overrides`, `register_int_overrides`, `register_float_overrides`, and `register_string_overrides`.
+- `Dvar_RegisterNew_Stub(...)` special-cases `DVAR_TYPE_FLOAT_2`/`"cg_debugInfoCornerOffset"` to zero both vector components and makes `DVAR_TYPE_ENUM`/`"cg_drawFPS"` saved and writable.
+- `BG_GetPlayerJumpHeight_stub(int a1) -> float` returns `jump_height->current.value` when available and otherwise invokes `BG_GetPlayerJumpHeight_hook`.
+- `BG_GetPlayerSpeed_stub(int a1) -> int` returns `g_speed->current.integer` when available and otherwise invokes `BG_GetPlayerSpeed_hook`.
+- `r_lodScale_stub(float value) -> void` suppresses renderer reapplication when `r_lodScale->modified` is true and otherwise invokes `r_lodScale_hook`.
+- `post_load()` forces `sv_cheats`, `vid_xpos`, and `vid_ypos` to saved/writable state during startup and every `250ms`; `DEBUG` builds additionally repair `r_fullbright` through `make_dvar_debug_writable`.
+
+## Movement patches
+
+- `Jump_GetLandFactor(DWORD* ps) -> float` returns `1.0` when `jump_slowdownEnable` is disabled, otherwise scales landing slowdown from `ps + 24` below `1700` and caps the factor at `2.5`.
+- `Jump_Start_stub(int unused, int unused2, DWORD* pml_t) -> int` reads the engine `pmove_t` through inline x86 assembly, computes jump velocity from `jump_height` and gravity, applies `Jump_GetLandFactor`, resets movement timing/origin state, sets `groundEntityNum` to `1023`, and accumulates `jump_spreadAdd` into player state.
+- `Jump_Start_stub(...)` clamps the spread accumulator at `255.0`, writes jump velocity using `sqrt(calculatedGravity)`, sets the movement flag `0x4000`, and returns the current `jump_spreadAdd` value.
+- `Jump_Start_stub(...)` assumes valid engine pointers and dvars after hook installation; unlike the security guards, it does not null-check `jump_height`, `jump_slowdownEnable`, or `jump_spreadAdd`.
+
+## Installed patches and lifecycle
+
+- `post_load()` uses `utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub)` to intercept window creation.
+- `post_load()` NOPs five-byte calls at `0x1000230F` and `0x102E1284` to suppress Scaleform and unknown UI-script `Com_Printf` diagnostics.
+- `post_load()` NOPs five-byte instructions at `0x103F9E53`, `0x1027D3C4`, and `0x103BE16D` to preserve the registered version dvar, avoid an intentional debugger break, and prevent forced `r_fullscreen = 1`.
+- `post_load()` creates detours at `0x101E6900` (`BG_GetPlayerJumpHeight_hook`), `0x101E6930` (`BG_GetPlayerSpeed_hook`), `0x10279010` (`r_lodScale_hook`), and `0x101DB390` (`Jump_Start_hook`).
+- `post_load()` registers `sv_cheats = 1`, `version`, `shortversion`, `gamename = "Project: Consolation"`, and `gamedate` through `dvars::overrides`.
+- `post_load()` installs `dvar_registernew_hook` on `game::Dvar_RegisterNew`, then schedules startup work on `scheduler::main` using `scheduler::once`.
+- `scheduler::once` replaces engine dvars at fixed call sites with `dvars::make_float`, `dvars::make_int`, and `dvars::make_bool`: `r_lodScale`, `cg_fovScale`, `cg_fov`, `input_viewSensitivity`, `jump_height`, `developer`, `com_maxfps`, and `r_fullscreen`.
+- `r_lodScale` defaults to `0.0f` with domain `[0.0f, 3.0f]`; `cg_fovScale` defaults to `1.0f` with `[0.0f, 2.0f]`; `cg_fov` defaults to `65.0f` with `[0.0f, 160.0f]`.
+- `input_viewSensitivity` defaults to `1.0f` with `[0.01f, 30.0f]`; `jump_height` defaults to `41.0f` with `[0.0f, 1000.0f]`; `developer` defaults to `0` with `[0, 2]`; `com_maxfps` defaults to `85` with `[0, 1000]`.
+- `r_fullscreen` defaults to `true` and uses `saved | latched`; all replacement dvars except `developer` use `saved`.
+- `DEBUG` startup logic NOPs `0x101AB211` and `0x10245A2A`, registers `sv_cheats` through `dvars::Dvar_RegisterBool`, updates pointers at `0x11A343C0` and `0x1149FCD8`, and makes `r_fullbright` debug-writable.
+- `post_load()` creates `cl_parse_server_message_huffman_hook` at `0x1030D960`, `ui_replace_directive_hook` at `0x102BB870`, and `party_atomic_host_handle_member_join_hook` at `0x103087B0`.
+- `post_load()` registers `securityGuardSelfTest` after installing the three security detours, so the command must run only after component initialization.
+- `game::game_offset(...)` encodes build-specific x86 engine addresses; changing target game versions requires revalidating every hard-coded offset and calling convention.

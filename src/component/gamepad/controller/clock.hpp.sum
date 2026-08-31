@@ -1,0 +1,19 @@
+---
+generated_at: 2026-08-31T15:23:11.145Z
+content_hash: f04ee0520a3910ff9fc57955f6e5d04fc08560e048e79b8bf515792e032fb845
+purpose: clock.hpp defines the monotonic timing primitives for the gamepad controller subsystem.
+---
+**clock.hpp defines the monotonic timing primitives for the gamepad controller subsystem.**
+
+## Exports
+
+- `clock` aliases `chrono::steady_clock` as `base`, with `base::time_point` (`time_point`) and `base::duration` (`duration`); `static_assert(base::is_steady, "...")` enforces monotonicity.
+- `clock::now() noexcept -> time_point` returns `base::now()`.
+- `clock::since_epoch() noexcept -> duration` returns process-relative elapsed time from a first-use-fixed epoch.
+- `timestamp` aliases `clock::time_point`.
+- `seconds` aliases `chrono::duration<float>`; `milliseconds` aliases `chrono::duration<float, std::milli>`.
+- `latency_span` stores `timestamp acquired{}` and `timestamp consumed{}`; `latency_span::latency() const noexcept -> clock::duration` computes `consumed - acquired`.
+
+## Contracts
+
+`clock`, `timestamp`, and `latency_span` form one comparable time source for acquisition, publication, and consumption; `latency_span::latency()` assumes `consumed >= acquired` and performs no validation. `types.hpp` and `utility.hpp` supply required controller support and chrono dependencies.

@@ -1,0 +1,32 @@
+---
+generated_at: 2026-08-31T15:21:55.216Z
+content_hash: 9d6a35212bdbe68faeaa64a09180685b651e007be6eb2afb3069f61285352369
+purpose: `id.hpp` defines compact, strongly typed identifiers and classifications for gamepad controller discovery, transport,...
+---
+**`id.hpp` defines compact, strongly typed identifiers and classifications for gamepad controller discovery, transport, report framing, and XInput slots.**
+
+## Namespace and Dependencies
+
+`gamepad::unstable::controller` imports `uint8_t`, `uint32_t`, `optional`, `nullopt`, `ostream`, and comparison support from `support/types.hpp` and `support/utility.hpp`.
+
+## Exported Symbols
+
+- `class device_id` wraps a monotonically assigned `uint32_t`; `device_id()` yields value `0`, `explicit device_id(uint32_t) noexcept` constructs raw values, `uint32_t value() const noexcept` reads them, `explicit operator bool() const noexcept` tests nonzero validity, and defaulted `operator==`/`operator<=>` provide equality and strong ordering.
+- `inline constexpr device_id no_device{}` is the null-device sentinel; `0` means no device and assigned handles are never reused within a process.
+- `ostream& operator<<(ostream&, device_id)` serializes `device_id`.
+- `enum class transport_kind : uint8_t` enumerates `unknown`, `xinput`, `raw_input`, and `hid`; `xinput` exposes capabilities only, `raw_input` means Windows `WM_INPUT` HID delivery, and `hid` means direct `HidD_*/ReadFile/WriteFile` access.
+- `const char* to_string(transport_kind) noexcept` converts `transport_kind` to text; `ostream& operator<<(ostream&, transport_kind)` streams it.
+- `enum class connection : uint8_t` enumerates `unknown`, `usb`, `bluetooth`, and `virtualized`; values describe report framing, not necessarily the physical attachment bus.
+- `const char* to_string(connection) noexcept` converts `connection` to text; `ostream& operator<<(ostream&, connection)` streams it.
+- `class user_index` represents a validated XInput slot; `static constexpr uint8_t count{4}`, `explicit user_index(uint8_t) noexcept`, `static constexpr optional<user_index> try_from(int) noexcept`, `uint8_t value() const noexcept`, and defaulted equality/strong ordering define its API.
+- `class report_id` wraps a numbered HID report byte; `report_id()` defaults to `0`, `explicit report_id(uint8_t) noexcept`, `uint8_t value() const noexcept`, and defaulted equality/strong ordering define its API.
+
+## Behavioral Contracts
+
+`user_index::try_from(int)` returns `nullopt` for `v < 0 || v >= count`; valid slots are `[0, 4)`. `report_id` permits `0`, which denotes an unnumbered but meaningful HID report. Drivers must resolve `connection` framing before decoding or emitting reports.
+
+`static_assert(sizeof(report_id) == 1)`, `static_assert(static_cast<uint8_t>(transport_kind::hid) < 4)`, and `static_assert(static_cast<uint8_t>(connection::virtualized) < 4)` pin wire-facing representation assumptions.
+
+## Maintenance Note
+
+`connection` has a TODO to be renamed `framing`, because `usb`/`bluetooth` identify report layouts rather than reliably identifying the physical bus.

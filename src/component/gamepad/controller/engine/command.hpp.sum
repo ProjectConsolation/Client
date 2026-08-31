@@ -1,0 +1,14 @@
+---
+generated_at: 2026-08-31T15:21:51.753Z
+content_hash: 9b7e4fb3d3a51bc9b048bab68081dcf6513661e856031259496dee529aa7a668
+purpose: command.hpp does declare controller console-command registration.
+---
+**command.hpp does declare controller console-command registration.**
+
+## Interface
+
+`register_commands(const context&, runtime&) -> void` registers fixed-order console commands.
+
+## ABI
+
+`runtime` reaches handlers through a documented file-scope process-lifetime pointer; engine command storage is process-lifetime. Depends on `context`, `types.hpp`, `utility.hpp`.
