@@ -4,6 +4,7 @@
 #include "command.hpp"
 #include "console.hpp"
 #include "component/utils/scheduler.hpp"
+#include "component/engine/scripting/gametypes.hpp"
 
 #include <utils/memory.hpp>
 #include <utils/string.hpp>
@@ -31,6 +32,314 @@ namespace command
 		int next_bot_number = 1;
 		std::vector<std::string> bot_names;
 
+		bool parse_integer(const char* value, std::uintptr_t* result)
+		{
+			if (!value || value[0] == '\0' || !result)
+			{
+				return false;
+			}
+
+			auto base = 10;
+			auto text = value;
+			if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+			{
+				base = 16;
+			}
+			else
+			{
+				for (auto* ch = text; *ch; ++ch)
+				{
+					if ((*ch >= 'a' && *ch <= 'f') || (*ch >= 'A' && *ch <= 'F'))
+					{
+						base = 16;
+						break;
+					}
+				}
+			}
+
+			char* end = nullptr;
+			const auto parsed = std::strtoull(text, &end, base);
+			if (!end || *end != '\0')
+			{
+				return false;
+			}
+
+			*result = static_cast<std::uintptr_t>(parsed);
+			return true;
+		}
+
+		std::uintptr_t resolve_address(std::uintptr_t parsed)
+		{
+			if (parsed >= 0x10000000 && parsed < 0x20000000)
+			{
+				return game::game_offset(parsed);
+			}
+
+			return parsed;
+		}
+
+		void append_format(std::string& output, const char* format, ...)
+		{
+			char buffer[256]{};
+			va_list ap;
+			va_start(ap, format);
+			vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, format, ap);
+			va_end(ap);
+			output.append(buffer);
+		}
+
+		std::string get_exe_directory()
+		{
+			char path[MAX_PATH]{};
+			const auto length = GetModuleFileNameA(nullptr, path, sizeof(path));
+			if (length == 0 || length >= sizeof(path))
+			{
+				return {};
+			}
+
+			std::string result = path;
+			const auto separator = result.find_last_of("/\\");
+			if (separator == std::string::npos)
+			{
+				return {};
+			}
+
+			result.resize(separator);
+			return result;
+		}
+
+		std::string resolve_game_path(const std::string& path)
+		{
+			if (path.size() > 2 && path[1] == ':')
+			{
+				return path;
+			}
+
+			const auto base = get_exe_directory();
+			if (base.empty())
+			{
+				return path;
+			}
+
+			return base + "\\" + path;
+		}
+
+		bool create_directory_tree(const std::string& path, DWORD* error)
+		{
+			if (path.empty())
+			{
+				return true;
+			}
+
+			auto create_one = [error](const std::string& directory)
+			{
+				if (directory.empty() || (directory.size() == 2 && directory[1] == ':'))
+				{
+					return true;
+				}
+
+				if (CreateDirectoryA(directory.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS)
+				{
+					return true;
+				}
+
+				if (error)
+				{
+					*error = GetLastError();
+				}
+
+				return false;
+			};
+
+			for (std::size_t i = 0; i < path.size(); ++i)
+			{
+				if (path[i] != '/' && path[i] != '\\')
+				{
+					continue;
+				}
+
+				if (!create_one(path.substr(0, i)))
+				{
+					return false;
+				}
+			}
+
+			return create_one(path);
+		}
+
+		bool write_file_noexcept(const std::string& path, const std::string& data, DWORD* error)
+		{
+			const auto resolved_path = resolve_game_path(path);
+			const auto separator = resolved_path.find_last_of("/\\");
+			if (separator != std::string::npos && !create_directory_tree(resolved_path.substr(0, separator), error))
+			{
+				return false;
+			}
+
+			const auto file = CreateFileA(resolved_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+			if (file == INVALID_HANDLE_VALUE)
+			{
+				if (error)
+				{
+					*error = GetLastError();
+				}
+
+				return false;
+			}
+
+			DWORD written = 0;
+			const auto size = static_cast<DWORD>(std::min<std::size_t>(data.size(), MAXDWORD));
+			const auto ok = WriteFile(file, data.data(), size, &written, nullptr) && written == size;
+			if (!ok && error)
+			{
+				*error = GetLastError();
+			}
+
+			CloseHandle(file);
+			return ok;
+		}
+
+		bool is_readable_memory(const void* address, const std::size_t length)
+		{
+			if (!address || length == 0)
+			{
+				return false;
+			}
+
+			MEMORY_BASIC_INFORMATION info{};
+			if (!VirtualQuery(address, &info, sizeof(info)))
+			{
+				return false;
+			}
+
+			const auto protection = info.Protect & 0xFF;
+			const auto readable = protection == PAGE_READONLY
+				|| protection == PAGE_READWRITE
+				|| protection == PAGE_WRITECOPY
+				|| protection == PAGE_EXECUTE_READ
+				|| protection == PAGE_EXECUTE_READWRITE
+				|| protection == PAGE_EXECUTE_WRITECOPY;
+
+			const auto start = reinterpret_cast<std::uintptr_t>(address);
+			const auto region_start = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
+			const auto region_end = region_start + info.RegionSize;
+			return info.State == MEM_COMMIT && readable && start + length <= region_end;
+		}
+
+		bool safe_read_byte(const std::uintptr_t address, unsigned char* value)
+		{
+			if (!value)
+			{
+				return false;
+			}
+
+			SIZE_T bytes_read = 0;
+			return ReadProcessMemory(
+				GetCurrentProcess(),
+				reinterpret_cast<const void*>(address),
+				value,
+				sizeof(*value),
+				&bytes_read) && bytes_read == sizeof(*value);
+		}
+
+		void dump_memory(const char* address_text, const char* length_text, const char* output_name)
+		{
+			if (!address_text || address_text[0] == '\0')
+			{
+				console::info("dumpMemory <address> [length] [output]: dump readable memory to consolation/memory_dump\n");
+				console::info("dumpMemory accepts IDA addresses like 0x113D1684 or runtime pointers\n");
+				return;
+			}
+
+			std::uintptr_t address = 0;
+			std::size_t length = 0x100;
+			std::uintptr_t parsed = 0;
+			if (!parse_integer(address_text, &parsed))
+			{
+				console::error("dumpMemory: invalid address\n");
+				return;
+			}
+
+			address = resolve_address(parsed);
+			if (length_text && length_text[0] != '\0')
+			{
+				std::uintptr_t parsed_length = 0;
+				if (!parse_integer(length_text, &parsed_length))
+				{
+					console::error("dumpMemory: invalid length\n");
+					return;
+				}
+
+				length = static_cast<std::size_t>(parsed_length);
+			}
+
+			length = std::clamp<std::size_t>(length, 1, 0x4000);
+			if (!is_readable_memory(reinterpret_cast<const void*>(address), 1))
+			{
+				console::error("dumpMemory: address %p is not readable\n", reinterpret_cast<void*>(address));
+				return;
+			}
+
+			std::string output{};
+			output.reserve((length / 16 + 1) * 80);
+			for (std::size_t offset = 0; offset < length; offset += 16)
+			{
+				append_format(output, "%08X  ", static_cast<unsigned int>(address + offset));
+				char ascii[17]{};
+				for (std::size_t column = 0; column < 16; ++column)
+				{
+					if (offset + column < length)
+					{
+						unsigned char byte = 0;
+						if (safe_read_byte(address + offset + column, &byte))
+						{
+							append_format(output, "%02X ", byte);
+							ascii[column] = byte >= 32 && byte < 127 ? static_cast<char>(byte) : '.';
+						}
+						else
+						{
+							output.append("?? ");
+							ascii[column] = '?';
+						}
+					}
+					else
+					{
+						output.append("   ");
+					}
+				}
+
+				output.append(" ");
+				for (std::size_t column = 0; column < 16 && offset + column < length; ++column)
+				{
+					output.push_back(ascii[column]);
+				}
+
+				output.append("\r\n");
+			}
+
+			std::string output_path = "consolation/memory_dump/";
+			if (output_name && output_name[0] != '\0')
+			{
+				output_path.append(output_name);
+			}
+			else
+			{
+				char filename[32]{};
+				sprintf_s(filename, "%08X.txt", static_cast<unsigned int>(address));
+				output_path.append(filename);
+			}
+
+			DWORD error = ERROR_SUCCESS;
+			if (write_file_noexcept(output_path, output, &error))
+			{
+				console::info("dumpMemory: wrote %s\n", output_path.c_str());
+			}
+			else
+			{
+				console::error("dumpMemory: failed to write %s (GetLastError=%lu)\n", output_path.c_str(), error);
+			}
+		}
+
 		std::string normalize_rawfile_path(std::string path)
 		{
 			for (auto& ch : path)
@@ -42,6 +351,48 @@ namespace command
 			}
 
 			return path;
+		}
+
+		std::string get_file_name(std::string path)
+		{
+			path = normalize_rawfile_path(std::move(path));
+			const auto separator = path.find_last_of('/');
+			if (separator == std::string::npos)
+			{
+				return path;
+			}
+
+			return path.substr(separator + 1);
+		}
+
+		std::string make_dump_safe_path(std::string path)
+		{
+			path = normalize_rawfile_path(std::move(path));
+			while (!path.empty() && path.front() == '/')
+			{
+				path.erase(path.begin());
+			}
+
+			return path;
+		}
+
+		bool is_scaleform_asset_candidate(const char* asset_name)
+		{
+			if (!asset_name || asset_name[0] == '\0')
+			{
+				return false;
+			}
+
+			auto name = utils::string::to_lower(normalize_rawfile_path(asset_name));
+			return name.find(".gfx") != std::string::npos
+				|| name.find(".swf") != std::string::npos
+				|| name.find("scaleform") != std::string::npos
+				|| name.find("mpsysmodeselect") != std::string::npos
+				|| name.find("mpxbplaylistselect") != std::string::npos
+				|| name.find("cmsharedplatform") != std::string::npos
+				|| name.find("gfxfontlib") != std::string::npos
+				|| name.find("pcsharedlibrary") != std::string::npos
+				|| name.find("cmsharedlibrary") != std::string::npos;
 		}
 
 		std::string get_rawfile_buffer(const game::RawFile* rawfile)
@@ -60,6 +411,16 @@ namespace command
 			}
 
 			return rawfile->buffer;
+		}
+
+		std::string get_rawfile_binary_buffer(const game::RawFile* rawfile)
+		{
+			if (!rawfile || !rawfile->buffer || rawfile->len == 0)
+			{
+				return {};
+			}
+
+			return { rawfile->buffer, rawfile->buffer + rawfile->len };
 		}
 
 		void dump_rawfile(const char* rawfile_name, const char* output_name = nullptr)
@@ -99,6 +460,147 @@ namespace command
 			{
 				console::error("dumpRawFile: failed to write %s\n", output_path.c_str());
 			}
+		}
+
+		bool dump_rawfile_binary(const game::RawFile* rawfile, const char* output_prefix)
+		{
+			if (!rawfile || !rawfile->name)
+			{
+				return false;
+			}
+
+			const auto data = get_rawfile_binary_buffer(rawfile);
+			if (data.empty())
+			{
+				console::warn("dumpSwf: rawfile '%s' was empty or unavailable\n", rawfile->name);
+				return false;
+			}
+
+			std::string output_path = output_prefix;
+			output_path.append(make_dump_safe_path(rawfile->name));
+
+			DWORD error = ERROR_SUCCESS;
+			if (write_file_noexcept(output_path, data, &error))
+			{
+				console::info("dumpSwf: dumped %s to %s\n", rawfile->name, output_path.c_str());
+				return true;
+			}
+
+			console::error("dumpSwf: failed to write %s (GetLastError=%lu)\n", output_path.c_str(), error);
+			return false;
+		}
+
+		int dump_swf_by_name(const char* swf_name)
+		{
+			if (!swf_name || swf_name[0] == '\0')
+			{
+				console::info("dumpSwf <name.swf|name.gfx>: dump a loaded Scaleform rawfile to consolation/scaleform_dump\n");
+				return 0;
+			}
+
+			const auto wanted = utils::string::to_lower(get_file_name(swf_name));
+			auto fallback_wanted = wanted;
+			if (fallback_wanted.ends_with(".swf"))
+			{
+				fallback_wanted.resize(fallback_wanted.size() - 4);
+				fallback_wanted.append(".gfx");
+			}
+
+			auto dumped = 0;
+
+			fastfiles::enum_assets(game::ASSET_TYPE_RAWFILE, [&](const game::XAssetHeader header)
+			{
+				const auto* const rawfile = header.rawfile;
+				if (!rawfile || !rawfile->name)
+				{
+					return;
+				}
+
+				const auto file_name = utils::string::to_lower(get_file_name(rawfile->name));
+				if (file_name != wanted && file_name != fallback_wanted)
+				{
+					return;
+				}
+
+				if (dump_rawfile_binary(rawfile, "consolation/scaleform_dump/"))
+				{
+					++dumped;
+				}
+			}, true);
+
+			if (dumped == 0)
+			{
+				console::warn("dumpSwf: '%s' was not found in loaded Scaleform rawfile assets\n", swf_name);
+			}
+
+			return dumped;
+		}
+
+		void dump_scaleform_shared_files()
+		{
+			static constexpr const char* scaleform_names[]
+			{
+				"cmsharedplatform.gfx",
+				"cmsharedlibrary.gfx",
+				"pcsharedlibrary.gfx",
+				"mpsharedlibrary.gfx",
+				"cmfont1_glyphs.gfx",
+				"cmfont2_glyphs.gfx",
+				"cmfont3_glyphs.gfx",
+				"cmfont4_glyphs.gfx",
+				"cmfont5_glyphs.gfx",
+			};
+
+			auto total = 0;
+			for (const auto* const scaleform_name : scaleform_names)
+			{
+				total += dump_swf_by_name(scaleform_name);
+			}
+
+			console::info("dumpScaleformSharedFiles: dumped %i file(s)\n", total);
+		}
+
+		void find_scaleform_assets(const char* filter)
+		{
+			const auto normalized_filter = filter && filter[0] != '\0'
+				? utils::string::to_lower(normalize_rawfile_path(filter))
+				: std::string{};
+
+			auto total = 0;
+			for (auto type_index = 0; type_index < game::ASSET_TYPE_COUNT; ++type_index)
+			{
+				const auto type = static_cast<game::XAssetType>(type_index);
+				fastfiles::enum_assets(type, [type, type_index, &normalized_filter, &total](const game::XAssetHeader header)
+				{
+					game::XAsset asset{ type, header };
+					const auto* const asset_name = game::DB_GetXAssetName(&asset);
+					if (!asset_name || asset_name[0] == '\0')
+					{
+						return;
+					}
+
+					const auto normalized_name = utils::string::to_lower(normalize_rawfile_path(asset_name));
+					if (!normalized_filter.empty())
+					{
+						if (normalized_name.find(normalized_filter) == std::string::npos)
+						{
+							return;
+						}
+					}
+					else if (!is_scaleform_asset_candidate(asset_name))
+					{
+						return;
+					}
+
+					console::info("findScaleformAssets: type=%d:%s name=%s\n",
+						type_index,
+						game::g_assetNames[type_index],
+						asset_name);
+					++total;
+				}, true);
+			}
+
+			console::info("findScaleformAssets: found %i asset(s)\n", total);
 		}
 
 		std::uintptr_t get_clients_base()
@@ -618,9 +1120,72 @@ namespace command
 							dump_rawfile(argument.get(1), argument.get(2));
 						});
 
+					add("dumpSwf", [](const params& argument)
+						{
+							if (argument.size() < 2)
+							{
+								dump_swf_by_name(nullptr);
+								return;
+							}
+
+							dump_swf_by_name(argument.get(1));
+						});
+
+					add("dumpScaleformSharedFiles", [](const params&)
+						{
+							dump_scaleform_shared_files();
+						});
+
+					add("findScaleformAssets", [](const params& argument)
+						{
+							find_scaleform_assets(argument.get(1));
+						});
+
 					add("dumpGametypes", [](const params&)
 						{
 							dump_rawfile(GAMETYPES_RAWFILE);
+						});
+
+					add("dumpGametypesDebug", [](const params&)
+						{
+							try
+							{
+								gametypes::dump_debug_state();
+							}
+							catch (...)
+							{
+								console::error("dumpGametypesDebug: unhandled exception\n");
+							}
+						});
+
+					add("refreshGametypes", [](const params&)
+						{
+							try
+							{
+								gametypes::force_refresh_ui_gametype_list();
+							}
+							catch (...)
+							{
+								console::error("refreshGametypes: unhandled exception\n");
+							}
+						});
+
+					add("dumpMemory", [](const params& argument)
+						{
+							try
+							{
+								if (argument.size() < 2)
+								{
+									dump_memory(nullptr, nullptr, nullptr);
+									return;
+								}
+
+								dump_memory(argument.get(1), argument.get(2), argument.get(3));
+							}
+							catch (...)
+							{
+								console::error("dumpMemory: unhandled exception\n");
+							}
 						});
 
 					add("listassetpool", [](const params& params)

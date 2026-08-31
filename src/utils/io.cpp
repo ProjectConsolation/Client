@@ -172,9 +172,18 @@ namespace utils::io
 	{
 		std::vector<std::string> files;
 
-		for (auto& file : std::filesystem::directory_iterator(directory))
+		std::error_code error;
+		if (!std::filesystem::is_directory(directory, error) || error)
 		{
-			files.push_back(file.path().generic_string());
+			return files;
+		}
+
+		std::filesystem::directory_iterator iterator(directory, error);
+		const std::filesystem::directory_iterator end;
+		while (!error && iterator != end)
+		{
+			files.push_back(iterator->path().generic_string());
+			iterator.increment(error);
 		}
 
 		return files;

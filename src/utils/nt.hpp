@@ -39,7 +39,7 @@ namespace utils::nt
 		template <typename T>
 		T get_proc(const std::string& process) const
 		{
-			if (!this->is_valid()) T{};
+			if (!this->is_valid()) return T{};
 			return reinterpret_cast<T>(GetProcAddress(this->module_, process.data()));
 		}
 

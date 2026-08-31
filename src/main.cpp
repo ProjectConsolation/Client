@@ -18,8 +18,46 @@ namespace
 {
 	static BYTE original_code[5];
 	static PBYTE original_ep = 0;
-	constexpr auto unsupported_update_url = "https://placeholder.link";
+	constexpr auto unsupported_update_url =
+		"https://community.pcgamingwiki.com/files/file/1089-007-quantum-of-solace-patch/";
+	constexpr auto gfwl_update_url =
+		"https://community.pcgamingwiki.com/files/file/1012-microsoft-games-for-windows-live/";
 	constexpr std::uint32_t multiplayer_marker_rva = 0x0050502C;
+
+	bool has_system_xlive()
+	{
+		char system_directory[MAX_PATH] = {};
+		const auto length = GetSystemDirectoryA(system_directory, sizeof(system_directory));
+		if (length == 0 || length >= sizeof(system_directory))
+		{
+			return false;
+		}
+
+		const auto xlive_path = std::string(system_directory) + "\\xlive.dll";
+		const auto attributes = GetFileAttributesA(xlive_path.data());
+		return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+	}
+
+	DECLSPEC_NORETURN void show_missing_gfwl_and_exit()
+	{
+		const auto result = MessageBoxA(nullptr,
+			"Project: Consolation requires Games for Windows - LIVE.\n\n"
+			"Install Games for Windows - LIVE via:\n"
+			"https://community.pcgamingwiki.com/files/file/1012-microsoft-games-for-windows-live/\n\n"
+			"For other troubleshooting, go to:\n"
+			"https://github.com/ProjectConsolation/Client/wiki\n\n"
+			"Press Yes to open the Games for Windows - LIVE download page.\n"
+			"Consolation will now exit.",
+			"Project: Consolation",
+			MB_ICONERROR | MB_YESNO | MB_DEFBUTTON1);
+
+		if (result == IDYES)
+		{
+			ShellExecuteA(nullptr, "open", gfwl_update_url, nullptr, nullptr, SW_SHOWNORMAL);
+		}
+
+		utils::nt::terminate(1);
+	}
 
 	bool has_supported_multiplayer_marker(const std::filesystem::path& game_root)
 	{
@@ -38,9 +76,13 @@ namespace
 	DECLSPEC_NORETURN void show_unsupported_version_and_exit()
 	{
 		const auto result = MessageBoxA(nullptr,
-			"Project: Consolation does not support Quantum of Solace 1.0.\n\n"
-			"Update to 1.1 via:\n"
-			"https://placeholder.link\n\n"
+			"Project: Consolation does not support this version of Quantum of Solace 1.0.\n\n"
+			"Update the game to 1.1 via:\n"
+			"https://community.pcgamingwiki.com/files/file/1089-007-quantum-of-solace-patch/\n\n"
+			"After updating, place the shipped Consolation nightly/release files into the game folder "
+			"and overwrite all existing files if prompted to.\n\n"
+			"For other troubleshooting, go to:\n"
+			"https://github.com/ProjectConsolation/Client/wiki\n\n"
 			"Press Yes to open the update page.\n"
 			"Consolation will now exit.",
 			"Project: Consolation",
@@ -56,6 +98,12 @@ namespace
 
 	void validate_supported_install()
 	{
+		if (!has_system_xlive())
+		{
+			printf("consolation: Games for Windows - LIVE runtime not detected, aborting startup\n");
+			show_missing_gfwl_and_exit();
+		}
+
 		const auto game_root = std::filesystem::path(utils::nt::get_host_module().get_folder());
 		const auto marker = read_multiplayer_marker_for_log(game_root);
 		printf("consolation: jb_mp_s.dll marker @ 0x%08X = '%s'\n", multiplayer_marker_rva, marker.c_str());
@@ -132,7 +180,7 @@ namespace
 		VirtualProtect(reinterpret_cast<LPVOID>(module), nt_header->OptionalHeader.SizeOfImage, PAGE_EXECUTE_READWRITE, &old_protect);
 	}
 
-	void main()
+	bool main()
 	{
 		enable_dpi_awareness();
 		srand(uint32_t(time(nullptr)));
@@ -156,36 +204,46 @@ namespace
 #ifdef DEBUG
 			//MessageBoxA(NULL, "GAME LOADED", "DEBUG", MB_DEFBUTTON1);
 #endif
+
+			return true;
 		}
 		catch (const std::exception& error)
 		{
 			component_loader::pre_destroy();
 			MessageBoxA(nullptr, error.what(), "ERROR", MB_ICONERROR);
+			return false;
 		}
 		catch (const char* error)
 		{
 			component_loader::pre_destroy();
 			MessageBoxA(nullptr, error, "ERROR", MB_ICONERROR);
+			return false;
 		}
 		catch (const std::string& error)
 		{
 			component_loader::pre_destroy();
 			MessageBoxA(nullptr, error.data(), "ERROR", MB_ICONERROR);
+			return false;
 		}
 		catch (...)
 		{
 			component_loader::pre_destroy();
 			MessageBoxA(nullptr, "Unknown startup failure", "ERROR", MB_ICONERROR);
+			return false;
 		}
 	}
 }
 
-int WINAPI DllMain(HINSTANCE, const DWORD reason, LPVOID)
+int WINAPI DllMain(HINSTANCE module, const DWORD reason, LPVOID)
 {
 	if (reason == DLL_PROCESS_ATTACH)
 	{
-		main();
+		DisableThreadLibraryCalls(module);
+		if (!main())
+		{
+			return FALSE;
+		}
 	}
 
-	return 1;
+	return TRUE;
 }
