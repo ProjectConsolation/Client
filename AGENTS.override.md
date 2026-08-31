@@ -35,10 +35,13 @@ Use these loaded IDA databases as symbol and implementation references:
 - COD4 alpha, Xbox 360: `G:\DBs\COD4A\_PDBLoaded.i64`
 - COD4, macOS: `G:\DBs\MAC\Call of Duty 4 Multiplayer.i64`
 - World at War, Xbox 360: `G:\DBs\WaW360.idb`
+- Black Ops 1 server, PC: `G:\DBs\PC\BO1\CoDMPServer.pdb`
 
-Use the installed Games for Windows LIVE SDK to validate public APIs, constants, structures, calling conventions, and expected behavior:
+The installed Games for Windows LIVE SDK is mandatory for all XLive/GFWL reverse engineering:
 
 - GFWL SDK: `C:\Program Files (x86)\Microsoft Games for Windows - LIVE SDK`
+
+Inspect its headers, import libraries, samples, and documentation before implementing or naming XLive behavior. Do not invent XLive signatures, structures, constants, ordinals, or calling conventions when the SDK supplies them. QoS runtime evidence remains authoritative for game-specific behavior.
 
 The QoS Wii database is the primary naming reference for identifying and renaming corresponding functions in the PC `jb_mp_s.dll` IDB. COD4 and World at War databases are comparative references for inherited engine architecture, algorithms, ownership boundaries, and subsystem behavior. They are not directly bindable implementations.
 
@@ -51,7 +54,7 @@ QoS evidence is authoritative. Prefer evidence in this order:
 1. QoS xrefs, decompilation, runtime tracing, wire bytes, serialized data, and repeatable tests.
 2. The QoS Wii symbol database and corresponding Wii implementation context.
 3. Comparative COD4 and World at War databases, checked together when relevant.
-4. BO1/KisakBlack and other community reference implementations.
+4. BO1/KisakBlack and other community reference implementations, including the BO1 PC server PDB listed above.
 
 Do not override QoS evidence because another title has a convenient symbol name or implementation. QoS lies between related engine generations but may retain, remove, or alter behavior independently.
 
@@ -68,6 +71,13 @@ Before transferring a function or variable name from another platform or title, 
 Do not use string similarity alone as proof. Account for platform ABI differences, compiler transformations, inlining, split or merged functions, endian differences, and code that exists on only one platform. Mark uncertain mappings as provisional and record the evidence and confidence instead of asserting an exact restoration.
 
 When a relevant mandatory reference cannot be checked, state that verification is incomplete. Do not claim the implementation or name has been restored natively.
+
+### Reference Availability Gate
+
+- Before attempting a patch for functionality likely inherited from Call of Duty, such as windowed mode, renderer setup, window creation, or input behavior, inspect the relevant COD PDB/IDB first. Much of this functionality may already be implemented in COD even when it is missing, disabled, or obscured in QoS.
+- Compare the QoS implementation against the most relevant COD4, World at War, or Black Ops 1 reference before designing the patch.
+- If the MCP is unreachable or connected to the wrong database, immediately notify the user, identify the exact PDB/IDB that must be loaded, and wait for the user's input before checking or continuing that reference-dependent investigation or patch.
+- Do not replace the required reference check with guesses, a low-confidence BinDiff result, or analysis of an unrelated active database.
 
 ## Engineering Rules
 
