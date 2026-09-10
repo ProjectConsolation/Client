@@ -11,7 +11,13 @@
 #include <utils/hook.hpp>
 #include <utils/flags.hpp>
 #include <utils/string.hpp>
+#include <cstring>
+#include <stdexcept>
 #include <unordered_set>
+#include <d3d9.h>
+#include <mmsystem.h>
+
+#pragma comment(lib, "winmm.lib")
 #ifndef VERSION_BUILD
 #define VERSION_BUILD "0"
 #endif
@@ -363,6 +369,63 @@ namespace patches
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
 		}
 
+		game::dvar_s* __cdecl register_fullscreen_for_window_parms(const char* name)
+		{
+			// QoS 1.1, 0x103BE15B: register before window parms are read, including
+			// the first launch. Use native registration to convert a config-created
+			// string and apply latched values without allocating a duplicate dvar.
+			const auto target = game::game_offset(0x10278E60);
+			const auto* description = "Display game full screen";
+			const int flags = game::dvar_flags::saved | game::dvar_flags::latched;
+			game::dvar_s* result;
+			__asm
+			{
+				push flags
+				push 1
+				push name
+				xor ecx, ecx
+				mov edx, description
+				call target
+				add esp, 0Ch
+				mov result, eax
+			}
+			*reinterpret_cast<game::dvar_s**>(game::game_offset(0x113EFA78)) = result;
+			return result;
+		}
+
+		void apply_video_dvar_patches()
+		{
+			// Verified against QoS 1.1 and COD4 Mac Com_Frame_Try_Block_Function,
+			// R_BeginRegistration and R_SetD3DPresentParameters (2026-09-10).
+			// Keep native registration calls AND their EAX consumers intact.
+			// In particular, WM_CREATE stores EAX into the fullscreen pointer.
+			// Runtime regression: r_fullscreen 0/1 + vid_restart, repeated restarts,
+			// relaunch with saved windowed config, and Alt-Tab/device recovery.
+			// Check videoInfo after each; test com_maxfps 30/60/125/250/0 with
+			// r_vsync 0 + vid_restart. These patches can go when these native
+			// registration/window-parms routines are replaced in source.
+			const auto check = [](const std::uintptr_t address, const char* bytes, const std::size_t size)
+			{
+				if (std::memcmp(reinterpret_cast<const void*>(game::game_offset(address)), bytes, size) != 0)
+				{
+					throw std::runtime_error("Unsupported engine instructions for video dvar patches");
+				}
+			};
+			check(0x103BE15B, "\xE8\xE0\x7E\xEB\xFF", 5);
+			check(0x103BE16D, "\xE8\x2E\x6A\xEB\xFF", 5);
+			check(0x102C448F, "\x6A\x40", 2);
+			check(0x102C44A8, "\xE8\xB3\x49\xFB\xFF", 5);
+			check(0x103F6960, "\x6A\x40", 2);
+			check(0x103F6969, "\x6A\x1E", 2);
+
+			utils::hook::call(game::game_offset(0x103BE15B), register_fullscreen_for_window_parms);
+			utils::hook::nop(game::game_offset(0x103BE16D), 5);
+			utils::hook::set<std::uint8_t>(game::game_offset(0x102C4490),
+				game::dvar_flags::saved | game::dvar_flags::latched);
+			utils::hook::set<std::uint8_t>(game::game_offset(0x103F6961), game::dvar_flags::saved);
+			utils::hook::set<std::uint8_t>(game::game_offset(0x103F696A), 85);
+		}
+
 		HWND __stdcall create_window_ex_stub(DWORD ex_style, LPCSTR class_name, LPCSTR window_name, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE inst, LPVOID param)
 		{
 			if (!strcmp(class_name, "JB_MP"))
@@ -380,6 +443,14 @@ namespace patches
 
 				if (!fullscreen && borderless)
 				{
+					// The engine already enlarged width/height for the original frame.
+					// Remove that padding before changing to a popup window.
+					RECT frame{ 0, 0, 0, 0 };
+					if (AdjustWindowRectEx(&frame, style, menu != nullptr, ex_style))
+					{
+						width -= frame.right - frame.left;
+						height -= frame.bottom - frame.top;
+					}
 					style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
 					style |= WS_POPUP;
 					ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
@@ -588,9 +659,12 @@ namespace patches
 
 	class component final : public component_interface
 	{
+		bool timer_period_active_ = false;
+
 	public:
 		void post_load() override
 		{
+			apply_video_dvar_patches();
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
@@ -604,9 +678,6 @@ namespace patches
 
 			// stop an engine UI path from intentionally breaking into the debugger
 			utils::hook::nop(game::game_offset(0x1027D3C4), 0x05);
-
-			// stop the video restart path from forcibly setting r_fullscreen back to 1
-			utils::hook::nop(game::game_offset(0x103BE16D), 0x05);
 
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
@@ -646,8 +717,13 @@ namespace patches
 			
 			dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
 
-			scheduler::once([]
+			scheduler::once([this]
 			{
+				// Run outside DLL initialization. The native frame loop uses
+				// timeGetTime and Sleep(1), but this image imports no timeBeginPeriod.
+				// Request precision in this process to avoid coarse timer pacing.
+				timer_period_active_ = timeBeginPeriod(1) == TIMERR_NOERROR;
+
 				dvars::replace_dvar_at(game::game_offset(0x103AF41F), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054688)),
 					dvars::make_float("r_lodScale", "Scale the level of detail distance (larger reduces detail)", 0.0f, 0.0f, 3.0f, game::dvar_flags::saved));
 
@@ -665,13 +741,6 @@ namespace patches
 
 				dvars::replace_dvar_at(game::game_offset(0x103B2260), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x11054944)),
 					dvars::make_int("developer", "Enable development environment", 0, 0, 2, game::dvar_flags::none));
-
-				dvars::replace_dvar_at(game::game_offset(0x103F6989), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x10711AF8)),
-					dvars::make_int("com_maxfps", "Cap frames per second", 85, 0, 1000, game::dvar_flags::saved));
-
-				dvars::replace_dvar_at(game::game_offset(0x102C44A8), 5, reinterpret_cast<game::dvar_s**>(game::game_offset(0x113EFA78)),
-					dvars::make_bool("r_fullscreen", "Display game full screen", true,
-						static_cast<std::uint16_t>(game::dvar_flags::saved) | static_cast<std::uint16_t>(game::dvar_flags::latched)));
 
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("vid_xpos");
@@ -693,6 +762,31 @@ namespace patches
 			ui_replace_directive_hook.create(game::game_offset(0x102BB870), UI_ReplaceDirective_guard);
 			party_atomic_host_handle_member_join_hook.create(game::game_offset(0x103087B0), PartyAtomicHost_HandleMemberJoin_guard);
 			register_security_guard_self_test();
+			command::add("videoInfo", [this](const command::params&)
+			{
+				// Compare requested/current dvars with the renderer's cached
+				// presentation parameters, which are updated on creation AND reset.
+				for (const auto* name : { "r_fullscreen", "r_vsync", "com_maxfps" })
+				{
+					const auto* dvar = game::Dvar_FindVar(name);
+					if (dvar && (dvar->type == game::dvar_type::boolean || dvar->type == game::dvar_type::integer))
+					{
+						const bool boolean = dvar->type == game::dvar_type::boolean;
+						game::Com_Printf(0, "%s: current=%i latched=%i flags=0x%04X\n", name,
+							boolean ? dvar->current.enabled : dvar->current.integer,
+							boolean ? dvar->latched.enabled : dvar->latched.integer,
+							static_cast<unsigned int>(dvar->flags));
+					}
+				}
+				const auto* present = reinterpret_cast<const D3DPRESENT_PARAMETERS*>(game::game_offset(0x10E271F4));
+				game::Com_Printf(0, "Renderer cache: %ux%u windowed=%i refresh=%u interval=0x%08X timer1ms=%i\n",
+					present->BackBufferWidth, present->BackBufferHeight, present->Windowed,
+					present->FullScreen_RefreshRateInHz, present->PresentationInterval, timer_period_active_);
+				if (present->PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE)
+				{
+					game::Com_Printf(0, "VSync can limit FPS to the display refresh rate. Use r_vsync 0; vid_restart for higher FPS.\n");
+				}
+			});
 
 			scheduler::loop([]
 			{
@@ -703,6 +797,15 @@ namespace patches
 				make_dvar_debug_writable("r_fullbright");
 #endif
 			}, scheduler::main, 250ms);
+		}
+
+		void pre_destroy() override
+		{
+			if (timer_period_active_)
+			{
+				timeEndPeriod(1);
+				timer_period_active_ = false;
+			}
 		}
 	};
 }
