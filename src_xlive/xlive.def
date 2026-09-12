@@ -1,6 +1,7 @@
 LIBRARY "xlive"
 EXPORTS
     xlive_XWSAStartup @1 NONAME
+    xlive_XWSACleanup @2 NONAME
     xlive_XSocketCreate @3 NONAME
     xlive_XSocketClose @4 NONAME
     xlive_XSocketIOCTLSocket @6 NONAME
@@ -12,6 +13,7 @@ EXPORTS
     xlive_XWSAGetLastError @27 NONAME
     xlive_XSocketHTONS @38 NONAME
     xlive_XNetStartup @51 NONAME
+    xlive_XNetCleanup @52 NONAME
     xlive_XNetXnAddrToInAddr @57 NONAME
     xlive_XNetInAddrToXnAddr @60 NONAME
     xlive_XNetConnect @65 NONAME
@@ -27,13 +29,21 @@ EXPORTS
     xlive_XNotifyPositionUI @652 NONAME
     xlive_XGetOverlappedExtendedError @1082 NONAME
     xlive_XGetOverlappedResult @1083 NONAME
+    xlive_XLiveInitialize @5000 NONAME
     xlive_XLiveInput @5001 NONAME
     xlive_XLiveRender @5002 NONAME
+    xlive_XLiveUninitialize @5003 NONAME
     xlive_XLiveOnCreateDevice @5005 NONAME
     xlive_XLiveOnDestroyDevice @5006 NONAME
     xlive_XLiveOnResetDevice @5007 NONAME
     xlive_XHVCreateEngine @5008 NONAME
+    xlive_XLivePBufferAllocate @5016 NONAME
+    xlive_XLivePBufferFree @5017 NONAME
+    xlive_XLiveGetUpdateInformation @5022 NONAME
+    xlive_XLiveUpdateSystem @5024 NONAME
     xlive_XLivePreTranslateMessage @5030 NONAME
+    xlive_XLiveProtectData @5034 NONAME
+    xlive_XLiveUnprotectData @5035 NONAME
     xlive_XLiveCreateProtectedDataContext @5036 NONAME
     xlive_XLiveQueryProtectedDataInformation @5037 NONAME
     xlive_XLiveCloseProtectedDataContext @5038 NONAME
@@ -41,6 +51,7 @@ EXPORTS
     xlive_XShowGamerCardUI @5252 NONAME
     xlive_XCancelOverlapped @5254 NONAME
     xlive_XEnumerate @5256 NONAME
+    xlive_XLiveSignout @5258 NONAME
     xlive_XShowSigninUI @5260 NONAME
     xlive_XUserGetXUID @5261 NONAME
     xlive_XUserGetSigninState @5262 NONAME
@@ -60,6 +71,8 @@ EXPORTS
     xlive_XUserSetContextEx @5292 NONAME
     xlive_XLivePBufferGetByteArray @5294 NONAME
     xlive_XLivePBufferSetByteArray @5295 NONAME
+    xlive_XOnlineStartup @5310 NONAME
+    xlive_XOnlineCleanup @5311 NONAME
     xlive_XSessionCreate @5300 NONAME
     xlive_XStringVerify @5303 NONAME
     xlive_XStorageUploadFromMemory @5305 NONAME

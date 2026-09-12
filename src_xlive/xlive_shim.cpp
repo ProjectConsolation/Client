@@ -44,6 +44,7 @@ namespace
 	constexpr DWORD xsource_title = 2;
 	constexpr DWORD xonline_e_storage_file_not_found = 0x8015C004;
 	constexpr DWORD xonline_e_storage_file_is_too_big = 0x8015C003;
+	constexpr DWORD hresult_insufficient_buffer = 0x8007007A;
 	constexpr DWORD signed_in_to_live = 2;
 	constexpr DWORD xuser_name_size = 16;
 	constexpr DWORD xnet_connect_status_connected = 2;
@@ -411,6 +412,27 @@ namespace
 		return static_cast<bool>(file);
 	}
 
+	DWORD copy_blob(const BYTE* source, const DWORD source_size, BYTE* destination, DWORD* destination_size)
+	{
+		if (!destination_size)
+		{
+			return invalid_parameter;
+		}
+
+		if (!destination || *destination_size < source_size)
+		{
+			*destination_size = source_size;
+			return hresult_insufficient_buffer;
+		}
+
+		if (source_size != 0 && source)
+		{
+			memcpy(destination, source, source_size);
+		}
+		*destination_size = source_size;
+		return success;
+	}
+
 	std::uint16_t read_u16(const std::vector<BYTE>& bytes, const std::size_t offset)
 	{
 		std::uint16_t value{};
@@ -711,6 +733,7 @@ namespace
 extern "C"
 {
 	int WINAPI xlive_XWSAStartup(WORD version, WSADATA* data) { return WSAStartup(version, data); }
+	int WINAPI xlive_XWSACleanup() { return WSACleanup(); }
 	SOCKET WINAPI xlive_XSocketCreate(int af, int type, int protocol) { return socket(af, type, protocol); }
 	int WINAPI xlive_XSocketClose(SOCKET socket_handle) { return closesocket(socket_handle); }
 	int WINAPI xlive_XSocketIOCTLSocket(SOCKET socket_handle, long cmd, u_long* argp) { return ioctlsocket(socket_handle, cmd, argp); }
@@ -723,6 +746,7 @@ extern "C"
 	unsigned short WINAPI xlive_XSocketHTONS(unsigned short hostshort) { return htons(hostshort); }
 
 	int WINAPI xlive_XNetStartup(void*) { return 0; }
+	int WINAPI xlive_XNetCleanup() { return 0; }
 	int WINAPI xlive_XNetXnAddrToInAddr(const xnaddr* address, const void*, IN_ADDR* in_addr)
 	{
 		if (!address || !in_addr)
@@ -786,8 +810,10 @@ extern "C"
 		return overlapped->extended_error;
 	}
 
+	DWORD WINAPI xlive_XLiveInitialize(void*) { return success; }
 	DWORD WINAPI xlive_XLiveInput(void*) { return success; }
 	DWORD WINAPI xlive_XLiveRender() { return success; }
+	void WINAPI xlive_XLiveUninitialize() {}
 	DWORD WINAPI xlive_XLiveOnCreateDevice(void*, void*) { return success; }
 	DWORD WINAPI xlive_XLiveOnDestroyDevice() { return success; }
 	DWORD WINAPI xlive_XLiveOnResetDevice(void*) { return success; }
@@ -803,7 +829,47 @@ extern "C"
 		}
 		return E_NOTIMPL;
 	}
+	DWORD WINAPI xlive_XLivePBufferAllocate(ULONG size, void** buffer)
+	{
+		if (!buffer)
+		{
+			return E_INVALIDARG;
+		}
+
+		*buffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+		return *buffer ? success : E_OUTOFMEMORY;
+	}
+	DWORD WINAPI xlive_XLivePBufferFree(void* buffer)
+	{
+		if (buffer)
+		{
+			HeapFree(GetProcessHeap(), 0, buffer);
+		}
+		return success;
+	}
+	DWORD WINAPI xlive_XLiveGetUpdateInformation(void*) { return not_found; }
+	DWORD WINAPI xlive_XLiveUpdateSystem(const wchar_t*) { return success; }
 	BOOL WINAPI xlive_XLivePreTranslateMessage(const MSG*) { return FALSE; }
+	DWORD WINAPI xlive_XLiveProtectData(BYTE* data, DWORD data_size, BYTE* protected_data, DWORD* protected_data_size, HANDLE)
+	{
+		if (data_size != 0 && !data)
+		{
+			return E_INVALIDARG;
+		}
+		return copy_blob(data, data_size, protected_data, protected_data_size);
+	}
+	DWORD WINAPI xlive_XLiveUnprotectData(BYTE* protected_data, DWORD protected_data_size, BYTE* data, DWORD* data_size, HANDLE* protected_data_handle)
+	{
+		if (protected_data_size != 0 && !protected_data)
+		{
+			return E_INVALIDARG;
+		}
+		if (protected_data_handle)
+		{
+			*protected_data_handle = reinterpret_cast<HANDLE>(1);
+		}
+		return copy_blob(protected_data, protected_data_size, data, data_size);
+	}
 	DWORD WINAPI xlive_XLiveCreateProtectedDataContext(void*, HANDLE* handle)
 	{
 		if (!handle)
@@ -828,6 +894,7 @@ extern "C"
 	DWORD WINAPI xlive_XShowGamerCardUI(DWORD, XUID) { return success; }
 	DWORD WINAPI xlive_XCancelOverlapped(xoverlapped* overlapped) { return finish_operation(overlapped, ERROR_OPERATION_ABORTED); }
 	DWORD WINAPI xlive_XEnumerate(HANDLE, void*, DWORD, DWORD* returned, xoverlapped* overlapped) { if (returned) *returned = 0; return finish_operation(overlapped, no_more_files); }
+	DWORD WINAPI xlive_XLiveSignout(xoverlapped* overlapped) { return inert_success(overlapped); }
 	DWORD WINAPI xlive_XShowSigninUI(DWORD, DWORD) { return success; }
 
 	DWORD WINAPI xlive_XUserGetXUID(DWORD user_index, XUID* xuid) { if (user_index != 0 || !xuid) return invalid_parameter; *xuid = offline_xuid(); return success; }
@@ -901,6 +968,8 @@ extern "C"
 	DWORD WINAPI xlive_XLivePBufferGetByteArray(void*, DWORD, BYTE* values, DWORD size) { if (values) memset(values, 0, size); return success; }
 	DWORD WINAPI xlive_XLivePBufferSetByteArray(void*, DWORD, BYTE*, DWORD) { return success; }
 
+	DWORD WINAPI xlive_XOnlineStartup() { return success; }
+	DWORD WINAPI xlive_XOnlineCleanup() { return success; }
 	DWORD WINAPI xlive_XSessionCreate(DWORD, DWORD, DWORD, DWORD, ULONGLONG* nonce, xsession_info* info, xoverlapped* overlapped, HANDLE* handle)
 	{
 		if (!nonce || !info || !handle)
