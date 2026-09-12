@@ -296,13 +296,10 @@ workspace "consolation-client"
 	
 	defines { "_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS" }
 
-	flags
-	{
-		"NoIncrementalLink",
-		"NoMinimalRebuild",
-		"MultiProcessorCompile",
-		"No64BitChecks"
-	}
+	incrementallink "Off"
+	minimalrebuild "Off"
+	multiprocessorcompile "On"
+	enable64bitchecks "Off"
 	
 	filter "platforms:Win*"
 		defines { "_WINDOWS", "WIN32" }
@@ -312,7 +309,8 @@ workspace "consolation-client"
 		optimize "Full"
 		buildoptions { "/Os" }
 		defines { "NDEBUG" }
-		flags { "FatalCompileWarnings", "LinkTimeOptimization" }
+		fatalwarnings "All"
+		linktimeoptimization "On"
 	filter {}
 
 	filter "configurations:Debug"
