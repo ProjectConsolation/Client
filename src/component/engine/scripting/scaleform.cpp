@@ -62,14 +62,14 @@ namespace scaleform
 
 			static const auto root = std::filesystem::path(utils::nt::library(game::mp_dll).get_folder()) / "consolation";
 			std::ifstream stream(root / name, std::ios::binary | std::ios::ate);
-			const std::streamsize size = stream ? stream.tellg() : 0;
+			const auto size = stream ? static_cast<std::streamoff>(stream.tellg()) : 0;
 			if (size <= 0 || size > INT_MAX)
 			{
 				return nullptr;
 			}
 			std::string data(static_cast<std::size_t>(size), '\0');
 			stream.seekg(0, std::ios::beg);
-			if (!stream.read(data.data(), size))
+			if (!stream.read(data.data(), static_cast<std::streamsize>(size)))
 			{
 				return nullptr;
 			}

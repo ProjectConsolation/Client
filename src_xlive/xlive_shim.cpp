@@ -173,7 +173,11 @@ namespace
 			FILETIME datetime_value;
 		};
 	};
+#ifdef _WIN64
 	static_assert(sizeof(xuser_data) == 24);
+#else
+	static_assert(sizeof(xuser_data) == 16);
+#endif
 
 	struct xuser_profile_setting
 	{
@@ -186,7 +190,11 @@ namespace
 		DWORD setting_id;
 		xuser_data data;
 	};
+#ifdef _WIN64
 	static_assert(sizeof(xuser_profile_setting) == 48);
+#else
+	static_assert(sizeof(xuser_profile_setting) == 40);
+#endif
 
 	struct xuser_read_profile_setting_result
 	{
@@ -1012,19 +1020,19 @@ extern "C"
 			switch (setting.data.type)
 			{
 			case xuser_data_type_int32:
-				memcpy(&setting.data.int32_value, value.data(), std::min(value.size(), sizeof(setting.data.int32_value)));
+				memcpy(&setting.data.int32_value, value.data(), (std::min)(value.size(), sizeof(setting.data.int32_value)));
 				break;
 			case xuser_data_type_int64:
-				memcpy(&setting.data.int64_value, value.data(), std::min(value.size(), sizeof(setting.data.int64_value)));
+				memcpy(&setting.data.int64_value, value.data(), (std::min)(value.size(), sizeof(setting.data.int64_value)));
 				break;
 			case xuser_data_type_double:
-				memcpy(&setting.data.double_value, value.data(), std::min(value.size(), sizeof(setting.data.double_value)));
+				memcpy(&setting.data.double_value, value.data(), (std::min)(value.size(), sizeof(setting.data.double_value)));
 				break;
 			case xuser_data_type_float:
-				memcpy(&setting.data.float_value, value.data(), std::min(value.size(), sizeof(setting.data.float_value)));
+				memcpy(&setting.data.float_value, value.data(), (std::min)(value.size(), sizeof(setting.data.float_value)));
 				break;
 			case xuser_data_type_datetime:
-				memcpy(&setting.data.datetime_value, value.data(), std::min(value.size(), sizeof(setting.data.datetime_value)));
+				memcpy(&setting.data.datetime_value, value.data(), (std::min)(value.size(), sizeof(setting.data.datetime_value)));
 				break;
 			case xuser_data_type_unicode:
 				setting.data.string.bytes = static_cast<DWORD>(value.size());
