@@ -1,10 +1,5 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
-#include "game/game.hpp"
-
-#include "scheduler.hpp"
-
-#include <utils/hook.hpp>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
 #include <utils/thread.hpp>
@@ -15,46 +10,18 @@ namespace exception
 {
     namespace
     {
-        thread_local struct
-        {
-            DWORD code = 0;
-            PVOID address = nullptr;
-        } exception_data;
+        volatile LONG handling_exception = 0;
 
         void show_mouse_cursor()
         {
             while (ShowCursor(TRUE) < 0);
         }
 
-        void display_error_dialog()
+        void display_error_dialog(const std::string& message, const char* title)
         {
-            std::string error_str = utils::string::va("Fatal error (0x%08X) at 0x%p.\n"
-                                                      "A minidump has been written.\n\n",
-                                                      exception_data.code, exception_data.address);
-
-            error_str += "Make sure to update your graphics card drivers and install operating system updates!";
-
             utils::thread::suspend_other_threads();
             show_mouse_cursor();
-            MessageBoxA(nullptr, error_str.data(), "Project: Consolation ERROR", MB_ICONERROR);
-            TerminateProcess(GetCurrentProcess(), exception_data.code);
-        }
-
-        void reset_state()
-        {
-            display_error_dialog();
-        }
-
-        size_t get_reset_state_stub()
-        {
-            static auto* stub = utils::hook::assemble([](utils::hook::assembler& a)
-            {
-                a.sub(esp, 0x10);
-                a.or_(esp, 0x8);
-                a.jmp(reset_state);
-            });
-
-            return reinterpret_cast<size_t>(stub);
+            MessageBoxA(nullptr, message.c_str(), title, MB_ICONERROR | MB_OK);
         }
 
         std::string generate_crash_info(const LPEXCEPTION_POINTERS exceptioninfo)
@@ -85,12 +52,13 @@ namespace exception
             return info;
         }
 
-        void write_minidump(const LPEXCEPTION_POINTERS exceptioninfo)
+        std::string write_minidump(const LPEXCEPTION_POINTERS exceptioninfo)
         {
             const std::string crash_name = utils::string::va("minidumps/consolation-crash-%s.dmp",
                                                              utils::string::get_timestamp().data());
             const auto dump = create_minidump(exceptioninfo);
             utils::io::write_file(crash_name, dump, false);
+            return crash_name;
         }
 
         bool is_harmless_error(const LPEXCEPTION_POINTERS exceptioninfo)
@@ -106,13 +74,30 @@ namespace exception
                 return EXCEPTION_CONTINUE_EXECUTION;
             }
 
-            write_minidump(exceptioninfo);
+            if (InterlockedExchange(&handling_exception, 1) != 0)
+            {
+                TerminateProcess(GetCurrentProcess(), exceptioninfo->ExceptionRecord->ExceptionCode);
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
 
-            exception_data.code = exceptioninfo->ExceptionRecord->ExceptionCode;
-            exception_data.address = exceptioninfo->ExceptionRecord->ExceptionAddress;
-            exceptioninfo->ContextRecord->Eip = get_reset_state_stub();
+            const auto code = exceptioninfo->ExceptionRecord->ExceptionCode;
+            if (code == EXCEPTION_STACK_OVERFLOW)
+            {
+                display_error_dialog("The game terminated because of a stack overflow.",
+                                     "Project: Consolation ERROR");
+                TerminateProcess(GetCurrentProcess(), code);
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
 
-            return EXCEPTION_CONTINUE_EXECUTION;
+            const auto dump_name = write_minidump(exceptioninfo);
+            const auto message = generate_crash_info(exceptioninfo) +
+                "\r\nA minidump was written to:\r\n" + dump_name +
+                "\r\n\r\nMake sure your graphics card drivers and operating system are up to date.";
+
+            display_error_dialog(message, "Project: Consolation ERROR");
+            TerminateProcess(GetCurrentProcess(), code);
+
+            return EXCEPTION_CONTINUE_SEARCH;
         }
 
     }
