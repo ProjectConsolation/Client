@@ -793,7 +793,37 @@ extern "C"
 	int WINAPI xlive_XSocketIOCTLSocket(SOCKET socket_handle, long cmd, u_long* argp) { return ioctlsocket(socket_handle, cmd, argp); }
 	int WINAPI xlive_XSocketSetSockOpt(SOCKET socket_handle, int level, int optname, const char* optval, int optlen) { return setsockopt(socket_handle, level, optname, optval, optlen); }
 	int WINAPI xlive_XSocketBind(SOCKET socket_handle, const sockaddr* name, int namelen) { return bind(socket_handle, name, namelen); }
-	int WINAPI xlive_XSocketRecvFrom(SOCKET socket_handle, char* buffer, int len, int flags, sockaddr* from, int* fromlen) { return recvfrom(socket_handle, buffer, len, flags, from, fromlen); }
+	int WINAPI xlive_XSocketRecvFrom(SOCKET socket_handle, char* buffer, int len, int flags, sockaddr* from, int* fromlen)
+	{
+		// Contain malformed callers at the XLive ABI boundary. A valid UDP
+		// receive cannot request more than the maximum datagram size or provide
+		// an output address length outside sockaddr_storage.
+		if (socket_handle == INVALID_SOCKET || !buffer || len <= 0 || len > 0x10000
+			|| (from && !fromlen))
+		{
+			WSASetLastError(WSAEFAULT);
+			return SOCKET_ERROR;
+		}
+
+		if (fromlen)
+		{
+			__try
+			{
+				if (*fromlen < 0 || *fromlen > static_cast<int>(sizeof(sockaddr_storage)))
+				{
+					WSASetLastError(WSAEFAULT);
+					return SOCKET_ERROR;
+				}
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				WSASetLastError(WSAEFAULT);
+				return SOCKET_ERROR;
+			}
+		}
+
+		return recvfrom(socket_handle, buffer, len, flags, from, fromlen);
+	}
 	int WINAPI xlive_XSocketSendTo(SOCKET socket_handle, const char* buffer, int len, int flags, const sockaddr* to, int tolen) { return sendto(socket_handle, buffer, len, flags, to, tolen); }
 	unsigned long WINAPI xlive_XSocketInet_Addr(const char* cp) { return inet_addr(cp); }
 	int WINAPI xlive_XWSAGetLastError() { return WSAGetLastError(); }
