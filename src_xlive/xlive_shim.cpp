@@ -156,7 +156,15 @@ namespace
 	};
 
 	std::mutex local_session_mutex;
-	local_session_state local_session;
+	std::vector<local_session_state> local_sessions;
+	constexpr DWORD xsession_create_uses_matchmaking = 0x00000008;
+
+	local_session_state* find_local_session_locked(HANDLE handle)
+	{
+		const auto it = std::find_if(local_sessions.begin(), local_sessions.end(),
+			[handle](const auto& session) { return session.handle == handle; });
+		return it == local_sessions.end() ? nullptr : &*it;
+	}
 
 	#pragma pack(push, 1)
 	struct xstorage_download_results
@@ -1039,18 +1047,8 @@ extern "C"
 
 		{
 			std::lock_guard lock(local_session_mutex);
-			if (local_session.handle)
-			{
-				CloseHandle(local_session.handle);
-			}
-
-			local_session = {};
-			local_session.handle = session_handle;
-			local_session.info = session_info;
-			local_session.nonce = session_nonce;
-			local_session.flags = flags;
-			local_session.max_public_slots = max_public_slots;
-			local_session.max_private_slots = max_private_slots;
+			local_sessions.push_back({ session_handle, session_info, session_nonce, flags,
+				max_public_slots, max_private_slots });
 		}
 
 		*nonce = session_nonce;
@@ -1090,13 +1088,14 @@ extern "C"
 		DWORD result = success;
 		{
 			std::lock_guard lock(local_session_mutex);
-			if (handle != local_session.handle)
+			auto* session = find_local_session_locked(handle);
+			if (!session)
 			{
 				result = invalid_parameter;
 			}
 			else
 			{
-				local_session.state = 2; // XSESSION_STATE_INGAME
+				session->state = 2; // XSESSION_STATE_INGAME
 			}
 		}
 		return finish_operation(overlapped, result);
@@ -1113,9 +1112,14 @@ extern "C"
 		bool has_session = false;
 		{
 			std::lock_guard lock(local_session_mutex);
-			if (local_session.handle && max_results)
+			const auto it = std::find_if(local_sessions.begin(), local_sessions.end(),
+				[](const auto& candidate)
+				{
+					return candidate.handle && (candidate.flags & xsession_create_uses_matchmaking) != 0;
+				});
+			if (it != local_sessions.end() && max_results)
 			{
-				session = local_session;
+				session = *it;
 				has_session = true;
 			}
 		}
@@ -1157,15 +1161,16 @@ extern "C"
 		DWORD result = success;
 		{
 			std::lock_guard lock(local_session_mutex);
-			if (handle != local_session.handle)
+			auto* session = find_local_session_locked(handle);
+			if (!session)
 			{
 				result = invalid_parameter;
 			}
 			else
 			{
-				local_session.flags = flags;
-				local_session.max_public_slots = max_public_slots;
-				local_session.max_private_slots = max_private_slots;
+				session->flags = flags;
+				session->max_public_slots = max_public_slots;
+				session->max_private_slots = max_private_slots;
 			}
 		}
 		return finish_operation(overlapped, result);
@@ -1175,14 +1180,15 @@ extern "C"
 		DWORD result = success;
 		{
 			std::lock_guard lock(local_session_mutex);
-			if (handle != local_session.handle || !info)
+			auto* session = find_local_session_locked(handle);
+			if (!session || !info)
 			{
 				result = invalid_parameter;
 			}
 			else
 			{
 				make_session_info(info);
-				local_session.info = *info;
+				session->info = *info;
 			}
 		}
 		return finish_operation(overlapped, result);
@@ -1199,7 +1205,8 @@ extern "C"
 		DWORD result = success;
 		{
 			std::lock_guard lock(local_session_mutex);
-			if (handle != local_session.handle)
+			auto* session = find_local_session_locked(handle);
+			if (!session)
 			{
 				result = invalid_parameter;
 			}
@@ -1209,11 +1216,11 @@ extern "C"
 				{
 					if (private_slots[index])
 					{
-						++local_session.filled_private_slots;
+						++session->filled_private_slots;
 					}
 					else
 					{
-						++local_session.filled_public_slots;
+						++session->filled_public_slots;
 					}
 				}
 			}
@@ -1222,15 +1229,19 @@ extern "C"
 	}
 	DWORD WINAPI xlive_XSessionDelete(HANDLE handle, xoverlapped* overlapped)
 	{
+		bool found = false;
 		{
 			std::lock_guard lock(local_session_mutex);
-			if (handle == local_session.handle)
+			const auto it = std::find_if(local_sessions.begin(), local_sessions.end(),
+				[handle](const auto& session) { return session.handle == handle; });
+			if (it != local_sessions.end())
 			{
-				local_session = {};
+				local_sessions.erase(it);
+				found = true;
 			}
 		}
 
-		if (handle && handle != INVALID_HANDLE_VALUE)
+		if (found && handle && handle != INVALID_HANDLE_VALUE)
 		{
 			CloseHandle(handle);
 		}
@@ -1336,13 +1347,14 @@ extern "C"
 		DWORD result = success;
 		{
 			std::lock_guard lock(local_session_mutex);
-			if (handle != local_session.handle)
+			auto* session = find_local_session_locked(handle);
+			if (!session)
 			{
 				result = invalid_parameter;
 			}
 			else
 			{
-				local_session.state = 3; // XSESSION_STATE_REPORTING
+				session->state = 3; // XSESSION_STATE_REPORTING
 			}
 		}
 		return finish_operation(overlapped, result);
