@@ -1,0 +1,39 @@
+menudef
+{
+    name "serverbrowser"
+    rect 0 0 640 480 1 1
+    focusColor 1 1 1 1
+
+    itemDef
+    {
+        name "title"
+        rect 32 24 576 32 1 1
+        text "SERVER BROWSER"
+        textscale 0.45
+        visible 1
+        decoration
+    }
+
+    itemDef
+    {
+        name "instructions"
+        rect 32 72 576 28 1 1
+        text "Use the console command: connect_direct <ip>"
+        textscale 0.28
+        visible 1
+        decoration
+    }
+
+    itemDef
+    {
+        name "back"
+        rect 32 420 576 28 1 1
+        text "BACK"
+        textscale 0.32
+        visible 1
+        action
+        {
+            closemenu serverbrowser
+        }
+    }
+}

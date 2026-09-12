@@ -351,10 +351,47 @@ namespace
 		return result;
 	}
 
+	unsigned int offline_instance_index()
+	{
+		struct instance_reservation
+		{
+			HANDLE handle = nullptr;
+			unsigned int index = 0;
+			instance_reservation()
+			{
+				for (; index < 32; ++index)
+				{
+					const auto name = L"Local\\ConsolationClient.OfflineInstance." + std::to_wstring(index);
+					handle = CreateMutexW(nullptr, FALSE, name.c_str());
+					const auto error = GetLastError();
+					if (!handle)
+					{
+						throw std::runtime_error("Unable to reserve an offline instance identity");
+					}
+					if (error != ERROR_ALREADY_EXISTS) return;
+					CloseHandle(handle);
+					handle = nullptr;
+				}
+				throw std::runtime_error("All offline instance identities are in use");
+			}
+			~instance_reservation()
+			{
+				if (handle) CloseHandle(handle);
+			}
+		};
+		static const instance_reservation reservation;
+		return reservation.index;
+	}
+
 	std::string offline_name()
 	{
+		const auto requested_name = command_line_name();
 		if (auto* const name = find_dvar("name"); name && name->type == 7 && name->current.string && *name->current.string)
 		{
+			if (!requested_name.empty() && _stricmp(name->current.string, "Player") == 0)
+			{
+				return requested_name;
+			}
 			return name->current.string;
 		}
 
@@ -369,15 +406,25 @@ namespace
 
 	XUID offline_xuid()
 	{
-		const auto name = offline_name();
-		std::uint64_t hash = 1469598103934665603ull;
-		for (const auto ch : name)
+		// A display-name change must not move a signed-in user to another profile.
+		static const XUID identity = []
 		{
-			hash ^= static_cast<unsigned char>(ch);
-			hash *= 1099511628211ull;
-		}
-
-		return 0xE000000000000000ull | (hash & 0x0000FFFFFFFFFFFFull);
+			const auto requested_name = command_line_name();
+			auto name = requested_name.empty() ? offline_name() : requested_name;
+			const auto instance = offline_instance_index();
+			if (instance != 0)
+			{
+				name += "#instance=" + std::to_string(instance + 1);
+			}
+			std::uint64_t hash = 1469598103934665603ull;
+			for (const auto ch : name)
+			{
+				hash ^= static_cast<unsigned char>(ch);
+				hash *= 1099511628211ull;
+			}
+			return 0xE000000000000000ull | (hash & 0x0000FFFFFFFFFFFFull);
+		}();
+		return identity;
 	}
 
 	std::filesystem::path storage_root()
@@ -1060,9 +1107,13 @@ extern "C"
 			return invalid_parameter;
 		}
 
-		const auto session_nonce = offline_xuid();
-		xsession_info session_info{};
-		make_session_info(&session_info);
+		const bool hosting = (flags & 0x00000001u) != 0; // XSESSION_CREATE_HOST
+		const auto session_nonce = hosting ? offline_xuid() : *nonce;
+		xsession_info session_info = hosting ? xsession_info{} : *info;
+		if (hosting)
+		{
+			make_session_info(&session_info);
+		}
 		const auto session_handle = CreateEventA(nullptr, FALSE, FALSE, nullptr);
 		if (!session_handle)
 		{

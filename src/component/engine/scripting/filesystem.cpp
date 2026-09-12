@@ -68,6 +68,10 @@ namespace filesystem
 			}
 
 			add_engine_search_path("consolation", current_path.c_str());
+			// Legacy UI menus are resolved relative to the engine search path.
+			// This maps ui_mp/serverbrowser.menu to consolation/menu/ui_mp/serverbrowser.menu.
+			const auto menu_path = (std::filesystem::path(current_path) / "consolation").string();
+			add_engine_search_path("menu", menu_path.c_str());
 			add_engine_search_path("raw", current_path.c_str());
 			add_engine_search_path("userraw", current_path.c_str());
 			engine_paths_registered = true;
@@ -82,6 +86,7 @@ namespace filesystem
 
 			filesystem::register_path(L".");
 			filesystem::register_path(L"consolation");
+			filesystem::register_path(L"consolation/menu");
 			filesystem::register_path(L"raw");
 			filesystem::register_path(L"userraw");
 			if (const auto players_directory = get_default_players_directory(); !players_directory.empty())
