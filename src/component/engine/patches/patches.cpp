@@ -244,6 +244,28 @@ namespace patches
 			console::info("voice: installed unavailable-engine lifecycle and party/UI guards\n");
 		}
 
+		void WINAPI private_match_unpause_stub(LPCRITICAL_SECTION critical_section)
+		{
+			LeaveCriticalSection(critical_section);
+			game::Dvar_SetString("cl_paused", "0");
+		}
+
+		void apply_private_match_unpause()
+		{
+			// COD4 clears cl_paused during SV_SpawnServer. QoS 1.1 reaches the
+			// map and Game Initialization without that reset, leaving local private
+			// matches on a black paused screen after ui_mp is unloaded.
+			const auto site = game::game_offset(0x102F7281);
+			const unsigned char expected[] = {0xFF, 0x15, 0x54, 0x60, 0x47, 0x10};
+			if (memcmp(reinterpret_cast<const void*>(site), expected, sizeof(expected)) != 0)
+			{
+				throw std::runtime_error("Unsupported QoS server-spawn unlock instruction");
+			}
+
+			utils::hook::call(site, private_match_unpause_stub);
+			console::info("private match: clearing cl_paused after server startup\n");
+		}
+
 		bool local_offline_mode_requested()
 		{
 			return utils::flags::has_flag("offline")
@@ -792,6 +814,7 @@ namespace patches
 			apply_video_dvar_patches();
 			apply_cinematic_stats_guard();
 			apply_missing_voice_engine_guard();
+			apply_private_match_unpause();
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
