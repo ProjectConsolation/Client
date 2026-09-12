@@ -254,24 +254,36 @@ namespace patches
 			// COD4 clears cl_paused during SV_SpawnServer. QoS 1.1 reaches the
 			// map and Game Initialization without that reset, leaving local private
 			// matches on a black paused screen after ui_mp is unloaded.
+			console::info("[patches - private-match] applying server startup guard\n");
 			const auto site = game::game_offset(0x102F7281);
 			const unsigned char expected[] = {0xFF, 0x15, 0x54, 0x60, 0x47, 0x10};
 			if (memcmp(reinterpret_cast<const void*>(site), expected, sizeof(expected)) != 0)
 			{
-				throw std::runtime_error("Unsupported QoS server-spawn unlock instruction");
+				const auto* const actual = reinterpret_cast<const unsigned char*>(site);
+				console::error("[patches - private-match] skipped: unexpected bytes at 0x102F7281 "
+					"(%02X %02X %02X %02X %02X %02X)\n",
+					actual[0], actual[1], actual[2], actual[3], actual[4], actual[5]);
+				return;
 			}
 
-			auto* stub = utils::hook::assemble([site](utils::hook::assembler& a)
+			try
 			{
-				// The original call is indirect and six bytes long. Keep its existing
-				// stack argument, invoke it with the correct stdcall ABI, then continue.
-				a.call(reinterpret_cast<void*>(&LeaveCriticalSection));
-				a.call(private_match_set_unpaused);
-				a.jmp(reinterpret_cast<void*>(site + sizeof(expected)));
-			});
-			utils::hook::nop(site, sizeof(expected));
-			utils::hook::jump(site, stub);
-			console::info("[patches - private-match] PATCHED: clear cl_paused after server startup\n");
+				auto* stub = utils::hook::assemble([site](utils::hook::assembler& a)
+				{
+					// Preserve the original six-byte indirect import call and its
+					// existing stdcall stack argument exactly.
+					a.call(dword_ptr(site + 2));
+					a.call(private_match_set_unpaused);
+					a.jmp(reinterpret_cast<void*>(site + 6));
+				});
+				utils::hook::nop(site, sizeof(expected));
+				utils::hook::jump(site, stub);
+				console::info("[patches - private-match] PATCHED: clear cl_paused after server startup\n");
+			}
+			catch (const std::exception& error)
+			{
+				console::error("[patches - private-match] skipped: %s\n", error.what());
+			}
 		}
 
 		bool local_offline_mode_requested()
