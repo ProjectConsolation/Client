@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -119,6 +120,43 @@ namespace
 		BYTE key_exchange_key[16];
 	};
 	static_assert(sizeof(xsession_info) == 60);
+
+	struct xsession_search_result
+	{
+		xsession_info info;
+		DWORD open_public_slots;
+		DWORD open_private_slots;
+		DWORD filled_public_slots;
+		DWORD filled_private_slots;
+		DWORD property_count;
+		DWORD context_count;
+		void* properties;
+		void* contexts;
+	};
+	static_assert(sizeof(xsession_search_result) == 92);
+
+	struct xsession_search_result_header
+	{
+		DWORD result_count;
+		xsession_search_result* results;
+	};
+	static_assert(sizeof(xsession_search_result_header) == 8);
+
+	struct local_session_state
+	{
+		HANDLE handle = nullptr;
+		xsession_info info{};
+		ULONGLONG nonce = 0;
+		DWORD flags = 0;
+		DWORD max_public_slots = 0;
+		DWORD max_private_slots = 0;
+		DWORD filled_public_slots = 0;
+		DWORD filled_private_slots = 0;
+		DWORD state = 0; // XSESSION_STATE_LOBBY
+	};
+
+	std::mutex local_session_mutex;
+	local_session_state local_session;
 
 	#pragma pack(push, 1)
 	struct xstorage_download_results
@@ -979,7 +1017,8 @@ extern "C"
 
 	DWORD WINAPI xlive_XOnlineStartup() { return success; }
 	DWORD WINAPI xlive_XOnlineCleanup() { return success; }
-	DWORD WINAPI xlive_XSessionCreate(DWORD, DWORD, DWORD, DWORD, ULONGLONG* nonce, xsession_info* info, xoverlapped* overlapped, HANDLE* handle)
+	DWORD WINAPI xlive_XSessionCreate(DWORD flags, DWORD, DWORD max_public_slots, DWORD max_private_slots,
+		ULONGLONG* nonce, xsession_info* info, xoverlapped* overlapped, HANDLE* handle)
 	{
 		if (!nonce || !info || !handle)
 		{
@@ -987,15 +1026,36 @@ extern "C"
 			return invalid_parameter;
 		}
 
-		*nonce = offline_xuid();
-		make_session_info(info);
-		*handle = CreateEventA(nullptr, FALSE, FALSE, nullptr);
-		if (!*handle)
+		const auto session_nonce = offline_xuid();
+		xsession_info session_info{};
+		make_session_info(&session_info);
+		const auto session_handle = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+		if (!session_handle)
 		{
 			const auto error = GetLastError();
 			complete_overlapped(overlapped, error);
 			return error;
 		}
+
+		{
+			std::lock_guard lock(local_session_mutex);
+			if (local_session.handle)
+			{
+				CloseHandle(local_session.handle);
+			}
+
+			local_session = {};
+			local_session.handle = session_handle;
+			local_session.info = session_info;
+			local_session.nonce = session_nonce;
+			local_session.flags = flags;
+			local_session.max_public_slots = max_public_slots;
+			local_session.max_private_slots = max_private_slots;
+		}
+
+		*nonce = session_nonce;
+		*info = session_info;
+		*handle = session_handle;
 		return inert_success(overlapped);
 	}
 	DWORD WINAPI xlive_XStringVerify(DWORD, const char*, DWORD, const void*, DWORD, void*, xoverlapped* overlapped) { return inert_success(overlapped); }
@@ -1025,23 +1085,157 @@ extern "C"
 	DWORD WINAPI xlive_XUserMuteListQuery(DWORD, XUID, BOOL* muted) { if (muted) *muted = FALSE; return success; }
 	DWORD WINAPI xlive_XInviteGetAcceptedInfo(DWORD, void*) { return not_found; }
 	DWORD WINAPI xlive_XSessionWriteStats(HANDLE, XUID, DWORD, const void*, xoverlapped* overlapped) { return inert_success(overlapped); }
-	DWORD WINAPI xlive_XSessionStart(HANDLE, DWORD, xoverlapped* overlapped) { return inert_success(overlapped); }
-	DWORD WINAPI xlive_XSessionSearchEx(DWORD, DWORD, DWORD, DWORD, WORD, WORD, const void*, const void*, DWORD* result_size, void*, xoverlapped* overlapped)
+	DWORD WINAPI xlive_XSessionStart(HANDLE handle, DWORD, xoverlapped* overlapped)
 	{
-		if (result_size)
+		DWORD result = success;
+		{
+			std::lock_guard lock(local_session_mutex);
+			if (handle != local_session.handle)
+			{
+				result = invalid_parameter;
+			}
+			else
+			{
+				local_session.state = 2; // XSESSION_STATE_INGAME
+			}
+		}
+		return finish_operation(overlapped, result);
+	}
+	DWORD WINAPI xlive_XSessionSearchEx(DWORD, DWORD, DWORD max_results, DWORD, WORD, WORD, const void*, const void*,
+		DWORD* result_size, xsession_search_result_header* results, xoverlapped* overlapped)
+	{
+		if (!result_size)
+		{
+			return finish_operation(overlapped, invalid_parameter);
+		}
+
+		local_session_state session;
+		bool has_session = false;
+		{
+			std::lock_guard lock(local_session_mutex);
+			if (local_session.handle && max_results)
+			{
+				session = local_session;
+				has_session = true;
+			}
+		}
+		if (!has_session)
 		{
 			*result_size = 0;
+			return finish_operation(overlapped, success);
 		}
-		// Offline matchmaking has no remote result set. Complete successfully with
-		// an empty result so QoS stays in its search UI instead of entering
-		// Com_ErrorCleanup and unloading/reloading ui_mp.
-		return finish_operation(overlapped, success);
+
+		const auto required_size = static_cast<DWORD>(sizeof(xsession_search_result_header)
+			+ sizeof(xsession_search_result));
+		if (!results || *result_size < required_size)
+		{
+			*result_size = required_size;
+			return finish_operation(overlapped, insufficient_buffer);
+		}
+
+		memset(results, 0, required_size);
+		results->result_count = 1;
+		results->results = reinterpret_cast<xsession_search_result*>(
+			reinterpret_cast<BYTE*>(results) + sizeof(*results));
+		results->results[0].info = session.info;
+		results->results[0].open_public_slots = session.max_public_slots
+			> session.filled_public_slots
+			? session.max_public_slots - session.filled_public_slots
+			: 0;
+		results->results[0].open_private_slots = session.max_private_slots
+			> session.filled_private_slots
+			? session.max_private_slots - session.filled_private_slots
+			: 0;
+		results->results[0].filled_public_slots = session.filled_public_slots;
+		results->results[0].filled_private_slots = session.filled_private_slots;
+		*result_size = required_size;
+		return finish_operation(overlapped, success, required_size);
 	}
-	DWORD WINAPI xlive_XSessionModify(HANDLE, DWORD, DWORD, DWORD, xoverlapped* overlapped) { return inert_success(overlapped); }
-	DWORD WINAPI xlive_XSessionMigrateHost(HANDLE, DWORD, xsession_info* info, xoverlapped* overlapped) { make_session_info(info); return inert_success(overlapped); }
+	DWORD WINAPI xlive_XSessionModify(HANDLE handle, DWORD flags, DWORD max_public_slots, DWORD max_private_slots,
+		xoverlapped* overlapped)
+	{
+		DWORD result = success;
+		{
+			std::lock_guard lock(local_session_mutex);
+			if (handle != local_session.handle)
+			{
+				result = invalid_parameter;
+			}
+			else
+			{
+				local_session.flags = flags;
+				local_session.max_public_slots = max_public_slots;
+				local_session.max_private_slots = max_private_slots;
+			}
+		}
+		return finish_operation(overlapped, result);
+	}
+	DWORD WINAPI xlive_XSessionMigrateHost(HANDLE handle, DWORD, xsession_info* info, xoverlapped* overlapped)
+	{
+		DWORD result = success;
+		{
+			std::lock_guard lock(local_session_mutex);
+			if (handle != local_session.handle || !info)
+			{
+				result = invalid_parameter;
+			}
+			else
+			{
+				make_session_info(info);
+				local_session.info = *info;
+			}
+		}
+		return finish_operation(overlapped, result);
+	}
 	DWORD WINAPI xlive_XOnlineGetNatType() { return 1; }
-	DWORD WINAPI xlive_XSessionJoinRemote(HANDLE, DWORD, const XUID*, const BOOL*, xoverlapped* overlapped) { return inert_success(overlapped); }
-	DWORD WINAPI xlive_XSessionDelete(HANDLE handle, xoverlapped* overlapped) { if (handle && handle != INVALID_HANDLE_VALUE) CloseHandle(handle); return inert_success(overlapped); }
+	DWORD WINAPI xlive_XSessionJoinRemote(HANDLE handle, DWORD xuid_count, const XUID* xuids,
+		const BOOL* private_slots, xoverlapped* overlapped)
+	{
+		if (xuid_count && (!xuids || !private_slots))
+		{
+			return finish_operation(overlapped, invalid_parameter);
+		}
+
+		DWORD result = success;
+		{
+			std::lock_guard lock(local_session_mutex);
+			if (handle != local_session.handle)
+			{
+				result = invalid_parameter;
+			}
+			else
+			{
+				for (DWORD index = 0; index < xuid_count; ++index)
+				{
+					if (private_slots[index])
+					{
+						++local_session.filled_private_slots;
+					}
+					else
+					{
+						++local_session.filled_public_slots;
+					}
+				}
+			}
+		}
+		return finish_operation(overlapped, result);
+	}
+	DWORD WINAPI xlive_XSessionDelete(HANDLE handle, xoverlapped* overlapped)
+	{
+		{
+			std::lock_guard lock(local_session_mutex);
+			if (handle == local_session.handle)
+			{
+				local_session = {};
+			}
+		}
+
+		if (handle && handle != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(handle);
+		}
+		return inert_success(overlapped);
+	}
 	DWORD WINAPI xlive_XUserReadProfileSettings(DWORD title_id, DWORD user_index, DWORD setting_count, const DWORD* setting_ids,
 		DWORD* result_size, xuser_read_profile_setting_result* result, xoverlapped* overlapped)
 	{
@@ -1137,7 +1331,22 @@ extern "C"
 		*result_size = required_size;
 		return finish_operation(overlapped, success, required_size);
 	}
-	DWORD WINAPI xlive_XSessionEnd(HANDLE, xoverlapped* overlapped) { return inert_success(overlapped); }
+	DWORD WINAPI xlive_XSessionEnd(HANDLE handle, xoverlapped* overlapped)
+	{
+		DWORD result = success;
+		{
+			std::lock_guard lock(local_session_mutex);
+			if (handle != local_session.handle)
+			{
+				result = invalid_parameter;
+			}
+			else
+			{
+				local_session.state = 3; // XSESSION_STATE_REPORTING
+			}
+		}
+		return finish_operation(overlapped, result);
+	}
 	DWORD WINAPI xlive_XSessionArbitrationRegister(HANDLE, DWORD, ULONGLONG, DWORD*, void*, xoverlapped* overlapped) { return inert_success(overlapped); }
 	DWORD WINAPI xlive_XSessionLeaveRemote(HANDLE, DWORD, const XUID*, xoverlapped* overlapped) { return inert_success(overlapped); }
 	DWORD WINAPI xlive_XUserWriteProfileSettings(DWORD user_index, DWORD setting_count, const xuser_profile_setting* settings, xoverlapped* overlapped)
