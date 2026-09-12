@@ -287,11 +287,15 @@ namespace patches
 
 			try
 			{
-				auto* stub = utils::hook::assemble([site](utils::hook::assembler& a)
+				// FF 15 encodes the address of the import slot, not the slot itself.
+				// Capture it before replacing the instruction with a jump.
+				std::uint32_t import_slot = 0;
+				memcpy(&import_slot, reinterpret_cast<const void*>(site + 2), sizeof(import_slot));
+				auto* stub = utils::hook::assemble([site, import_slot](utils::hook::assembler& a)
 				{
 					// Preserve the original six-byte indirect import call and its
 					// existing stdcall stack argument exactly.
-					a.call(dword_ptr(site + 2));
+					a.call(dword_ptr(import_slot));
 					a.call(private_match_set_unpaused);
 					a.jmp(reinterpret_cast<void*>(site + 6));
 				});
