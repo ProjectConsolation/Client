@@ -801,7 +801,9 @@ extern "C"
 		if (socket_handle == INVALID_SOCKET || !buffer || len <= 0 || len > 0x10000
 			|| (from && !fromlen))
 		{
-			WSASetLastError(WSAEFAULT);
+			// The offline network pump treats an empty nonblocking receive as
+			// normal; WSAEFAULT would recurse through the game's fatal error path.
+			WSASetLastError(WSAEWOULDBLOCK);
 			return SOCKET_ERROR;
 		}
 
@@ -811,13 +813,13 @@ extern "C"
 			{
 				if (*fromlen < 0 || *fromlen > static_cast<int>(sizeof(sockaddr_storage)))
 				{
-					WSASetLastError(WSAEFAULT);
+					WSASetLastError(WSAEWOULDBLOCK);
 					return SOCKET_ERROR;
 				}
 			}
 			__except (EXCEPTION_EXECUTE_HANDLER)
 			{
-				WSASetLastError(WSAEFAULT);
+				WSASetLastError(WSAEWOULDBLOCK);
 				return SOCKET_ERROR;
 			}
 		}
