@@ -203,10 +203,10 @@ namespace
 		{
 #ifdef DEBUG
 			configure_debug_crt();
-			// xlive early patching is still unstable during bring-up.
-			// Keep it disabled until the xlive port is proven safe again.
-			// xlive::apply_early();
-			//MessageBoxA(NULL, "ATTACH DEBUGGER NOW", "DEBUG", MB_DEFBUTTON1);
+			// Attach before component hooks and engine startup so first-chance
+			// exceptions can be caught without racing the injected DLL.
+			MessageBoxA(nullptr, "Attach Visual Studio to JB_LiveEngine_s.exe, then click OK.",
+				"Consolation DEBUG", MB_OK | MB_ICONINFORMATION);
 #endif
 
 			

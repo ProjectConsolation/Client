@@ -147,7 +147,7 @@ namespace patches
 			});
 			utils::hook::nop(site, sizeof(expected));
 			utils::hook::jump(site, stub);
-			console::info("stats: enabled profile initialization during cinematics\n");
+			console::info("[STATS] PATCHED: profile initialization during cinematics\n");
 		}
 
 		void apply_missing_voice_engine_guard()
@@ -241,12 +241,11 @@ namespace patches
 			guard_voice_call(0x10324F62, 0x40, 0x10, eax, edx, 0x10324F6E);
 			guard_voice_call(0x102DBE40, 0x40, 0x10, eax, edx, 0x102DBE4C);
 			guard_voice_call(0x103009FD, 0x47, 0x10, edi, edx, 0x10300A09);
-			console::info("voice: installed unavailable-engine lifecycle and party/UI guards\n");
+			console::info("[VOICE] PATCHED: unavailable-engine lifecycle and party/UI guards\n");
 		}
 
-		void WINAPI private_match_unpause_stub(LPCRITICAL_SECTION critical_section)
+		void private_match_set_unpaused()
 		{
-			LeaveCriticalSection(critical_section);
 			game::Dvar_SetString("cl_paused", "0");
 		}
 
@@ -262,8 +261,17 @@ namespace patches
 				throw std::runtime_error("Unsupported QoS server-spawn unlock instruction");
 			}
 
-			utils::hook::call(site, private_match_unpause_stub);
-			console::info("private match: clearing cl_paused after server startup\n");
+			auto* stub = utils::hook::assemble([site](utils::hook::assembler& a)
+			{
+				// The original call is indirect and six bytes long. Keep its existing
+				// stack argument, invoke it with the correct stdcall ABI, then continue.
+				a.call(reinterpret_cast<void*>(&LeaveCriticalSection));
+				a.call(private_match_set_unpaused);
+				a.jmp(reinterpret_cast<void*>(site + sizeof(expected)));
+			});
+			utils::hook::nop(site, sizeof(expected));
+			utils::hook::jump(site, stub);
+			console::info("[PRIVATE] PATCHED: clear cl_paused after server startup\n");
 		}
 
 		bool local_offline_mode_requested()
