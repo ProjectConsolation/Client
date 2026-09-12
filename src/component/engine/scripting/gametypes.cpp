@@ -115,56 +115,6 @@ namespace gametypes
 			return zone_name != nullptr && _strnicmp(zone_name, "patch_", 6) == 0;
 		}
 
-		bool rawfile_name_equals(const game::RawFile* rawfile, const std::string& name)
-		{
-			if (!rawfile || !rawfile->name)
-			{
-				return false;
-			}
-
-			return _stricmp(normalize_gametype_path(rawfile->name).c_str(), name.c_str()) == 0;
-		}
-
-		game::RawFile* find_patch_gametype_rawfile(const std::string& name)
-		{
-			game::RawFile* fallback_patch_rawfile = nullptr;
-
-			game::DB_EnumXAssetEntries(game::ASSET_TYPE_RAWFILE, [&](game::XAssetEntryPoolEntry* pool_entry)
-			{
-				if (pool_entry == nullptr)
-				{
-					return;
-				}
-
-				const auto& entry = pool_entry->entry;
-				auto* const rawfile = entry.asset.header.rawfile;
-				if (!rawfile_has_data(rawfile) || !rawfile_name_equals(rawfile, name))
-				{
-					return;
-				}
-
-				const auto* const zone_name = get_zone_name(static_cast<unsigned char>(entry.zoneIndex));
-				if (!is_patch_zone(zone_name))
-				{
-					return;
-				}
-
-				// Prefer the project patch if multiple patch zones carry the same rawfile.
-				if (_stricmp(zone_name, "patch_consolation") == 0)
-				{
-					fallback_patch_rawfile = rawfile;
-					return;
-				}
-
-				if (!fallback_patch_rawfile)
-				{
-					fallback_patch_rawfile = rawfile;
-				}
-			}, true);
-
-			return fallback_patch_rawfile;
-		}
-
 		game::RawFile* make_rawfile(const std::string& name, const std::string& data)
 		{
 			auto* rawfile = utils::memory::allocate<game::RawFile>();
@@ -219,13 +169,6 @@ namespace gametypes
 			if (is_gametype_rawfile(type, name))
 			{
 				const auto normalized_name = normalize_gametype_path(name);
-				if (auto* patch_rawfile = find_patch_gametype_rawfile(normalized_name))
-				{
-					game::XAssetHeader header{};
-					header.rawfile = patch_rawfile;
-					return header;
-				}
-
 				if (auto* rawfile = load_custom_gametype_rawfile(name))
 				{
 					game::XAssetHeader header{};
