@@ -135,19 +135,26 @@ namespace patches
 				throw std::runtime_error("Unsupported QoS statset connection-state instruction");
 			}
 
-			auto* stub = utils::hook::assemble([state_address](utils::hook::assembler& a)
+			try
 			{
-				const auto original_check = a.newLabel();
-				a.mov(edx, dword_ptr(state_address));
-				a.cmp(edx, 1);
-				a.jne(original_check);
-				a.jmp(reinterpret_cast<void*>(game::game_offset(0x1024102C)));
-				a.bind(original_check);
-				a.jmp(reinterpret_cast<void*>(game::game_offset(0x10240FF8)));
-			});
-			utils::hook::nop(site, sizeof(expected));
-			utils::hook::jump(site, stub);
-			console::info("[patches - stats] PATCHED: profile initialization during cinematics\n");
+				auto* stub = utils::hook::assemble([state_address](utils::hook::assembler& a)
+				{
+					const auto original_check = a.newLabel();
+					a.mov(edx, dword_ptr(state_address));
+					a.cmp(edx, 1);
+					a.jne(original_check);
+					a.jmp(reinterpret_cast<void*>(game::game_offset(0x1024102C)));
+					a.bind(original_check);
+					a.jmp(reinterpret_cast<void*>(game::game_offset(0x10240FF8)));
+				});
+				utils::hook::nop(site, sizeof(expected));
+				utils::hook::jump(site, stub);
+				console::info("[patches - stats] PATCHED: profile initialization during cinematics\n");
+			}
+			catch (const std::exception& error)
+			{
+				console::error("[patches - stats] skipped: %s\n", error.what());
+			}
 		}
 
 		void apply_missing_voice_engine_guard()
