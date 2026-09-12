@@ -48,6 +48,7 @@ namespace
 	constexpr DWORD signed_in_to_live = 2;
 	constexpr DWORD xuser_name_size = 16;
 	constexpr DWORD xnet_connect_status_connected = 2;
+	constexpr int xnet_protocol_vdp = 254;
 	constexpr DWORD xnet_get_xnaddr_ethernet = 0x00000002;
 	constexpr DWORD xnet_get_xnaddr_static = 0x00000008;
 	constexpr DWORD xnet_get_xnaddr_online = 0x00000080;
@@ -734,7 +735,15 @@ extern "C"
 {
 	int WINAPI xlive_XWSAStartup(WORD version, WSADATA* data) { return WSAStartup(version, data); }
 	int WINAPI xlive_XWSACleanup() { return WSACleanup(); }
-	SOCKET WINAPI xlive_XSocketCreate(int af, int type, int protocol) { return socket(af, type, protocol); }
+	SOCKET WINAPI xlive_XSocketCreate(int af, int type, int protocol)
+	{
+		if (type == SOCK_DGRAM && protocol == xnet_protocol_vdp)
+		{
+			protocol = IPPROTO_UDP;
+		}
+
+		return socket(af, type, protocol);
+	}
 	int WINAPI xlive_XSocketClose(SOCKET socket_handle) { return closesocket(socket_handle); }
 	int WINAPI xlive_XSocketIOCTLSocket(SOCKET socket_handle, long cmd, u_long* argp) { return ioctlsocket(socket_handle, cmd, argp); }
 	int WINAPI xlive_XSocketSetSockOpt(SOCKET socket_handle, int level, int optname, const char* optval, int optlen) { return setsockopt(socket_handle, level, optname, optval, optlen); }
