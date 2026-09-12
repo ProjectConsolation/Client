@@ -231,7 +231,17 @@ namespace patches
 			guard_voice_call(0x10245EE7, 0x47, 0x08, edi, ecx, 0x10245EB3);
 			guard_voice_call(0x10245F3C, 0x47, 0x08, edi, ecx, 0x10245F28);
 			guard_voice_call(0x10246100, 0x43, 0x10, ebx, edx, 0x10246139);
-			console::info("voice: installed unavailable-engine lifecycle guards\n");
+			// Inlined IsHeadsetPresent/IsLocalTalking calls bypass the shared helpers.
+			// Resume at their result checks with EAX == 0, retaining party state and
+			// native headset-change notifications instead of skipping party setup.
+			guard_voice_call(0x103072A9, 0x40, 0x08, eax, ecx, 0x103072B5);
+			guard_voice_call(0x10309C62, 0x40, 0x08, eax, ecx, 0x10309C6E);
+			guard_voice_call(0x10309C7D, 0x40, 0x08, eax, ecx, 0x10309C89);
+			guard_voice_call(0x10324F37, 0x40, 0x10, eax, edx, 0x10324F43);
+			guard_voice_call(0x10324F62, 0x40, 0x10, eax, edx, 0x10324F6E);
+			guard_voice_call(0x102DBE40, 0x40, 0x10, eax, edx, 0x102DBE4C);
+			guard_voice_call(0x103009FD, 0x47, 0x10, edi, edx, 0x10300A09);
+			console::info("voice: installed unavailable-engine lifecycle and party/UI guards\n");
 		}
 
 		bool local_offline_mode_requested()
