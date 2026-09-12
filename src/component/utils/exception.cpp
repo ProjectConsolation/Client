@@ -108,6 +108,11 @@ namespace exception
         void post_load() override
         {
             SetUnhandledExceptionFilter(exception_filter);
+
+            constexpr auto message = "[exception] unhandled exception filter installed\n";
+            OutputDebugStringA(message);
+            std::printf("%s", message);
+            std::fflush(stdout);
         }
     };
 }
