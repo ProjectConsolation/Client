@@ -157,8 +157,6 @@ namespace
 
 	std::mutex local_session_mutex;
 	std::vector<local_session_state> local_sessions;
-	constexpr DWORD xsession_create_uses_matchmaking = 0x00000008;
-
 	local_session_state* find_local_session_locked(HANDLE handle)
 	{
 		const auto it = std::find_if(local_sessions.begin(), local_sessions.end(),
@@ -1100,7 +1098,7 @@ extern "C"
 		}
 		return finish_operation(overlapped, result);
 	}
-	DWORD WINAPI xlive_XSessionSearchEx(DWORD, DWORD, DWORD max_results, DWORD, WORD, WORD, const void*, const void*,
+	DWORD WINAPI xlive_XSessionSearchEx(DWORD, DWORD, DWORD max_results, DWORD num_users, WORD, WORD, const void*, const void*,
 		DWORD* result_size, xsession_search_result_header* results, xoverlapped* overlapped)
 	{
 		if (!result_size)
@@ -1112,15 +1110,20 @@ extern "C"
 		bool has_session = false;
 		{
 			std::lock_guard lock(local_session_mutex);
-			const auto it = std::find_if(local_sessions.begin(), local_sessions.end(),
-				[](const auto& candidate)
-				{
-					return candidate.handle && (candidate.flags & xsession_create_uses_matchmaking) != 0;
-				});
-			if (it != local_sessions.end() && max_results)
+			if (max_results)
 			{
-				session = *it;
-				has_session = true;
+				const auto it = std::find_if(local_sessions.begin(), local_sessions.end(),
+					[num_users](const auto& candidate)
+					{
+						const auto open_public_slots = candidate.max_public_slots > candidate.filled_public_slots
+							? candidate.max_public_slots - candidate.filled_public_slots : 0;
+						return candidate.handle && open_public_slots >= num_users;
+					});
+				if (it != local_sessions.end())
+				{
+					session = *it;
+					has_session = true;
+				}
 			}
 		}
 		if (!has_session)
