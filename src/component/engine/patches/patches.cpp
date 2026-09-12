@@ -150,6 +150,38 @@ namespace patches
 			console::info("stats: enabled profile initialization during cinematics\n");
 		}
 
+		void apply_missing_voice_engine_guard()
+		{
+			// QoS 1.1 faults at 0x102462F0 when XHVCreateEngine leaves a null engine.
+			// The SDK vtable and COD4A Voice_EnableMic confirm this is local-talker
+			// registration. Use QoS' false-return path without setting its mic flag.
+			// Retire with a replacement voice lifecycle; verify LIVE entry with and
+			// without an engine, preserving normal registration when one is present.
+			const auto site = game::game_offset(0x102462ED);
+			const unsigned char expected[] = {0x8B, 0x47, 0x60, 0x8B, 0x08};
+			const auto failure = game::game_offset(0x10246320);
+			const unsigned char expected_failure[] = {0x32, 0xC0, 0x5F, 0xC3};
+			if (memcmp(reinterpret_cast<const void*>(site), expected, sizeof(expected)) != 0
+				|| memcmp(reinterpret_cast<const void*>(failure), expected_failure, sizeof(expected_failure)) != 0)
+			{
+				throw std::runtime_error("Unsupported QoS voice registration instructions");
+			}
+
+			auto* stub = utils::hook::assemble([failure](utils::hook::assembler& a)
+			{
+				const auto engine_available = a.newLabel();
+				a.mov(eax, dword_ptr(edi, 0x60));
+				a.test(eax, eax);
+				a.jnz(engine_available);
+				a.jmp(reinterpret_cast<void*>(failure));
+				a.bind(engine_available);
+				a.mov(ecx, dword_ptr(eax));
+				a.jmp(reinterpret_cast<void*>(game::game_offset(0x102462F2)));
+			});
+			utils::hook::jump(site, stub);
+			console::info("voice: installed unavailable-engine registration guard\n");
+		}
+
 		bool local_offline_mode_requested()
 		{
 			return utils::flags::has_flag("offline")
@@ -697,6 +729,7 @@ namespace patches
 		{
 			apply_video_dvar_patches();
 			apply_cinematic_stats_guard();
+			apply_missing_voice_engine_guard();
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
