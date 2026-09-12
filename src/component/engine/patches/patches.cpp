@@ -147,7 +147,7 @@ namespace patches
 			});
 			utils::hook::nop(site, sizeof(expected));
 			utils::hook::jump(site, stub);
-			console::info("[STATS] PATCHED: profile initialization during cinematics\n");
+			console::info("[patches - stats] PATCHED: profile initialization during cinematics\n");
 		}
 
 		void apply_missing_voice_engine_guard()
@@ -241,7 +241,7 @@ namespace patches
 			guard_voice_call(0x10324F62, 0x40, 0x10, eax, edx, 0x10324F6E);
 			guard_voice_call(0x102DBE40, 0x40, 0x10, eax, edx, 0x102DBE4C);
 			guard_voice_call(0x103009FD, 0x47, 0x10, edi, edx, 0x10300A09);
-			console::info("[VOICE] PATCHED: unavailable-engine lifecycle and party/UI guards\n");
+			console::info("[patches - voice] PATCHED: unavailable-engine lifecycle and party/UI guards\n");
 		}
 
 		void private_match_set_unpaused()
@@ -271,7 +271,7 @@ namespace patches
 			});
 			utils::hook::nop(site, sizeof(expected));
 			utils::hook::jump(site, stub);
-			console::info("[PRIVATE] PATCHED: clear cl_paused after server startup\n");
+			console::info("[patches - private-match] PATCHED: clear cl_paused after server startup\n");
 		}
 
 		bool local_offline_mode_requested()
@@ -292,7 +292,7 @@ namespace patches
 			// XBOXLIVE_NETCONNECTION during local session startup.
 			utils::hook::nop(game::game_offset(0x102489A1), 5);
 
-			console::info("local offline mode: online storage/session checks bypassed\n");
+			console::info("[patches - offline] online storage/session checks bypassed\n");
 		}
 
 		using cl_parse_server_message_huffman_t = unsigned int(__cdecl*)(int, std::uint32_t*);

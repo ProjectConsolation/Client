@@ -435,12 +435,19 @@ namespace xlive
 
 	void apply_early()
 	{
+#ifdef DEBUG
+		// Keep debugger-visible process state intact while bringing up the client.
+		// Release builds retain the compatibility hooks below for the game runtime.
+		OutputDebugStringA("[patches - debug] anti-debug hooks disabled\n");
+		return;
+#else
 		dbg("apply_early: begin");
 		clear_peb_debug_flags();
 		hook_ntdll();
 		patch_xlive();
 		CloseHandle(CreateThread(nullptr, 0, peb_cleaner_thread, nullptr, 0, nullptr));
 		dbg("apply_early: done");
+#endif
 	}
 
 	class component final : public component_interface
