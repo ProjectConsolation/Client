@@ -795,10 +795,10 @@ extern "C"
 	int WINAPI xlive_XSocketBind(SOCKET socket_handle, const sockaddr* name, int namelen) { return bind(socket_handle, name, namelen); }
 	int WINAPI xlive_XSocketRecvFrom(SOCKET socket_handle, char* buffer, int len, int flags, sockaddr* from, int* fromlen)
 	{
-		// Contain malformed callers at the XLive ABI boundary. A valid UDP
-		// receive cannot request more than the maximum datagram size or provide
-		// an output address length outside sockaddr_storage.
-		if (socket_handle == INVALID_SOCKET || !buffer || len <= 0 || len > 0x10000
+		// Contain malformed callers at the XLive ABI boundary. The receive
+		// buffer may be larger than the maximum UDP datagram size, so only
+		// reject impossible lengths and invalid required pointers.
+		if (socket_handle == INVALID_SOCKET || !buffer || len <= 0
 			|| (from && !fromlen))
 		{
 			// The offline network pump treats an empty nonblocking receive as
