@@ -119,6 +119,37 @@ namespace patches
 			return 1;
 		}
 
+		void apply_cinematic_stats_guard()
+		{
+			// QoS 1.1: cinematic command 0x104547F0 sets state 1 via 0x10454770.
+			// StatsReadComplete (0x10240C60) runs stats_init.cfg for a missing profile.
+			// Allow that non-network state without changing the connection state or
+			// bypassing the native stat writes. Remove when the stat command is replaced.
+			const auto site = game::game_offset(0x10240FF2);
+			const unsigned char expected[] = {0x8B, 0x15, 0xF8, 0x45, 0x1F, 0x11};
+			// The absolute operand is relocated with jb_mp_s.dll.
+			const auto state_address = static_cast<std::uint32_t>(game::game_offset(0x111F45F8));
+			if (memcmp(reinterpret_cast<const void*>(site), expected, 2) != 0
+				|| *reinterpret_cast<const std::uint32_t*>(site + 2) != state_address)
+			{
+				throw std::runtime_error("Unsupported QoS statset connection-state instruction");
+			}
+
+			auto* stub = utils::hook::assemble([state_address](utils::hook::assembler& a)
+			{
+				const auto original_check = a.newLabel();
+				a.mov(edx, dword_ptr(state_address));
+				a.cmp(edx, 1);
+				a.jne(original_check);
+				a.jmp(reinterpret_cast<void*>(game::game_offset(0x1024102C)));
+				a.bind(original_check);
+				a.jmp(reinterpret_cast<void*>(game::game_offset(0x10240FF8)));
+			});
+			utils::hook::nop(site, sizeof(expected));
+			utils::hook::jump(site, stub);
+			console::info("stats: enabled profile initialization during cinematics\n");
+		}
+
 		bool local_offline_mode_requested()
 		{
 			return utils::flags::has_flag("offline")
@@ -665,6 +696,7 @@ namespace patches
 		void post_load() override
 		{
 			apply_video_dvar_patches();
+			apply_cinematic_stats_guard();
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 

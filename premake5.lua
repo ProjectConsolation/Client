@@ -69,7 +69,7 @@ end
 
 newoption {
 	trigger = "copy-to",
-	description = "Optional, copy the DLL to a custom folder after build, define the path here if wanted.",
+	description = "Override the folder that receives DLLs after a successful build.",
 	value = "PATH"
 }
 
@@ -267,6 +267,12 @@ end
 
 dependencies.load()
 
+local defaultDeployDirectory = "C:/Program Files (x86)/Activision/Quantum of Solace(TM)"
+local deployDirectory = _OPTIONS["copy-to"]
+if deployDirectory == nil and os.host() == "windows" and os.isdir(defaultDeployDirectory) then
+	deployDirectory = defaultDeployDirectory
+end
+
 workspace "consolation-client"
 	startproject "consolation-client"
 	location "./build"
@@ -368,8 +374,8 @@ workspace "consolation-client"
 
 		prebuildcommands {"pushd %{_MAIN_SCRIPT_DIR}", "tools\\premake5 generate-buildinfo", "popd"}
 		
-		if _OPTIONS["copy-to"] then
-			postbuildcommands {"copy /y \"$(TargetPath)\" \"" .. _OPTIONS["copy-to"] .. "\""}
+		if deployDirectory then
+			postbuildcommands {"copy /y \"$(TargetPath)\" \"" .. deployDirectory .. "\""}
 		end
 
 		dependencies.imports()
@@ -397,8 +403,8 @@ workspace "consolation-client"
 
 		linkoptions { "/DEF:../src_xlive/xlive.def" }
 
-		if _OPTIONS["copy-to"] then
-			postbuildcommands {"copy /y \"$(TargetPath)\" \"" .. _OPTIONS["copy-to"] .. "\""}
+		if deployDirectory then
+			postbuildcommands {"copy /y \"$(TargetPath)\" \"" .. deployDirectory .. "\""}
 		end
 
 	group "Dependencies"
