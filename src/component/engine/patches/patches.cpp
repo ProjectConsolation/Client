@@ -171,18 +171,20 @@ namespace patches
 				return;
 			}
 
-			auto* stub = utils::hook::assemble([failure](utils::hook::assembler& a)
+			try
 			{
-				const auto engine_available = a.newLabel();
-				a.mov(eax, dword_ptr(edi, 0x60));
-				a.test(eax, eax);
-				a.jnz(engine_available);
-				a.jmp(reinterpret_cast<void*>(failure));
-				a.bind(engine_available);
-				a.mov(ecx, dword_ptr(eax));
-				a.jmp(reinterpret_cast<void*>(game::game_offset(0x102462F2)));
-			});
-			utils::hook::jump(site, stub);
+				auto* stub = utils::hook::assemble([failure](utils::hook::assembler& a)
+				{
+					const auto engine_available = a.newLabel();
+					a.mov(eax, dword_ptr(edi, 0x60));
+					a.test(eax, eax);
+					a.jnz(engine_available);
+					a.jmp(reinterpret_cast<void*>(failure));
+					a.bind(engine_available);
+					a.mov(ecx, dword_ptr(eax));
+					a.jmp(reinterpret_cast<void*>(game::game_offset(0x102462F2)));
+				});
+				utils::hook::jump(site, stub);
 
 			// These QoS 1.1 sites load the engine and its vtable before a voice call.
 			// Keep the native peer bookkeeping even without audio: COD4A's remote
@@ -245,7 +247,12 @@ namespace patches
 			guard_voice_call(0x10324F62, 0x40, 0x10, eax, edx, 0x10324F6E);
 			guard_voice_call(0x102DBE40, 0x40, 0x10, eax, edx, 0x102DBE4C);
 			guard_voice_call(0x103009FD, 0x47, 0x10, edi, edx, 0x10300A09);
-			console::info("[patches - voice] PATCHED: unavailable-engine lifecycle and party/UI guards\n");
+				console::info("[patches - voice] PATCHED: unavailable-engine lifecycle and party/UI guards\n");
+			}
+			catch (const std::exception& error)
+			{
+				console::error("[patches - voice] skipped: %s\n", error.what());
+			}
 		}
 
 		void private_match_set_unpaused()

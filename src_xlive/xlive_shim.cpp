@@ -42,6 +42,7 @@ namespace
 	constexpr DWORD xuser_data_type_datetime = 7;
 	constexpr DWORD xuser_data_type_null = 0xFF;
 	constexpr DWORD xsource_no_value = 0;
+	constexpr DWORD xsource_default = 1;
 	constexpr DWORD xsource_title = 2;
 	constexpr DWORD xonline_e_storage_file_not_found = 0x8015C004;
 	constexpr DWORD xonline_e_storage_file_is_too_big = 0x8015C003;
@@ -1296,15 +1297,33 @@ extern "C"
 			auto& setting = result->settings[index];
 			setting.user.user_index = user_index;
 			setting.setting_id = setting_ids[index];
+			const auto type = (setting.setting_id >> 28) & 0xF;
 			if (!value_present[index])
 			{
-				setting.source = xsource_no_value;
-				setting.data.type = static_cast<BYTE>(xuser_data_type_null);
+				// QoS reads missing class records as typed defaults rather than
+				// honoring a null XUSER_DATA value. Initialize every union member
+				// so the engine never consumes its uninitialized result buffer.
+				setting.source = xsource_default;
+				setting.data.type = static_cast<BYTE>(type);
+				if (type == xuser_data_type_int32)
+				{
+					setting.data.int32_value = -1;
+				}
+				else if (type == xuser_data_type_unicode)
+				{
+					setting.data.string.bytes = 0;
+					setting.data.string.value = nullptr;
+				}
+				else if (type == xuser_data_type_binary)
+				{
+					setting.data.binary.bytes = 0;
+					setting.data.binary.value = nullptr;
+				}
 				continue;
 			}
 
 			setting.source = xsource_title;
-			setting.data.type = static_cast<BYTE>((setting.setting_id >> 28) & 0xF);
+			setting.data.type = static_cast<BYTE>(type);
 			const auto& value = values[index];
 			switch (setting.data.type)
 			{
