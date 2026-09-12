@@ -267,7 +267,8 @@ namespace patches
 			// matches on a black paused screen after ui_mp is unloaded.
 			console::info("[patches - private-match] applying server startup guard\n");
 			const auto site = game::game_offset(0x102F7281);
-			const unsigned char expected[] = {0xFF, 0x15, 0x54, 0x60, 0x47, 0x10};
+			const unsigned char expected[] = {0xFF, 0x15};
+			constexpr std::size_t instruction_size = 6;
 			if (memcmp(reinterpret_cast<const void*>(site), expected, sizeof(expected)) != 0)
 			{
 				const auto* const actual = reinterpret_cast<const unsigned char*>(site);
@@ -287,7 +288,7 @@ namespace patches
 					a.call(private_match_set_unpaused);
 					a.jmp(reinterpret_cast<void*>(site + 6));
 				});
-				utils::hook::nop(site, sizeof(expected));
+				utils::hook::nop(site, instruction_size);
 				utils::hook::jump(site, stub);
 				console::info("[patches - private-match] PATCHED: clear cl_paused after server startup\n");
 			}
