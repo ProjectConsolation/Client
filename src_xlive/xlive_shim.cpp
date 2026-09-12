@@ -1032,7 +1032,10 @@ extern "C"
 		{
 			*result_size = 0;
 		}
-		return inert_not_found(overlapped);
+		// Offline matchmaking has no remote result set. Complete successfully with
+		// an empty result so QoS stays in its search UI instead of entering
+		// Com_ErrorCleanup and unloading/reloading ui_mp.
+		return finish_operation(overlapped, success);
 	}
 	DWORD WINAPI xlive_XSessionModify(HANDLE, DWORD, DWORD, DWORD, xoverlapped* overlapped) { return inert_success(overlapped); }
 	DWORD WINAPI xlive_XSessionMigrateHost(HANDLE, DWORD, xsession_info* info, xoverlapped* overlapped) { make_session_info(info); return inert_success(overlapped); }
