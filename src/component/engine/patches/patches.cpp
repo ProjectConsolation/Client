@@ -164,7 +164,11 @@ namespace patches
 			if (memcmp(reinterpret_cast<const void*>(site), expected, sizeof(expected)) != 0
 				|| memcmp(reinterpret_cast<const void*>(failure), expected_failure, sizeof(expected_failure)) != 0)
 			{
-				throw std::runtime_error("Unsupported QoS voice registration instructions");
+				const auto* const actual = reinterpret_cast<const unsigned char*>(site);
+				console::error("[patches - voice] skipped: unsupported registration bytes at 0x102462ED "
+					"(%02X %02X %02X %02X %02X)\n",
+					actual[0], actual[1], actual[2], actual[3], actual[4]);
+				return;
 			}
 
 			auto* stub = utils::hook::assemble([failure](utils::hook::assembler& a)
