@@ -179,7 +179,59 @@ namespace patches
 				a.jmp(reinterpret_cast<void*>(game::game_offset(0x102462F2)));
 			});
 			utils::hook::jump(site, stub);
-			console::info("voice: installed unavailable-engine registration guard\n");
+
+			// These QoS 1.1 sites load the engine and its vtable before a voice call.
+			// Keep the native peer bookkeeping even without audio: COD4A's remote
+			// registration has the same separation between voice and connectivity.
+			// No local mic flag is set by the guard above; shutdown already checks
+			// for null. Cover remote cleanup, status queries and incoming audio too.
+			const auto guard_voice_call = [](const std::uintptr_t address,
+				const unsigned char engine_operand, const unsigned char vtable_operand,
+				const asmjit::x86::Gp& session, const asmjit::x86::Gp& vtable,
+				const std::uintptr_t unavailable, const int stack_cleanup = 0)
+			{
+				const auto call_site = game::game_offset(address);
+				const unsigned char instructions[] = {0x8B, engine_operand, 0x60, 0x8B, vtable_operand};
+				if (memcmp(reinterpret_cast<const void*>(call_site), instructions, sizeof(instructions)) != 0)
+				{
+					throw std::runtime_error("Unsupported QoS voice-engine call instructions");
+				}
+				auto* call_stub = utils::hook::assemble([=](utils::hook::assembler& a)
+				{
+					const auto available = a.newLabel();
+					a.mov(eax, dword_ptr(session, 0x60));
+					a.test(eax, eax);
+					a.jnz(available);
+					if (stack_cleanup)
+					{
+						a.add(esp, stack_cleanup);
+					}
+					if (unavailable)
+					{
+						a.jmp(reinterpret_cast<void*>(game::game_offset(unavailable)));
+					}
+					else
+					{
+						// Engine is null, so EAX already represents false.
+						a.ret();
+					}
+					a.bind(available);
+					a.mov(vtable, dword_ptr(eax));
+					a.jmp(reinterpret_cast<void*>(call_site + sizeof(instructions)));
+				});
+				utils::hook::jump(call_site, call_stub);
+			};
+
+			// Registration still has five Com_Printf arguments to discard here.
+			guard_voice_call(0x102464B4, 0x47, 0x08, edi, ecx, 0x102464F7, 0x14);
+			guard_voice_call(0x102461BE, 0x46, 0x08, esi, ecx, 0x1024624A);
+			guard_voice_call(0x10245BF0, 0x40, 0x08, eax, ecx, 0); // headset present
+			guard_voice_call(0x10245E83, 0x40, 0x10, eax, edx, 0); // local talking
+			guard_voice_call(0x10245ECF, 0x47, 0x10, edi, edx, 0x10245EB3);
+			guard_voice_call(0x10245EE7, 0x47, 0x08, edi, ecx, 0x10245EB3);
+			guard_voice_call(0x10245F3C, 0x47, 0x08, edi, ecx, 0x10245F28);
+			guard_voice_call(0x10246100, 0x43, 0x10, ebx, edx, 0x10246139);
+			console::info("voice: installed unavailable-engine lifecycle guards\n");
 		}
 
 		bool local_offline_mode_requested()
