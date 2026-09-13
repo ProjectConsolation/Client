@@ -70,7 +70,7 @@ namespace filesystem
 			add_engine_search_path("consolation", current_path.c_str());
 			// Legacy UI menus are resolved relative to the engine search path.
 			// This maps ui_mp/serverbrowser.menu to consolation/menu/ui_mp/serverbrowser.menu.
-			const auto menu_path = (std::filesystem::path(current_path) / "consolation").string();
+			const auto menu_path = (std::filesystem::path(current_path) / "consolation" / "menu").string();
 			add_engine_search_path("menu", menu_path.c_str());
 			add_engine_search_path("raw", current_path.c_str());
 			add_engine_search_path("userraw", current_path.c_str());

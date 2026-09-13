@@ -6,6 +6,7 @@
 #include "filesystem.hpp"
 #include "gametypes.hpp"
 #include "scaleform.hpp"
+#include "menu_file.hpp"
 
 #include "game/game.hpp"
 
@@ -15,8 +16,12 @@
 #include <utils/string.hpp>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace gametypes
 {
@@ -35,6 +40,71 @@ namespace gametypes
 
 		std::unordered_map<std::string, game::RawFile*> loaded_gametype_rawfiles;
 		bool ui_gametype_list_refreshed = false;
+
+		const char* allocate_menu_string(const std::string& value)
+		{
+			auto* result = static_cast<char*>(utils::memory::allocate(value.size() + 1));
+			std::memcpy(result, value.data(), value.size());
+			result[value.size()] = '\0';
+			return result;
+		}
+
+		// QoS 0x102DD390 loads this frontend list after ui_mp/code.txt.
+		// Do not append to every list: the native registrar does not deduplicate.
+		game::MenuList* augment_menu_list(game::MenuList* original)
+		{
+			if (!original || !original->menus || original->menuCount < 0 || original->menuCount >= 512)
+				return original;
+			const auto registered_count = *reinterpret_cast<const int*>(game::game_offset(0x113D0470));
+			if (registered_count < 0 || registered_count >= 512 || original->menuCount >= 512 - registered_count)
+			{
+				console::warn("[menu - disk] skipped augmenting '%s': native UI menu capacity reached\n",
+					original->name ? original->name : "<unnamed>");
+				return original;
+			}
+
+			const auto& disk_menus = menu_file::all();
+			std::vector<game::menuDef_t*> to_add;
+			to_add.reserve(disk_menus.size());
+			for (const auto& [name, menu] : disk_menus)
+			{
+				bool present = false;
+				for (int i = 0; i < original->menuCount && !present; ++i)
+				{
+					present = original->menus[i] && original->menus[i]->window.name
+						&& _stricmp(original->menus[i]->window.name, menu->window.name) == 0;
+				}
+				if (!present)
+				{
+					to_add.push_back(menu);
+				}
+			}
+
+			if (to_add.empty())
+			{
+				return original;
+			}
+			if (to_add.size() > static_cast<std::size_t>(512 - registered_count - original->menuCount))
+			{
+				console::warn("[menu - disk] skipped: custom menus exceed native UI capacity\n");
+				return original;
+			}
+
+			// Copy current native pointers each time: UI fastfile reloads may replace
+			// the list's contents. Do not cache pointers into a previous zone.
+			auto* list = utils::memory::allocate<game::MenuList>();
+			*list = *original;
+			list->menus = utils::memory::allocate_array<game::menuDef_t*>(original->menuCount + static_cast<int>(to_add.size()));
+			std::memcpy(list->menus, original->menus, original->menuCount * sizeof(*list->menus));
+			for (std::size_t i = 0; i < to_add.size(); ++i)
+			{
+				list->menus[original->menuCount + static_cast<int>(i)] = to_add[i];
+			}
+			list->menuCount += static_cast<int>(to_add.size());
+			console::info("[menu - disk] appended %zu custom menu(s) to '%s'\n",
+				to_add.size(), original->name ? original->name : "<unnamed>");
+			return list;
+		}
 
 		std::string normalize_gametype_path(const char* name)
 		{
@@ -156,6 +226,23 @@ namespace gametypes
 
 		game::XAssetHeader db_find_xasset_header_internal_stub(const game::XAssetType type, const char* name, const int create_default)
 		{
+			if (type == game::ASSET_TYPE_MENULIST && name && !_stricmp(name, "ui_mp/menus_sf.txt"))
+			{
+				auto header = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, name, create_default);
+				header.menuList = augment_menu_list(header.menuList);
+				return header;
+			}
+
+			if (type == game::ASSET_TYPE_MENU && name)
+			{
+				if (auto* menu = menu_file::find(name))
+				{
+					game::XAssetHeader header{};
+					header.menu = menu;
+					return header;
+				}
+			}
+
 			if (type == game::ASSET_TYPE_RAWFILE)
 			{
 				if (auto* rawfile = scaleform::try_override(name))
@@ -679,11 +766,11 @@ namespace gametypes
 				// Keep command registration in command.cpp if this dump helper is needed later.
 			}
 
-			void pre_destroy() override
-			{
-				db_find_xasset_header_internal_hook.clear();
-				loaded_gametype_rawfiles.clear();
-				scaleform::clear_overrides();
+				void pre_destroy() override
+				{
+					db_find_xasset_header_internal_hook.clear();
+					loaded_gametype_rawfiles.clear();
+					scaleform::clear_overrides();
 				ui_gametype_list_refreshed = false;
 			}
 		};

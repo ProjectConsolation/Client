@@ -1169,7 +1169,6 @@ namespace command
 								console::error("refreshGametypes: unhandled exception\n");
 							}
 						});
-
 					add("dumpMemory", [](const params& argument)
 						{
 							try

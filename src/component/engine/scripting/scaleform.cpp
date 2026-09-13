@@ -1,6 +1,7 @@
 #include <std_include.hpp>
 
 #include "scaleform.hpp"
+#include "component/engine/console/console.hpp"
 
 #include <utils/memory.hpp>
 #include <utils/nt.hpp>
@@ -61,20 +62,27 @@ namespace scaleform
 			}
 
 			static const auto root = std::filesystem::path(utils::nt::library(game::mp_dll).get_folder()) / "consolation";
-			std::ifstream stream(root / name, std::ios::binary | std::ios::ate);
+			const auto disk_path = root / name;
+			std::ifstream stream(disk_path, std::ios::binary | std::ios::ate);
 			const auto size = stream ? static_cast<std::streamoff>(stream.tellg()) : 0;
 			if (size <= 0 || size > INT_MAX)
 			{
+				if (name == "scaleform/mpmainmenu.gfx")
+				{
+					console::warn("[scaleform - override] unavailable or invalid size: %s\n", disk_path.string().c_str());
+				}
 				return nullptr;
 			}
 			std::string data(static_cast<std::size_t>(size), '\0');
 			stream.seekg(0, std::ios::beg);
 			if (!stream.read(data.data(), static_cast<std::streamsize>(size)))
 			{
+				console::warn("[scaleform - override] read failed: %s\n", disk_path.string().c_str());
 				return nullptr;
 			}
 			auto* rawfile = make_rawfile(name, data);
 			loaded_rawfiles.emplace(name, rawfile);
+			console::info("[scaleform - override] loaded %s (%u bytes)\n", disk_path.string().c_str(), rawfile->len);
 			return rawfile;
 		}
 

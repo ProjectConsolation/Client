@@ -162,7 +162,7 @@ namespace fastfiles
 			return std::nullopt;
 		}
 
-		std::array<std::filesystem::path, 3> scaleform_lookup_roots()
+		std::array<std::filesystem::path, 6> scaleform_lookup_roots()
 		{
 			const auto host_folder = std::filesystem::path(utils::nt::get_host_module().get_folder());
 			const auto exe_folder = get_executable_folder();
@@ -170,6 +170,9 @@ namespace fastfiles
 
 			return
 			{
+				host_folder / "consolation" / "scaleform",
+				exe_folder / "consolation" / "scaleform",
+				root_folder / "consolation" / "scaleform",
 				host_folder / "consolation" / "ui_mp" / "scaleform",
 				exe_folder / "consolation" / "ui_mp" / "scaleform",
 				root_folder / "consolation" / "ui_mp" / "scaleform",

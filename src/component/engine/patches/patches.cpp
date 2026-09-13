@@ -132,7 +132,8 @@ namespace patches
 			if (memcmp(reinterpret_cast<const void*>(site), expected, 2) != 0
 				|| *reinterpret_cast<const std::uint32_t*>(site + 2) != state_address)
 			{
-				throw std::runtime_error("Unsupported QoS statset connection-state instruction");
+				console::error("[patches - stats] skipped: unsupported connection-state instruction\n");
+				return;
 			}
 
 			try
@@ -147,6 +148,11 @@ namespace patches
 					a.bind(original_check);
 					a.jmp(reinterpret_cast<void*>(game::game_offset(0x10240FF8)));
 				});
+				if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(site), stub))
+				{
+					console::error("[patches - stats] skipped: generated stub is outside rel32 range\n");
+					return;
+				}
 				utils::hook::nop(site, sizeof(expected));
 				utils::hook::jump(site, stub);
 				console::info("[patches - stats] PATCHED: profile initialization during cinematics\n");
@@ -191,6 +197,11 @@ namespace patches
 					a.mov(ecx, dword_ptr(eax));
 					a.jmp(reinterpret_cast<void*>(game::game_offset(0x102462F2)));
 				});
+				if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(site), stub))
+				{
+					console::error("[patches - voice] skipped: generated stub is outside rel32 range\n");
+					return;
+				}
 				utils::hook::jump(site, stub);
 
 			// These QoS 1.1 sites load the engine and its vtable before a voice call.
@@ -207,7 +218,9 @@ namespace patches
 				const unsigned char instructions[] = {0x8B, engine_operand, 0x60, 0x8B, vtable_operand};
 				if (memcmp(reinterpret_cast<const void*>(call_site), instructions, sizeof(instructions)) != 0)
 				{
-					throw std::runtime_error("Unsupported QoS voice-engine call instructions");
+					console::error("[patches - voice] skipped: unsupported call-site bytes at 0x%08X\n",
+						static_cast<unsigned int>(address));
+					return;
 				}
 				auto* call_stub = utils::hook::assemble([=](utils::hook::assembler& a)
 				{
@@ -232,6 +245,12 @@ namespace patches
 					a.mov(vtable, dword_ptr(eax));
 					a.jmp(reinterpret_cast<void*>(call_site + sizeof(instructions)));
 				});
+				if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(call_site), call_stub))
+				{
+					console::error("[patches - voice] skipped: generated call stub is outside rel32 range at 0x%08X\n",
+						static_cast<unsigned int>(address));
+					return;
+				}
 				utils::hook::jump(call_site, call_stub);
 			};
 
@@ -299,6 +318,11 @@ namespace patches
 					a.call(private_match_set_unpaused);
 					a.jmp(reinterpret_cast<void*>(site + 6));
 				});
+				if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(site), stub))
+				{
+					console::error("[patches - private-match] skipped: generated stub is outside rel32 range\n");
+					return;
+				}
 				utils::hook::nop(site, instruction_size);
 				utils::hook::jump(site, stub);
 				console::info("[patches - private-match] PATCHED: clear cl_paused after server startup\n");

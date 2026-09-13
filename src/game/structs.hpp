@@ -568,7 +568,12 @@ namespace game
 		statement_s rectYExp;
 		statement_s rectWExp;
 		statement_s rectHExp;
+		// QoS loader 0x103D8020 reads 468 bytes; paint 0x102D7820 evaluates
+		// this final statement at offset 460 into window.foreColor[3].
+		statement_s foreColorAlphaExp;
 	};
+	static_assert(sizeof(itemDef_s) == 468);
+	static_assert(offsetof(itemDef_s, foreColorAlphaExp) == 460);
 
 	struct menuDef_t
 	{

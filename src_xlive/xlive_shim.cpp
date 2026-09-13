@@ -404,6 +404,26 @@ namespace
 		return "Player";
 	}
 
+	void sync_engine_name(const std::string& name)
+	{
+		if (name.empty() || !find_dvar("name"))
+		{
+			return;
+		}
+
+		// QoS stores the active player name in the engine dvar. XLive can be
+		// queried before the frontend copies the profile name into that dvar.
+		const auto set_string = qos_base + 0x10278FD0;
+		const auto dvar_name = "name";
+		const auto value = name.c_str();
+		__asm
+		{
+			mov eax, dvar_name
+			mov edi, value
+			call set_string
+		}
+	}
+
 	XUID offline_xuid()
 	{
 		// A display-name change must not move a signed-in user to another profile.
@@ -1035,6 +1055,7 @@ extern "C"
 		}
 
 		const auto name = offline_name();
+		sync_engine_name(name);
 		strncpy_s(user_name, user_name_chars, name.c_str(), _TRUNCATE);
 		return success;
 	}
@@ -1051,7 +1072,9 @@ extern "C"
 		info->xuid = offline_xuid();
 		info->info_flags = 1;
 		info->signin_state = signed_in_to_live;
-		strncpy_s(info->user_name, sizeof(info->user_name), offline_name().c_str(), _TRUNCATE);
+		const auto name = offline_name();
+		sync_engine_name(name);
+		strncpy_s(info->user_name, sizeof(info->user_name), name.c_str(), _TRUNCATE);
 		return success;
 	}
 	HANDLE WINAPI xlive_XNotifyCreateListener(ULONGLONG) { return CreateEventA(nullptr, FALSE, FALSE, nullptr); }
@@ -1106,6 +1129,8 @@ extern "C"
 			complete_overlapped(overlapped, invalid_parameter);
 			return invalid_parameter;
 		}
+
+		sync_engine_name(offline_name());
 
 		const bool hosting = (flags & 0x00000001u) != 0; // XSESSION_CREATE_HOST
 		const auto session_nonce = hosting ? offline_xuid() : *nonce;

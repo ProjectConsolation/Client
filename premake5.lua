@@ -375,7 +375,18 @@ workspace "consolation-client"
 		prebuildcommands {"pushd %{_MAIN_SCRIPT_DIR}", "tools\\premake5 generate-buildinfo", "popd"}
 		
 		if deployDirectory then
-			postbuildcommands {"copy /y \"$(TargetPath)\" \"" .. deployDirectory .. "\""}
+			local deployRoot = deployDirectory
+			local sourceRoot = path.getabsolute("consolation")
+			postbuildcommands
+			{
+				"copy /y \"$(TargetPath)\" \"" .. deployDirectory .. "\"",
+				"if not exist \"" .. deployRoot .. "\\consolation\\scaleform\" mkdir \"" .. deployRoot .. "\\consolation\\scaleform\"",
+				"copy /y \"" .. sourceRoot .. "\\scaleform\\MpMainMenu.gfx\" \"" .. deployRoot .. "\\consolation\\scaleform\"",
+				"if not exist \"" .. deployRoot .. "\\consolation\\menu\\ui\" mkdir \"" .. deployRoot .. "\\consolation\\menu\\ui\"",
+				"xcopy /y /i \"" .. sourceRoot .. "\\menu\\ui\\*\" \"" .. deployRoot .. "\\consolation\\menu\\ui\"",
+				"if not exist \"" .. deployRoot .. "\\consolation\\menu\\ui_mp\" mkdir \"" .. deployRoot .. "\\consolation\\menu\\ui_mp\"",
+				"xcopy /y /i \"" .. sourceRoot .. "\\menu\\ui_mp\\*\" \"" .. deployRoot .. "\\consolation\\menu\\ui_mp\""
+			}
 		end
 
 		dependencies.imports()
