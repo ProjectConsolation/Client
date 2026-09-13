@@ -13,25 +13,49 @@ namespace scaleform_actions
 		utils::hook::detour action_dispatch_hook;
 		using action_dispatch_t = void(__stdcall*)(int, const char*, const char*);
 
-		bool is_server_browser_action(const char* action)
+		struct action_binding
 		{
-			return action != nullptr
-				&& (_stricmp(action, "open_server_browser") == 0
-					|| _stricmp(action, "openmenu_serverbrowser") == 0);
-		}
+			const char* action_name;
+			const char* native_command;
+		};
+
+		// "open_server_browser"/"openmenu_serverbrowser" were guesses made
+		// before any real .menu existed to open, never confirmed against an
+		// actual button click. Static analysis of jb_mp_s.dll cannot recover
+		// the real action strings the compiled Flash movie sends -- they
+		// live entirely in its ActionScript, not in this binary (confirmed:
+		// no "singleplayer"/"guide"/"open_server_browser"-like literals exist
+		// natively). Do not add more guesses here. Instead: launch the game,
+		// click the button in question, and read its real action string from
+		// the passthrough log below, then add the binding.
+		constexpr action_binding known_bindings[] = {
+			{"open_server_browser", "openmenu serverbrowser"},
+			{"openmenu_serverbrowser", "openmenu serverbrowser"},
+		};
 
 		bool handle_action(const char* action)
 		{
-			if (!is_server_browser_action(action))
+			if (!action)
 			{
 				return false;
 			}
 
-			// Native openmenu only searches the active UI context. The browser must
-			// already be parsed and registered; this action does not load its file.
-			command::execute("openmenu serverbrowser");
-			game::Com_Printf(13, "[scaleform - actions] requested: openmenu serverbrowser\n");
-			return true;
+			for (const auto& binding : known_bindings)
+			{
+				if (_stricmp(action, binding.action_name) == 0)
+				{
+					command::execute(binding.native_command);
+					game::Com_Printf(13, "[scaleform - actions] '%s' -> %s\n", action, binding.native_command);
+					return true;
+				}
+			}
+
+			// Every unmatched action passes through to the native menu system
+			// untouched, but is logged first. This is how to find the real
+			// action string for Single Player / Guide / any other button:
+			// click it in-game and read this line from the console/log.
+			game::Com_Printf(13, "[scaleform - actions] passthrough: '%s'\n", action);
+			return false;
 		}
 
 		// QoS 0x10002280 reads the action from [ebp+0Ch] and returns with
@@ -51,7 +75,7 @@ namespace scaleform_actions
 		void post_load() override
 		{
 			action_dispatch_hook.create(game::game_offset(0x10002280), action_dispatch_stub);
-			game::Com_Printf(13, "[scaleform - actions] installed: server browser action dispatch\n");
+			game::Com_Printf(13, "[scaleform - actions] installed: action dispatch logging + server browser binding\n");
 		}
 	};
 }
