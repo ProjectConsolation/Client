@@ -1,0 +1,23 @@
+// Diagnostic only: tests disk loading, native rendering, and native close actions.
+menuDef
+{
+    name "disk_menu_test"
+    onEsc { close disk_menu_test; }
+    itemDef
+    {
+        name "title"
+        rect 80 120 480 48
+        text "DISK MENU TEST"
+        textscale 0.5
+        decoration
+    }
+    itemDef
+    {
+        name "back"
+        rect 80 200 180 40
+        text "BACK"
+        textscale 0.4
+        type ITEM_TYPE_BUTTON
+        action { close disk_menu_test; }
+    }
+}

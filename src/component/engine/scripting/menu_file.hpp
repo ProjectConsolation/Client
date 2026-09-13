@@ -22,7 +22,9 @@ namespace menu_file
 	// Forces a full re-parse of every *.menu file on disk. Wired to the
 	// "reloadMenus" console command so menus can be iterated on without a
 	// full game restart.
-	void reload();
+	// Refuses while a custom menu is on the native open stack. Closed custom
+	// entries are detached before reparsing; stock menu entries are preserved.
+	bool reload();
 
 	// Looks up an already-parsed, natively-built menu by its declared name
 	// (case-insensitive). Returns nullptr if no disk menu declared that name.

@@ -101,9 +101,8 @@ namespace menu_file
 			}
 
 		// Reads the raw text between a matching pair of braces, without
-			// tokenizing its contents. Used for expression blocks (visible,
-			// disabled, rectX, rectY) this parser stores but does not yet
-			// compile into statement_s bytecode -- see README note below.
+			// tokenizing its contents. Action scripts are passed to QoS's native
+			// script runner; braces inside comments and strings are not delimiters.
 			std::string read_balanced_block()
 			{
 				skip_ignorable();
@@ -172,6 +171,14 @@ namespace menu_file
 				if (std::trunc(value) != value || value < (std::numeric_limits<int>::min)()
 					|| value > (std::numeric_limits<int>::max)()) fail("integer out of range");
 				return static_cast<int>(value);
+			}
+
+			bool visibility()
+			{
+				if (peek() == "{") fail("visibility expressions are not implemented; use visible 0 or 1");
+				const auto value = integer();
+				if (value != 0 && value != 1) fail("visible must be 0 or 1");
+				return value != 0;
 			}
 
 			// True if the next token parses cleanly as a float, without
@@ -308,6 +315,7 @@ namespace menu_file
 			int border = 0;
 			float border_size = 0;
 			bool decoration = false;
+			bool visible = true;
 			std::array<float, 4> fore_color{1, 1, 1, 1};
 			std::array<float, 4> back_color{0, 0, 0, 0};
 			std::array<float, 4> border_color{0, 0, 0, 0};
@@ -336,6 +344,7 @@ namespace menu_file
 			std::string name;
 			parsed_rect rect{0, 0, 640, 480};
 			int full_screen = 0;
+			bool visible = false;
 			int style = 0;
 			std::array<float, 4> fore_color{1, 1, 1, 1};
 			std::array<float, 4> back_color{0, 0, 0, 0};
@@ -513,11 +522,9 @@ namespace menu_file
 				{"dvar", [](tokenizer& t, parsed_item& i) { i.dvar = t.next(); }},
 				{"dvartest", [](tokenizer& t, parsed_item& i) { i.dvar_test = t.next(); }},
 				{"enabledvar", [](tokenizer& t, parsed_item& i) { i.enable_dvar = t.next(); }},
-				// Expression fields this parser does not compile yet -- see
-				// the README note in build_native_menu(). Consumed so they
-				// don't desync the rest of the item.
-				{"visible", [](tokenizer& t, parsed_item&) { t.read_balanced_block(); }},
-				{"disabled", [](tokenizer& t, parsed_item&) { t.read_balanced_block(); }},
+				// Only constant visibility is supported; reject expressions.
+				{"visible", [](tokenizer& t, parsed_item& i) { i.visible = t.visibility(); }},
+				{"disabled", [](tokenizer& t, parsed_item&) { t.fail("disabled expressions are not implemented"); }},
 				// itemDefData_t: listBoxDef_s
 				{"elementwidth", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_element_width = t.number(); }},
 				{"elementheight", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_element_height = t.number(); }},
@@ -603,7 +610,7 @@ namespace menu_file
 				{"fadein", [](tokenizer& t, parsed_menu& m) { m.fade_in_amount = t.number(); }},
 				{"blurworld", [](tokenizer& t, parsed_menu& m) { m.blur_radius = t.number(); }},
 				// Expression fields not yet compiled -- see build_native_menu().
-				{"visible", [](tokenizer& t, parsed_menu&) { t.read_balanced_block(); }},
+				{"visible", [](tokenizer& t, parsed_menu& m) { m.visible = t.visibility(); }},
 			};
 			return table;
 		}
@@ -682,16 +689,9 @@ namespace menu_file
 		// ---------------------------------------------------------------
 		// Native struct construction
 		//
-		// NOTE on expression fields (visible/disabled/rectX/rectY): the
-		// engine compiles these into statement_s { numEntries; entries[] }
-		// postfix bytecode using the operationEnum opcodes already reverse
-		// engineered in game::structs.hpp (OP_DVARINT, OP_AND, etc.). This
-		// parser reads and discards those blocks for now rather than
-		// compiling them, so every disk menu/item defaults to "always
-		// visible, never disabled" (statement_s{0, nullptr}). A real
-		// expression compiler (tokenize -> shunting-yard over operationEnum
-		// -> expressionEntry* array via utils::memory) is a natural next
-		// step once basic menus render correctly.
+		// Expressions remain unsupported and are rejected by the parser.
+		// Constant visibility uses the native visible flag (bit 4); expression
+		// storage remains zeroed. Opening a menu still uses native UI logic.
 		// ---------------------------------------------------------------
 		const char* allocate_menu_string(const std::string& value)
 		{
@@ -720,7 +720,7 @@ namespace menu_file
 			item->window.border = parsed.border;
 			item->window.borderSize = parsed.border_size;
 			item->window.staticFlags = parsed.decoration ? 1 : 0;
-			std::fill(std::begin(item->window.dynamicFlags), std::end(item->window.dynamicFlags), 4);
+			std::fill(std::begin(item->window.dynamicFlags), std::end(item->window.dynamicFlags), parsed.visible ? 4 : 0);
 			std::copy(parsed.fore_color.begin(), parsed.fore_color.end(), item->window.foreColor);
 			std::copy(parsed.back_color.begin(), parsed.back_color.end(), item->window.backColor);
 			std::copy(parsed.border_color.begin(), parsed.border_color.end(), item->window.borderColor);
@@ -783,6 +783,7 @@ namespace menu_file
 				parsed.rect.horz_align, parsed.rect.vert_align};
 			menu->window.rectClient = menu->window.rect;
 			menu->window.style = parsed.style;
+			std::fill(std::begin(menu->window.dynamicFlags), std::end(menu->window.dynamicFlags), parsed.visible ? 4 : 0);
 			std::copy(parsed.fore_color.begin(), parsed.fore_color.end(), menu->window.foreColor);
 			std::copy(parsed.back_color.begin(), parsed.back_color.end(), menu->window.backColor);
 			std::copy(parsed.border_color.begin(), parsed.border_color.end(), menu->window.borderColor);
@@ -977,8 +978,7 @@ namespace menu_file
 		{
 			command::add("reloadMenus", [](const command::params&)
 			{
-				reload();
-				console::info("reloadMenus: %zu custom menu(s) loaded\n", loaded_menus.size());
+				if (reload()) console::info("reloadMenus: %zu custom menu(s) loaded; reopen the menu to test changes\n", loaded_menus.size());
 			});
 		}
 
@@ -1015,12 +1015,44 @@ namespace menu_file
 		scan_search_paths();
 	}
 
-	void reload()
+	bool reload()
 	{
+		// QoS's registered array and open stack are separate. Never replace
+		// a menu still referenced by the stack, even if it is currently hidden.
+		auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
+		auto& count = *reinterpret_cast<int*>(context + 2104);
+		const auto open_count = *reinterpret_cast<const int*>(context + 2172);
+		auto** menus = reinterpret_cast<game::menuDef_t**>(context + 56);
+		auto** open_menus = reinterpret_cast<game::menuDef_t**>(context + 2108);
+		if (count < 0 || count > 512 || open_count < 0 || open_count > 16)
+		{
+			console::warn("[menu - reload] invalid native UI counts; keeping current menus\n");
+			return false;
+		}
+		const auto is_custom = [](game::menuDef_t* menu)
+		{
+			return std::any_of(loaded_menus.begin(), loaded_menus.end(), [menu](const auto& entry) { return entry.second == menu; });
+		};
+		for (int i = 0; i < open_count; ++i)
+		{
+			if (is_custom(open_menus[i]))
+			{
+				console::warn("[menu - reload] close menu '%s' before reloading; keeping current menus\n", open_menus[i]->window.name);
+				return false;
+			}
+		}
+		int retained = 0;
+		for (int i = 0; i < count; ++i)
+		{
+			if (!is_custom(menus[i])) menus[retained++] = menus[i];
+		}
+		std::fill(menus + retained, menus + count, nullptr);
+		count = retained;
 		loaded_menus.clear();
 		loaded_menu_sources.clear();
 		scanned = false;
 		ensure_loaded();
+		return true;
 	}
 
 	game::menuDef_t* find(const std::string& name)
