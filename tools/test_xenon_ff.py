@@ -61,6 +61,85 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(report["script_strings"],
                          ["same", {"block_reference": "0x40000001"}])
 
+    def test_minimal_xmodel(self):
+        header = bytearray(240)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 5, xenon_ff.INLINE)
+        payload += header + b"minimal_model\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        model = report["assets"][0]
+        self.assertEqual(model["name"], "minimal_model")
+        self.assertEqual(model["surface_count"], 0)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_xmodel_surface_and_material_reference(self):
+        header = bytearray(240)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        header[6] = 1
+        struct.pack_into(">I", header, 32, xenon_ff.INLINE)
+        struct.pack_into(">I", header, 36, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 5, xenon_ff.INLINE)
+        payload += header + b"one_surface\0" + bytes(200)
+        payload += struct.pack(">I", 0x40000010)
+        report = self.inspect_blob(self.zone(payload), True)
+        model = report["assets"][0]
+        self.assertEqual(model["surface_count"], 1)
+        self.assertEqual(model["materials"], [{"reference": "0x40000010"}])
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_techset_with_empty_pass(self):
+        header = bytearray(156)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        struct.pack_into(">I", header, 12, xenon_ff.INLINE)
+        technique = bytearray(8)
+        struct.pack_into(">I", technique, 0, xenon_ff.INLINE)
+        struct.pack_into(">H", technique, 6, 1)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 8, xenon_ff.INLINE)
+        payload += header + b"test_techset\0"
+        payload += technique + bytes(100) + b"test_technique\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        techset = report["assets"][0]
+        self.assertEqual(techset["techniques"][0]["name"], "test_technique")
+        self.assertEqual(techset["techniques"][0]["pass_count"], 1)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_xmodel_empty_physics_geometry(self):
+        header = bytearray(240)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        struct.pack_into(">I", header, 232, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 5, xenon_ff.INLINE)
+        payload += header + b"physics_model\0" + bytes(20)
+        report = self.inspect_blob(self.zone(payload), True)
+        physics = report["assets"][0]["physics_geometry"]
+        self.assertEqual(physics, {"geometry_count": 0, "shape_count": 0})
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_minimal_com_map(self):
+        header = bytearray(44)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 14, xenon_ff.INLINE)
+        payload += header + b"maps/mp/test.d3dbsp\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        com_map = report["assets"][0]
+        self.assertEqual(com_map["name"], "maps/mp/test.d3dbsp")
+        self.assertEqual(com_map["primary_light_count"], 0)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_minimal_lightdef(self):
+        header = bytearray(16)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 19, xenon_ff.INLINE)
+        payload += header + b"lights/test\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        self.assertEqual(report["assets"][0]["name"], "lights/test")
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
