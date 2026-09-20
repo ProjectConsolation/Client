@@ -140,6 +140,61 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(report["assets"][0]["name"], "lights/test")
         self.assertEqual(report["unconsumed_payload_bytes"], 0)
 
+    def test_minimal_game_map_mp(self):
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 16, xenon_ff.INLINE)
+        payload += struct.pack(">I", xenon_ff.INLINE) + b"mp_test\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        self.assertEqual(report["assets"][0]["name"], "mp_test")
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_minimal_gfx_map(self):
+        header = bytearray(828)
+        struct.pack_into(">I", header, 4, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 18, xenon_ff.INLINE)
+        payload += header + b"mp_test\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        gfx_map = report["assets"][0]
+        self.assertEqual(gfx_map["name"], "mp_test")
+        self.assertEqual(gfx_map["zero_fill_fields"], 0)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_minimal_col_map_mp(self):
+        header = bytearray(324)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 13, xenon_ff.INLINE)
+        payload += header + b"maps/mp/test.d3dbsp\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        col_map = report["assets"][0]
+        self.assertEqual(col_map["name"], "maps/mp/test.d3dbsp")
+        self.assertEqual(col_map["brush_count"], 0)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_sound_with_minimal_alias(self):
+        sound_header = struct.pack(">3I", xenon_ff.INLINE,
+                                   xenon_ff.INLINE, 1)
+        alias = bytearray(96)
+        struct.pack_into(">I", alias, 0, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 10, xenon_ff.INLINE)
+        payload += sound_header + b"weapons/test\0" + alias + b"test_alias\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        sound = report["assets"][0]
+        self.assertEqual(sound["name"], "weapons/test")
+        self.assertEqual(sound["aliases"][0]["name"], "test_alias")
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_sound_rejects_impossible_alias_count(self):
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 10, xenon_ff.INLINE)
+        payload += struct.pack(">3I", xenon_ff.INLINE,
+                               xenon_ff.INLINE, 2) + b"bad_sound\0"
+        with self.assertRaisesRegex(xenon_ff.FormatError,
+                                    "invalid alias count"):
+            self.inspect_blob(self.zone(payload), True)
+
 
 if __name__ == "__main__":
     unittest.main()
