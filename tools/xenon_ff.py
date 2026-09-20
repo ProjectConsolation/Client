@@ -1,7 +1,8 @@
 """Read-only QoS Xenon v470 fastfile inspection. Does not emit PC-loadable zones.
 
 Layout evidence: Xenon sub_821E15F8, sub_821E8188, sub_821E7D60,
-sub_821E7C78, sub_821E6100 in default_mp.xex. Asset names: 0x82547BA0.
+sub_821E7C78, sub_821E6100, sub_821E2AD8, and sub_821E99F8 in
+default_mp.xex. Asset names: 0x82547BA0.
 Offsets in reports refer to the decompressed stream, not runtime block addresses.
 """
 
@@ -531,7 +532,7 @@ def _sound_file(reader, pointer):
     result = {
         "name": reader.string(u32(header)),
         "directory": reader.string(u32(header, 4)),
-        "type": u32(header, 16),
+        "type": header[16],
     }
     payload_pointer = u32(header, 8)
     if result["type"] == 3:
@@ -557,9 +558,12 @@ def _sound_speaker_map(reader, pointer):
     result = {"name": reader.string(u32(header, 4)), "channel_maps": []}
     for offset in (8, 24, 40):
         channel_map = header[offset:offset + 16]
-        payload_bytes = channel_map[0] * 8 if u32(channel_map, 4) else 0
-        if payload_bytes:
-            reader.take(payload_bytes)
+        payload_bytes = 0
+        for record_offset in (0, 8):
+            if u32(channel_map, record_offset + 4):
+                record_bytes = channel_map[record_offset] * 8
+                reader.take(record_bytes)
+                payload_bytes += record_bytes
         result["channel_maps"].append({"bytes": payload_bytes})
     return result
 
@@ -599,6 +603,76 @@ def sound(reader, pointer):
         return {"name": name, "alias_count": alias_count,
                 "alias_reference": hex(alias_pointer)}
     return {"name": name, "alias_count": alias_count, "aliases": aliases}
+
+
+def _fx_visual(reader, effect_type, pointer):
+    if pointer not in (INLINE, INSERT):
+        return {"reference": hex(pointer)} if pointer else None
+    if effect_type == 5:
+        return xmodel(reader)
+    if effect_type in (8, 10):
+        return {"name": reader.string(pointer)}
+    if effect_type in (6, 7):
+        return {"value": hex(pointer)}
+    return material(reader)
+
+
+def _fx_element(reader, header, index):
+    effect_type = header[176]
+    visual_count = header[177]
+    if u32(header, 180):
+        reader.take((header[178] + 1) * 96)
+    if u32(header, 184):
+        reader.take((header[179] + 1) * 48)
+
+    visual_pointer = u32(header, 188)
+    visuals = []
+    if effect_type == 9:
+        if visual_pointer:
+            records = reader.take(visual_count * 8)
+            for offset in range(0, len(records), 4):
+                pointer = u32(records, offset)
+                if pointer in (INLINE, INSERT):
+                    visuals.append(material(reader))
+                elif pointer:
+                    visuals.append({"reference": hex(pointer)})
+    elif visual_count > 1:
+        if visual_pointer:
+            pointers = reader.take(visual_count * 4)
+            for offset in range(0, len(pointers), 4):
+                visual = _fx_visual(reader, effect_type, u32(pointers, offset))
+                if visual is not None:
+                    visuals.append(visual)
+    else:
+        visual = _fx_visual(reader, effect_type, visual_pointer)
+        if visual is not None:
+            visuals.append(visual)
+
+    for offset in (216, 220, 224):
+        reader.string(u32(header, offset))
+    if u32(header, 244):
+        trail = reader.take(28)
+        if u32(trail, 16):
+            reader.take(u32(trail, 12) * 20)
+        if u32(trail, 24):
+            reader.take(u32(trail, 20) * 2)
+    return {"type": effect_type, "visual_count": visual_count,
+            "visuals": visuals, "index": index}
+
+
+def fx(reader, pointer):
+    if pointer not in (INLINE, INSERT):
+        return {"reference": hex(pointer)}
+    header = reader.take(32)
+    name = reader.string(u32(header))
+    element_count = sum(u32(header, offset) for offset in (16, 20, 24))
+    elements = []
+    if u32(header, 28):
+        records = reader.take(element_count * 252)
+        for index in range(element_count):
+            elements.append(_fx_element(
+                reader, records[index * 252:(index + 1) * 252], index))
+    return {"name": name, "element_count": element_count, "elements": elements}
 
 
 def _col_brush(reader, header):
@@ -821,6 +895,8 @@ def inspect(path, details=False):
                 asset = col_map_mp(reader, pointer)
             elif kind == 10:
                 asset = sound(reader, pointer)
+            elif kind == 27:
+                asset = fx(reader, pointer)
             elif kind == 6:
                 asset = material(reader)
             elif kind == 33:
@@ -844,7 +920,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="+", type=Path)
     parser.add_argument("--details", action="store_true",
-                        help="decode the limited loading-screen profile; reject unsupported assets")
+                        help="decode supported asset schemas and require exact stream consumption")
     args = parser.parse_args()
     failed = False
     for path in args.files:

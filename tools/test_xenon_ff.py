@@ -195,6 +195,72 @@ class FastfileTests(unittest.TestCase):
                                     "invalid alias count"):
             self.inspect_blob(self.zone(payload), True)
 
+    def test_sound_with_streamed_file(self):
+        sound_header = struct.pack(">3I", xenon_ff.INLINE,
+                                   xenon_ff.INLINE, 1)
+        alias = bytearray(96)
+        struct.pack_into(">II", alias, 0, xenon_ff.INLINE,
+                         0)
+        struct.pack_into(">I", alias, 16, xenon_ff.INLINE)
+        sound_file = bytearray(20)
+        struct.pack_into(">I", sound_file, 8, xenon_ff.INLINE)
+        sound_file[16] = 3
+        streamed = struct.pack(">3I", xenon_ff.INLINE,
+                               xenon_ff.INLINE, 3)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 10, xenon_ff.INLINE)
+        payload += sound_header + b"weapons/streamed\0" + alias
+        payload += b"streamed_alias\0" + sound_file
+        payload += streamed + b"streamed_file\0abc"
+        report = self.inspect_blob(self.zone(payload), True)
+        sound_file = report["assets"][0]["aliases"][0]["sound_file"]
+        self.assertEqual(sound_file["type"], 3)
+        self.assertEqual(sound_file["streamed"]["data_bytes"], 3)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_sound_speaker_map_reads_both_channel_records(self):
+        sound_header = struct.pack(">3I", xenon_ff.INLINE,
+                                   xenon_ff.INLINE, 1)
+        alias = bytearray(96)
+        struct.pack_into(">I", alias, 92, xenon_ff.INLINE)
+        speaker_map = bytearray(56)
+        struct.pack_into(">I", speaker_map, 4, xenon_ff.INLINE)
+        speaker_map[16] = 3
+        struct.pack_into(">I", speaker_map, 20, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 10, xenon_ff.INLINE)
+        payload += sound_header + b"weapons/speaker\0" + alias
+        payload += speaker_map + b"speaker_map\0" + bytes(24)
+        report = self.inspect_blob(self.zone(payload), True)
+        channel_maps = report["assets"][0]["aliases"][0]["speaker_map"]["channel_maps"]
+        self.assertEqual(channel_maps[0]["bytes"], 24)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_fx_with_inline_visual_array_and_trail(self):
+        header = bytearray(32)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        struct.pack_into(">I", header, 16, 1)
+        struct.pack_into(">I", header, 28, xenon_ff.INLINE)
+        element = bytearray(252)
+        element[176] = 8
+        element[177] = 2
+        struct.pack_into(">I", element, 188, xenon_ff.INLINE)
+        struct.pack_into(">I", element, 244, xenon_ff.INLINE)
+        visuals = struct.pack(">2I", xenon_ff.INLINE, xenon_ff.INLINE)
+        trail = bytearray(28)
+        struct.pack_into(">II", trail, 12, 1, xenon_ff.INLINE)
+        struct.pack_into(">II", trail, 20, 2, xenon_ff.INLINE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 27, xenon_ff.INLINE)
+        payload += header + b"fx/test\0" + element + visuals
+        payload += b"visual_a\0visual_b\0" + trail + bytes(24)
+        report = self.inspect_blob(self.zone(payload), True)
+        effect = report["assets"][0]
+        self.assertEqual(effect["name"], "fx/test")
+        self.assertEqual(effect["element_count"], 1)
+        self.assertEqual(effect["elements"][0]["visual_count"], 2)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
