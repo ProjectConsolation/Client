@@ -6,6 +6,8 @@
 #include "component/utils/scheduler.hpp"
 #include "component/engine/scripting/gametypes.hpp"
 #include "fastfiles.hpp"
+#include "xenon.hpp"
+#include "component/engine/console/command.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/flags.hpp>
@@ -17,6 +19,7 @@ namespace fastfiles
 	{
 		utils::hook::detour db_link_xasset_entry_hook;
 		utils::hook::detour create_file_a_hook;
+		utils::hook::detour db_load_xassets_hook;
 
 		bool common_fastfiles_seen = false;
 		bool patch_consolation_loaded = false;
@@ -207,6 +210,21 @@ namespace fastfiles
 			const DWORD flags_and_attributes, const HANDLE template_file)
 		{
 			const auto original = reinterpret_cast<create_file_a_t>(create_file_a_hook.get_original());
+			if (is_read_open_request(desired_access, creation_disposition) && is_zone_fastfile_path(file_name))
+			{
+				try
+				{
+					const auto converted = xenon::open_prepared(file_name, desired_access, share_mode,
+						security_attributes, creation_disposition, flags_and_attributes, template_file);
+					if (converted) return *converted;
+				}
+				catch (const std::exception& error)
+				{
+					game::Com_Printf(16, "^1[Xenon] Open failed: %s\n", error.what());
+					SetLastError(ERROR_INVALID_DATA);
+					return INVALID_HANDLE_VALUE;
+				}
+			}
 
 			if (is_read_open_request(desired_access, creation_disposition) && is_scaleform_file_path(file_name))
 			{
@@ -251,6 +269,56 @@ namespace fastfiles
 			}
 
 			return handle;
+		}
+
+		int db_load_xassets_stub(game::XZoneInfo* zones, const int count, const int sync)
+		{
+			// Preflight before native DB_LoadXAssets can unload existing zones or queue IO.
+			// QoS PC 1.1, 0x103E1CF0. Remove this adapter when native Xenon schemas exist.
+			try
+			{
+				bool unloads_zones = false;
+				for (int i = 0; zones && i < count; ++i) unloads_zones |= zones[i].freeFlags != 0;
+				for (int i = 0; zones && i < count; ++i)
+				{
+					if (!zones[i].name) continue;
+					const auto source = find_zone_file(std::string(zones[i].name) + ".ff");
+					if (source && xenon::prepare(*source, zones[i].name) && unloads_zones)
+						throw std::runtime_error("Xenon UI conversion requires resident PC shader assets; use loadXenonZone without unloading zones");
+				}
+			}
+			catch (const std::exception& error)
+			{
+				game::Com_Printf(16, "^1[Xenon] Zone batch rejected before native loading: %s\n", error.what());
+				return 0;
+			}
+			return db_load_xassets_hook.invoke<int>(zones, count, sync);
+		}
+
+		void load_xenon_zone(const command::params& args)
+		{
+			if (args.size() != 2)
+			{
+				game::Com_Printf(16, "loadXenonZone <path.ff>: experimental Xenon UI loading-zone adapter; full maps unsupported\n");
+				return;
+			}
+			try
+			{
+				const std::filesystem::path source(args[1]);
+				const auto name = source.stem().string();
+				if (name.empty() || name.size() >= 64 || name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != std::string::npos)
+					throw std::runtime_error("invalid zone name");
+				if (!xenon::prepare(source, name)) throw std::runtime_error("input is not a recognized Xenon v470 fastfile");
+				game::XZoneInfo zone{name.c_str(), 0x11, 0};
+				// Explicit path is already preflighted, so do not resolve a second file by name.
+				db_load_xassets_hook.invoke<int>(&zone, 1, 0);
+				game::DB_WaitXAssets.get()();
+				game::Com_Printf(16, "^5[Xenon] Native loading completed for %s; verify its UI textures in-game\n", name.c_str());
+			}
+			catch (const std::exception& error)
+			{
+				game::Com_Printf(16, "^1[Xenon] %s\n", error.what());
+			}
 		}
 
 		bool has_zone(const game::XZoneInfo* zone_info, const int zone_count, const char* name)
@@ -561,7 +629,9 @@ namespace fastfiles
 		void post_load() override
 		{
 			create_file_a_hook.create(reinterpret_cast<void*>(CreateFileA), create_file_a_stub);
+			db_load_xassets_hook.create(game::DB_LoadXAssets, db_load_xassets_stub);
 			db_link_xasset_entry_hook.create(game::DB_LinkXAssetEntry, db_link_xasset_entry_stub);
+			command::add("loadXenonZone", load_xenon_zone);
 			scheduler::schedule([]()
 			{
 				if (!common_fastfiles_seen)
@@ -572,6 +642,11 @@ namespace fastfiles
 				load_patch_fastfiles_after_common();
 				return scheduler::cond_end;
 			}, scheduler::main, 250ms);
+		}
+
+		void pre_destroy() override
+		{
+			xenon::clear();
 		}
 	};
 }
