@@ -3,9 +3,12 @@
 #include "fastfiles.hpp"
 #include "xenon.hpp"
 #include <zlib.h>
+#include <bit>
 #include <fstream>
+#include <intrin.h>
 #include <mutex>
 #include <tuple>
+#include <type_traits>
 
 namespace fastfiles::xenon
 {
@@ -21,35 +24,50 @@ namespace fastfiles::xenon
 			if (!condition) throw std::runtime_error(message);
 		}
 
-		uint32_t be32(const bytes& data, const size_t offset)
+		template <typename T>
+		T byte_swap(const T value)
 		{
-			require(offset <= data.size() && data.size() - offset >= 4, "truncated Xenon word");
-			return (uint32_t(data[offset]) << 24) | (uint32_t(data[offset + 1]) << 16)
-				| (uint32_t(data[offset + 2]) << 8) | data[offset + 3];
+			static_assert(std::is_integral_v<T> && (sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 || sizeof(T) == 8));
+			if constexpr (sizeof(T) == 1) return value;
+			if constexpr (sizeof(T) == 2) return static_cast<T>(_byteswap_ushort(static_cast<uint16_t>(value)));
+			if constexpr (sizeof(T) == 4) return static_cast<T>(_byteswap_ulong(static_cast<uint32_t>(value)));
+			if constexpr (sizeof(T) == 8) return static_cast<T>(_byteswap_uint64(static_cast<uint64_t>(value)));
 		}
 
-		uint16_t be16(const bytes& data, const size_t offset)
+		template <typename T>
+		T native(const bytes& data, const size_t offset)
 		{
-			require(offset <= data.size() && data.size() - offset >= 2, "truncated Xenon short");
-			return static_cast<uint16_t>((uint32_t(data[offset]) << 8) | data[offset + 1]);
-		}
-
-		void le32(bytes& data, const size_t offset, const uint32_t value)
-		{
-			for (size_t i = 0; i < 4; ++i) data.at(offset + i) = static_cast<unsigned char>(value >> (i * 8));
-		}
-
-		void le16(bytes& data, const size_t offset, const uint16_t value)
-		{
-			data.at(offset) = static_cast<unsigned char>(value);
-			data.at(offset + 1) = static_cast<unsigned char>(value >> 8);
-		}
-
-		uint32_t native32(const bytes& data, const size_t offset)
-		{
-			uint32_t value;
+			require(offset <= data.size() && sizeof(T) <= data.size() - offset, "truncated fastfile value");
+			T value{};
 			std::memcpy(&value, data.data() + offset, sizeof(value));
 			return value;
+		}
+
+		template <typename T>
+		T big_endian(const bytes& data, const size_t offset)
+		{
+			const auto value = native<T>(data, offset);
+			if constexpr (std::endian::native == std::endian::big) return value;
+			return byte_swap(value);
+		}
+
+		template <typename T>
+		void little_endian(bytes& data, const size_t offset, T value)
+		{
+			require(offset <= data.size() && sizeof(T) <= data.size() - offset, "truncated PC fastfile value");
+			if constexpr (std::endian::native == std::endian::big) value = byte_swap(value);
+			std::memcpy(data.data() + offset, &value, sizeof(value));
+		}
+		uint32_t be32(const bytes& data, const size_t offset) { return big_endian<uint32_t>(data, offset); }
+		uint16_t be16(const bytes& data, const size_t offset) { return big_endian<uint16_t>(data, offset); }
+		void le32(bytes& data, const size_t offset, const uint32_t value) { little_endian(data, offset, value); }
+		void le16(bytes& data, const size_t offset, const uint16_t value) { little_endian(data, offset, value); }
+		uint32_t native32(const bytes& data, const size_t offset) { return native<uint32_t>(data, offset); }
+
+		template <typename... Args>
+		void warn(const char* format, Args... args)
+		{
+			game::Com_Printf(16, format, args...);
 		}
 
 		struct reader
@@ -95,25 +113,49 @@ namespace fastfiles::xenon
 			bytes pixels;
 		};
 
+		image_asset placeholder_image(std::string name, const char* reason)
+		{
+			warn("^3[Xenon] %s: %s; using a placeholder texture\n", name.c_str(), reason);
+			image_asset result;
+			result.name = std::move(name);
+			result.width = 4;
+			result.height = 4;
+			result.format = 0x31545844u; // DXT1
+			result.pixels = {0x00, 0xF8, 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00};
+			return result;
+		}
+
 		// Xenos 2D address bit layout, corroborated by:
 		// https://github.com/xenia-project/xenia/blob/master/src/xenia/gpu/texture_address.h
 		// Coordinates and pitch are in compression blocks. Only base mip is emitted.
-		size_t tiled_offset(const size_t x, const size_t y, const size_t pitch, const size_t block_bytes)
+		size_t tiled_offset(const size_t x, const size_t y, const size_t pitch, const unsigned int block_bytes_log2)
 		{
-			const auto macro = ((y / 32) * (pitch / 32) + x / 32) * 64;
-			const auto micro = ((y / 2) % 8) * 8 + x % 8;
-			const auto address = (macro + micro) * block_bytes;
-			const auto pipe = ((x / 8) % 4) ^ (((y / 8) % 2) * 2);
-			return (address & 15) | ((address & 16) << 1) | ((address & 224) << 3)
-				| ((address & ~size_t(255)) << 4) | ((y & 1) << 4) | (pipe << 6)
-				| (((y / 16) & 1) << 11);
+			require((pitch & 31) == 0, "unaligned Xbox texture pitch");
+			const auto outer = ((y >> 5) * (pitch >> 5) + (x >> 5)) << 6;
+			const auto inner = (((y >> 1) & 7) << 3) | (x & 7);
+			const auto address = (outer | inner) << block_bytes_log2;
+			const auto bank = (y >> 4) & 1;
+			const auto pipe = ((x >> 3) & 3) ^ (((y >> 3) & 1) << 1);
+			return (address & 15) | (((address >> 4) & 1) << 5) | (((address >> 5) & 7) << 8)
+				| ((address >> 8) << 12) | ((y & 1) << 4) | (pipe << 6) | (bank << 11);
+		}
+
+		size_t endian_index(const size_t index, const uint32_t endian)
+		{
+			switch (endian)
+			{
+			case 0: return index;
+			case 1: return index ^ 1; // Xenos k8in16
+			case 2: return index ^ 3; // Xenos k8in32
+			case 3: return index ^ 2; // Xenos k16in32
+			default: throw std::runtime_error("invalid Xbox texture endian mode");
+			}
 		}
 
 		image_asset read_image(reader& input)
 		{
 			// Xenon 0x821E7D60 / 0x821E7C78: image, name, GPU data, load definition, resource.
 			const auto header = input.take(40);
-			require(be32(header, 0) == 3 && be16(header, 20) == 1, "only 2D Xenon UI images are supported");
 			require(be32(header, 36) == inline_data && be32(header, 24) == inline_data,
 				"unsupported Xenon image reference");
 			require(be32(header, 4) == inline_data || be32(header, 4) == insert_pointer, "unsupported image load reference");
@@ -121,34 +163,43 @@ namespace fastfiles::xenon
 			result.name = input.string();
 			result.width = be16(header, 16);
 			result.height = be16(header, 18);
-			require(result.width >= 128 && result.width <= 4096 && result.height >= 128 && result.height <= 4096,
-				"unsupported Xenon image dimensions");
 			const auto gpu_data = input.take(be32(header, 12));
 			const auto load = input.take(16);
-			require(be16(load, 2) == result.width && be16(load, 4) == result.height && be16(load, 6) == 1,
-				"Xenon image dimensions disagree");
-			require(be32(load, 12) != 0 && !(load[1] & 12), "unsupported Xbox texture resource");
 			const auto resource = input.take(52);
+			if (be32(load, 12) == 0)
+				return placeholder_image(std::move(result.name), "Xbox image has an empty texture resource");
+			if (be32(header, 0) != 3 || be16(header, 20) != 1 || (load[1] & 12))
+				return placeholder_image(std::move(result.name), "unsupported Xbox image dimension or resource flags");
+			if (be16(load, 2) != result.width || be16(load, 4) != result.height || be16(load, 6) != 1)
+				return placeholder_image(std::move(result.name), "Xbox image dimensions disagree");
+			if (result.width < 128 || result.width > 4096 || result.height < 128 || result.height > 4096)
+				return placeholder_image(std::move(result.name), "unsupported Xbox image dimensions");
 			const auto format = be32(load, 8);
-			require(format == 0x1A200152 || format == 0x1A200153, "unsupported Xbox texture format");
-			const size_t block_bytes = format == 0x1A200152 ? 8 : 16;
-			result.format = format == 0x1A200152 ? 0x31545844u : 0x33545844u; // DXT1 / DXT3
+			const auto format_without_endian = format & ~0x300u;
+			if (format_without_endian != 0x1A200052 && format_without_endian != 0x1A200053)
+				return placeholder_image(std::move(result.name), "unsupported Xbox texture format");
+			const size_t block_bytes = format_without_endian == 0x1A200052 ? 8 : 16;
+			const unsigned int block_bytes_log2 = block_bytes == 8 ? 3 : 4;
+			const auto endian = (format >> 8) & 3; // Xenos Endian field.
+			result.format = block_bytes == 8 ? 0x31545844u : 0x33545844u; // DXT1 / DXT3
 			const size_t width = (result.width + 3u) / 4u;
 			const size_t height = (result.height + 3u) / 4u;
 			const size_t pitch = (width + 31u) & ~size_t(31);
 			// These files have tightly specified pitch. Do not assume it for arbitrary resources.
-			require((result.width == 1024 && result.height == 512 && be32(resource, 28) == 0x02000088)
-				|| (result.width == 1360 && result.height == 768 && be32(resource, 28) == 0x0200008B),
-				"unverified Xbox texture pitch");
+			if (!((result.width == 1024 && result.height == 512 && be32(resource, 28) == 0x02000088)
+				|| (result.width == 1360 && result.height == 768 && be32(resource, 28) == 0x0200008B)))
+				return placeholder_image(std::move(result.name), "unverified Xbox texture pitch");
 			result.pixels.resize(width * height * block_bytes);
 			for (size_t y = 0; y < height; ++y)
 			{
 				for (size_t x = 0; x < width; ++x)
 				{
-					const auto source = tiled_offset(x, y, pitch, block_bytes);
-					require(source <= gpu_data.size() && block_bytes <= gpu_data.size() - source, "Xbox texture exceeds its resource");
+					const auto source = tiled_offset(x, y, pitch, block_bytes_log2);
+					if (source > gpu_data.size() || block_bytes > gpu_data.size() - source)
+						return placeholder_image(std::move(result.name), "Xbox texture exceeds its resource");
 					const auto target = (y * width + x) * block_bytes;
-					for (size_t i = 0; i < block_bytes; ++i) result.pixels[target + i] = gpu_data[source + (i ^ 1)];
+					for (size_t i = 0; i < block_bytes; ++i)
+						result.pixels[target + i] = gpu_data[source + endian_index(i, endian)];
 				}
 			}
 			return result;
@@ -181,27 +232,38 @@ namespace fastfiles::xenon
 				if (!_stricmp(candidate, name.c_str())) exact = asset.data;
 				if (!_stricmp(candidate, "white")) white = asset.data;
 			}, false);
-			auto* selected = static_cast<unsigned char*>(exact ? exact : white);
-			require(selected != nullptr, "PC UI material is unavailable; load common_mp first");
-			material_template result;
-			result.header.assign(selected, selected + 104);
-			const auto* technique = reinterpret_cast<const game::MaterialTechniqueSet*>(native32(result.header, 84));
-			require(technique && technique->name && !std::strcmp(technique->name, "2d"), "PC material does not use the verified 2d technique");
-			result.technique = technique->name;
-			require(result.header[67] == 1 && result.header[69] != 0, "unsupported PC UI material template");
-			const auto* texture = reinterpret_cast<const unsigned char*>(native32(result.header, 88));
-			require(texture != nullptr && texture[7] == 0, "PC template has no color texture");
-			result.texture.assign(texture, texture + 12);
-			for (const auto& section : {std::make_tuple(68u, 92u, 32u, &result.constants),
-				std::make_tuple(69u, 96u, 8u, &result.states)})
+			auto extract = [](void* asset) -> std::optional<material_template>
 			{
-				const auto size = size_t(result.header[std::get<0>(section)]) * std::get<2>(section);
-				const auto* source = reinterpret_cast<const unsigned char*>(native32(result.header, std::get<1>(section)));
-				require(!size || source, "invalid PC UI template data");
-				if (size) std::get<3>(section)->assign(source, source + size);
+				if (!asset) return std::nullopt;
+				material_template result;
+				const auto* selected = static_cast<const unsigned char*>(asset);
+				result.header.assign(selected, selected + 104);
+				const auto* technique = reinterpret_cast<const game::MaterialTechniqueSet*>(native32(result.header, 84));
+				if (!technique || !technique->name || std::strcmp(technique->name, "2d")) return std::nullopt;
+				result.technique = technique->name;
+				if (result.header[67] != 1 || result.header[69] == 0) return std::nullopt;
+				const auto* texture = reinterpret_cast<const unsigned char*>(native32(result.header, 88));
+				if (!texture || texture[7] != 0) return std::nullopt;
+				result.texture.assign(texture, texture + 12);
+				for (const auto& section : {std::make_tuple(68u, 92u, 32u, &result.constants),
+					std::make_tuple(69u, 96u, 8u, &result.states)})
+				{
+					const auto size = size_t(result.header[std::get<0>(section)]) * std::get<2>(section);
+					const auto* source = reinterpret_cast<const unsigned char*>(native32(result.header, std::get<1>(section)));
+					if (size && !source) return std::nullopt;
+					if (size) std::get<3>(section)->assign(source, source + size);
+				}
+				return result;
+			};
+			auto result = extract(exact);
+			if (!result)
+			{
+				if (exact) warn("^3[Xenon] %s has an incompatible PC material; using white/2d render state\n", name.c_str());
+				result = extract(white);
 			}
-			if (!exact) game::Com_Printf(16, "^3[Xenon] %s uses PC white/2d render state\n", name.c_str());
-			return result;
+			require(result.has_value(), "PC white/2d material is unavailable; load common_mp first");
+			if (!exact) warn("^3[Xenon] %s uses PC white/2d render state\n", name.c_str());
+			return std::move(*result);
 		}
 
 		void write_material(writer& output, const material_asset& material)
@@ -218,7 +280,8 @@ namespace fastfiles::xenon
 			le32(technique, 0, inline_data);
 			output.append(technique);
 			output.string("," + base.technique); // PC 0x103E0640 resolves comma-prefixed external assets.
-			require(native32(base.texture, 0) == be32(material.texture, 0), "PC and Xbox UI texture semantics differ");
+			if (native32(base.texture, 0) != be32(material.texture, 0))
+				warn("^3[Xenon] %s has a different Xbox texture semantic; keeping the PC template semantic\n", material.name.c_str());
 			auto texture = base.texture;
 			le32(texture, 8, inline_data);
 			output.append(texture);
@@ -269,8 +332,12 @@ namespace fastfiles::xenon
 					"unsupported Xenon loading-zone asset table");
 			}
 			const auto technique = input.take(156);
-			require(be32(technique, 0) == inline_data && std::all_of(technique.begin() + 4, technique.end(), [](auto b) { return b == 0; })
-				&& input.string() == ",2d", "Xbox shader conversion is not implemented");
+			require(be32(technique, 0) == inline_data
+				&& std::all_of(technique.begin() + 4, technique.end(), [](auto b) { return b == 0; }),
+				"Xbox shader conversion is not implemented");
+			const auto technique_name = input.string();
+			if (technique_name != ",2d")
+				warn("^3[Xenon] Xbox technique %s is replaced by the PC 2d technique\n", technique_name.c_str());
 			std::vector<material_asset> materials;
 			for (size_t i = 0; i < 3; ++i)
 			{
@@ -281,9 +348,13 @@ namespace fastfiles::xenon
 				material_asset material;
 				material.name = input.string();
 				constexpr const char* names[] = {"$victorybackdrop", "$defeatbackdrop", "$levelbriefing"};
-				require(material.name == names[i], "unverified Xbox loading-screen material");
+				if (material.name != names[i])
+					warn("^3[Xenon] Unexpected loading-screen material %s in slot %u\n",
+						material.name.c_str(), static_cast<unsigned int>(i));
 				material.texture = input.take(12);
-				require(material.texture[7] == 0 && be32(material.texture, 8) == inline_data, "unsupported UI texture reference");
+				require(be32(material.texture, 8) == inline_data, "unsupported UI texture reference");
+				if (material.texture[7] != 0)
+					warn("^3[Xenon] %s uses a non-color Xbox texture semantic; keeping the PC color semantic\n", material.name.c_str());
 				material.image = read_image(input);
 				input.take(8); // Xbox state bits are replaced by the matching native PC UI state.
 				materials.push_back(std::move(material));
