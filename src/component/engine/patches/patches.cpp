@@ -11,6 +11,7 @@
 #include <utils/hook.hpp>
 #include <utils/flags.hpp>
 #include <utils/string.hpp>
+#include <array>
 #include <cstring>
 #include <stdexcept>
 #include <unordered_set>
@@ -126,41 +127,32 @@ namespace patches
 			// Allow that non-network state without changing the connection state or
 			// bypassing the native stat writes. Remove when the stat command is replaced.
 			const auto site = game::game_offset(0x10240FF2);
-			const unsigned char expected[] = {0x8B, 0x15, 0xF8, 0x45, 0x1F, 0x11};
-			// The absolute operand is relocated with jb_mp_s.dll.
 			const auto state_address = static_cast<std::uint32_t>(game::game_offset(0x111F45F8));
-			if (memcmp(reinterpret_cast<const void*>(site), expected, 2) != 0
-				|| *reinterpret_cast<const std::uint32_t*>(site + 2) != state_address)
+			std::array<unsigned char, 15> expected{
+				0x8B, 0x15, 0, 0, 0, 0, // mov edx, dword ptr [clcState]
+				0x85, 0xD2,             // test edx, edx
+				0x7E, 0x30,             // jle native_write
+				0x83, 0xFA, 0x06,       // cmp edx, 6
+				0x74, 0x2B,             // je native_write
+			};
+			std::memcpy(expected.data() + 2, &state_address, sizeof(state_address));
+			if (std::memcmp(reinterpret_cast<const void*>(site), expected.data(), expected.size()) != 0)
 			{
-				console::error("[patches - stats] skipped: unsupported connection-state instruction\n");
+				console::error("[patches - stats] skipped: unsupported connection-state block\n");
 				return;
 			}
 
-			try
-			{
-				auto* stub = utils::hook::assemble([state_address](utils::hook::assembler& a)
-				{
-					const auto original_check = a.newLabel();
-					a.mov(edx, dword_ptr(state_address));
-					a.cmp(edx, 1);
-					a.jne(original_check);
-					a.jmp(reinterpret_cast<void*>(game::game_offset(0x1024102C)));
-					a.bind(original_check);
-					a.jmp(reinterpret_cast<void*>(game::game_offset(0x10240FF8)));
-				});
-				if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(site), stub))
-				{
-					console::error("[patches - stats] skipped: generated stub is outside rel32 range\n");
-					return;
-				}
-				utils::hook::nop(site, sizeof(expected));
-				utils::hook::jump(site, stub);
-				console::info("[patches - stats] PATCHED: profile initialization during cinematics\n");
-			}
-			catch (const std::exception& error)
-			{
-				console::error("[patches - stats] skipped: %s\n", error.what());
-			}
+			std::array<unsigned char, 15> patch{
+				0x8B, 0x15, 0, 0, 0, 0, // mov edx, dword ptr [clcState]
+				0x4A,                   // dec edx (states 0 and 1 become <= 0)
+				0x7E, 0x31,             // jle native_write
+				0x83, 0xFA, 0x05,       // cmp edx, 5 (original state 6)
+				0x74, 0x2C,             // je native_write
+				0x90,
+			};
+			std::memcpy(patch.data() + 2, &state_address, sizeof(state_address));
+			utils::hook::set(site, patch);
+			console::info("[patches - stats] PATCHED: profile initialization during cinematics\n");
 		}
 
 		void apply_missing_voice_engine_guard()

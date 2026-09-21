@@ -13,6 +13,8 @@
 #include <utils/flags.hpp>
 #include <utils/nt.hpp>
 
+#include <unordered_set>
+
 namespace fastfiles
 {
 	namespace
@@ -275,6 +277,16 @@ namespace fastfiles
 
 		int db_load_xassets_stub(game::XZoneInfo* zones, const int count, const int sync)
 		{
+			for (int i = 0; zones && i < count; ++i)
+			{
+				if (zones[i].name && std::string_view(zones[i].name).starts_with("mp_"))
+				{
+					std::lock_guard lock(external_asset_log_mutex);
+					logged_external_assets.clear();
+					break;
+				}
+			}
+
 			// Preflight before native DB_LoadXAssets can unload existing zones or queue IO.
 			// QoS PC 1.1, 0x103E1CF0. Remove this adapter when native Xenon schemas exist.
 			try
