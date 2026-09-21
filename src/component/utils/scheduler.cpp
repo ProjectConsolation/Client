@@ -83,8 +83,10 @@ namespace scheduler
 			}
 		};
 
-		volatile bool kill = false;
-		std::thread thread;
+		std::atomic_bool kill{false};
+		// Avoid a joinable std::thread destructor running from the DLL's CRT
+		// on-exit table when process teardown bypasses component cleanup.
+		std::thread* thread = nullptr;
 		task_pipeline pipelines[pipeline::count];
 		utils::hook::detour r_end_frame_hook;
 		//utils::hook::detour g_run_frame_hook;
@@ -203,7 +205,8 @@ namespace scheduler
 	public:
 		void post_start() override
 		{
-			thread = utils::thread::create_named_thread("Async Scheduler", []()
+			kill = false;
+			thread = new std::thread(utils::thread::create_named_thread("Async Scheduler", []()
 			{
 				while (!kill)
 				{
@@ -216,7 +219,7 @@ namespace scheduler
 					execute(pipeline::async);
 					std::this_thread::sleep_for(10ms);
 				}
-			});
+			}));
 		}
 
 		void post_load() override
@@ -232,10 +235,18 @@ namespace scheduler
 		void pre_destroy() override
 		{
 			kill = true;
-			if (thread.joinable())
+			const auto scheduler_thread = std::exchange(thread, nullptr);
+			if (!scheduler_thread)
 			{
-				thread.join();
+				return;
 			}
+
+			if (scheduler_thread->joinable())
+			{
+				scheduler_thread->join();
+			}
+
+			delete scheduler_thread;
 		}
 	};
 }
