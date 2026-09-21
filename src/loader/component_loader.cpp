@@ -33,6 +33,7 @@ bool component_loader::post_start()
 			try
 			{
 				component_->post_start();
+				log_component_event("post_start complete", component_name);
 			}
 			catch (premature_shutdown_trigger&)
 			{
@@ -78,6 +79,7 @@ bool component_loader::post_load()
 			try
 			{
 				component_->post_load();
+				log_component_event("post_load complete", component_name);
 			}
 			catch (premature_shutdown_trigger&)
 			{

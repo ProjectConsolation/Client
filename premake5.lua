@@ -372,10 +372,6 @@ workspace "consolation-client"
 		pchheader "std_include.hpp"
 		pchsource "src/std_include.cpp"
 
-		filter "files:**/menu_file.cpp"
-			flags { "NoPCH" }
-		filter {}
-
 		prebuildcommands {"pushd %{_MAIN_SCRIPT_DIR}", "tools\\premake5 generate-buildinfo", "popd"}
 		
 		if deployDirectory then

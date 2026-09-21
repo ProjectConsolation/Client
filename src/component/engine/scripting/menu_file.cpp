@@ -1,6 +1,6 @@
-#ifndef CONSOLATION_MENU_PARSER_TEST
 #include <std_include.hpp>
 
+#ifndef CONSOLATION_MENU_PARSER_TEST
 #include "loader/component_loader.hpp"
 
 #include "component/engine/console/command.hpp"
