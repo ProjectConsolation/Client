@@ -1,4 +1,4 @@
-"""Read-only QoS Xenon v470 fastfile inspection. Does not emit PC-loadable zones.
+"""Inspect QoS Xenon v470 fastfiles and emit an experimental PC map-root probe.
 
 Layout evidence: Xenon sub_821E15F8, sub_821E8188, sub_821E7D60,
 sub_821E7C78, sub_821E6100, sub_821E2AD8, and sub_821E99F8 in
@@ -11,6 +11,7 @@ from collections import Counter
 import hashlib
 import json
 from pathlib import Path
+import re
 import struct
 import zlib
 
@@ -325,10 +326,11 @@ def xsurface(reader, header, index):
     for offset, field in ((28, "vertices"), (64, "secondary vertices"),
                           (100, "tertiary vertices")):
         stream_offset = reader.pos
-        stream = _inline_bytes(reader, u32(header, offset), vertex_bytes,
+        pointer = u32(header, offset)
+        stream = _inline_bytes(reader, pointer, vertex_bytes,
                                f"xsurface {index} {field}")
         vertex_streams.append(stream)
-        vertex_stream_offsets.append(hex(stream_offset) if stream is not None else None)
+        vertex_stream_offsets.append(hex(stream_offset) if pointer == INLINE else None)
     pc_verts0 = pc_verts1 = None
     if not result["vertex_count"] or all(stream is not None for stream in vertex_streams[:2]):
         pc_verts0, pc_verts1 = convert_xsurface_vertices(*vertex_streams,
@@ -572,6 +574,7 @@ def gfx_map(reader, pointer):
 
     return {
         "name": names[1] or names[0],
+        "names": names,
         "surface_count": surface_count,
         "model_count": u32(header, 376),
         "attenuation_image": attenuation,
@@ -833,11 +836,18 @@ def col_map_mp(reader, pointer):
     if u32(header, 172):
         reader.take(u32(header, 164) * u32(header, 168))
 
+    map_ents = None
     if u32(header, 180) in (INLINE, INSERT):
         raw = reader.take(12)
-        reader.string(u32(raw))
+        entity_name = reader.string(u32(raw))
+        entity_string = b""
         if u32(raw, 4):
-            reader.take(u32(raw, 8))
+            entity_string = reader.take(u32(raw, 8))
+        map_ents = {
+            "name": entity_name,
+            "entity_string": entity_string.decode("latin-1"),
+            "entity_bytes": len(entity_string),
+        }
     if u32(header, 184) == INLINE:
         _col_brush(reader, reader.take(80))
 
@@ -866,6 +876,7 @@ def col_map_mp(reader, pointer):
         "brush_count": u16(header, 156),
         "dynamic_entity_counts": list(entity_counts),
         "zero_fill_bytes": zero_fill_bytes,
+        "map_ents": map_ents,
     }
 
 
@@ -990,12 +1001,103 @@ def inspect(path, details=False):
     return report
 
 
+def build_pc_map_probe(path):
+    """Build a geometry-free PC zone for testing map-root deserialization."""
+    report = inspect(path, True)
+
+    def one(kind):
+        matches = [asset for asset in report["assets"] if asset["type"] == kind]
+        if len(matches) != 1:
+            raise FormatError(f"map probe requires exactly one {kind} asset")
+        return matches[0]
+
+    com_world = one("com_map")
+    game_world = one("game_map_mp")
+    clip_map = one("col_map_mp")
+    gfx_world = one("gfx_map")
+    map_ents = clip_map.get("map_ents")
+    if not map_ents or not map_ents.get("entity_string"):
+        raise FormatError("map probe requires inline map entities")
+
+    gfx_names = gfx_world.get("names", [])
+    world_name = gfx_names[0] if len(gfx_names) > 0 and isinstance(gfx_names[0], str) else com_world["name"]
+    base_name = gfx_names[1] if len(gfx_names) > 1 and isinstance(gfx_names[1], str) else gfx_world["name"]
+    game_name = game_world.get("name")
+    if not isinstance(game_name, str):
+        game_name = base_name
+    clip_name = clip_map.get("name")
+    if not isinstance(clip_name, str):
+        clip_name = com_world["name"]
+    entity_name = map_ents.get("name")
+    if not isinstance(entity_name, str):
+        entity_name = clip_name
+    entity_string = map_ents["entity_string"].encode("latin-1")
+    trailing_nul = entity_string.endswith(b"\0")
+    text = entity_string.rstrip(b"\0").decode("latin-1")
+    entities = re.findall(r"\{.*?\}\s*", text, re.DOTALL)
+    if not entities or "".join(entities).rstrip() != text.rstrip():
+        raise FormatError("map probe cannot safely split the entity string")
+    entities = [entity for entity in entities
+                if '"classname" "worldspawn"' in entity or '"model" "*' not in entity]
+    entity_string = "".join(entities).encode("latin-1") + (b"\0" if trailing_nul else b"")
+
+    assets = ((13, "com"), (15, "game"), (12, "clip"), (17, "gfx"))
+    payload = bytearray(struct.pack("<4I", 0, 0, len(assets), INLINE))
+    payload.extend(b"".join(struct.pack("<2I", kind, INLINE) for kind, _ in assets))
+
+    com_header = bytearray(44)
+    struct.pack_into("<2I", com_header, 0, INLINE, 1)
+    payload.extend(com_header)
+    payload.extend(com_world["name"].encode() + b"\0")
+
+    payload.extend(struct.pack("<I", INLINE))
+    payload.extend(game_name.encode() + b"\0")
+
+    clip_header = bytearray(324)
+    struct.pack_into("<2I", clip_header, 0, INLINE, 1)
+    struct.pack_into("<2I", clip_header, 148, 1, INLINE)
+    struct.pack_into("<I", clip_header, 180, INLINE)
+    payload.extend(clip_header)
+    payload.extend(clip_name.encode() + b"\0")
+    payload.extend(bytes(72))  # world cmodel; brush-model entities were removed above
+    payload.extend(struct.pack("<3I", INLINE, INLINE, len(entity_string)))
+    payload.extend(entity_name.encode() + b"\0")
+    payload.extend(entity_string)
+
+    gfx_header = bytearray(728)
+    struct.pack_into("<2I", gfx_header, 0, INLINE, INLINE)
+    payload.extend(gfx_header)
+    payload.extend(world_name.encode() + b"\0")
+    payload.extend(base_name.encode() + b"\0")
+
+    allocation = len(payload) + 65536
+    result = bytearray(struct.pack("<7I", 470, len(payload), allocation, 0,
+                                   allocation, 0, 0))
+    result.extend(zlib.compress(payload, 1))
+    result.extend(bytes((-len(result)) % 0x20000))
+    return bytes(result)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="+", type=Path)
     parser.add_argument("--details", action="store_true",
                         help="decode supported asset schemas and require exact stream consumption")
+    parser.add_argument("--convert-map-probe", type=Path, metavar="OUTPUT",
+                        help="emit a geometry-free PC v470 zone for loader testing")
     args = parser.parse_args()
+    if args.convert_map_probe:
+        if len(args.files) != 1:
+            parser.error("--convert-map-probe requires exactly one input")
+        try:
+            args.convert_map_probe.write_bytes(build_pc_map_probe(args.files[0]))
+            print(json.dumps({"input": str(args.files[0]),
+                              "output": str(args.convert_map_probe),
+                              "bytes": args.convert_map_probe.stat().st_size}))
+            return 0
+        except (OSError, FormatError) as error:
+            print(json.dumps({"file": str(args.files[0]), "error": str(error)}))
+            return 1
     failed = False
     for path in args.files:
         try:

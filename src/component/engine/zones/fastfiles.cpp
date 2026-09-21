@@ -299,7 +299,7 @@ namespace fastfiles
 		{
 			if (args.size() != 2)
 			{
-				game::Com_Printf(16, "loadXenonZone <path.ff>: convert and load a supported Xenon v470 fastfile\n");
+				game::Com_Printf(16, "loadXenonZone <path.ff>: convert Xenon v470 or load an explicit PC v470 probe\n");
 				return;
 			}
 			try
@@ -308,12 +308,13 @@ namespace fastfiles
 				const auto name = source.stem().string();
 				if (name.empty() || name.size() >= 64 || name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != std::string::npos)
 					throw std::runtime_error("invalid zone name");
-				if (!xenon::prepare(source, name)) throw std::runtime_error("input is not a recognized Xenon v470 fastfile");
-				game::XZoneInfo zone{name.c_str(), 0x11, 0};
+				if (!xenon::prepare(source, name, true)) throw std::runtime_error("input is not a recognized v470 fastfile");
+				// Native map zones use allocation class 2. Override/patch fastfiles use 0x11.
+				game::XZoneInfo zone{name.c_str(), 2, 0};
 				// Explicit path is already preflighted, so do not resolve a second file by name.
 				db_load_xassets_hook.invoke<int>(&zone, 1, 0);
 				game::DB_WaitXAssets.get()();
-				game::Com_Printf(16, "^5[Xenon] Native loading completed for %s; verify its UI textures in-game\n", name.c_str());
+				game::Com_Printf(16, "^5[Xenon] Native loading completed for %s\n", name.c_str());
 			}
 			catch (const std::exception& error)
 			{

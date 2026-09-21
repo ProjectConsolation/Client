@@ -546,7 +546,7 @@ namespace fastfiles::xenon
 		}
 	}
 
-	bool prepare(const std::filesystem::path& source, const std::string& zone_name)
+	bool prepare(const std::filesystem::path& source, const std::string& zone_name, const bool allow_pc_probe)
 	{
 		std::ifstream stream(source, std::ios::binary | std::ios::ate);
 		require(stream.good(), "cannot open fastfile source");
@@ -555,6 +555,22 @@ namespace fastfiles::xenon
 		stream.seekg(0);
 		bytes signature(4);
 		stream.read(reinterpret_cast<char*>(signature.data()), 4);
+		if (native32(signature, 0) == 470)
+		{
+			if (!allow_pc_probe) return false;
+			auto entry = std::make_shared<cached_file>();
+			entry->path = std::filesystem::absolute(source).wstring();
+			entry->keeper = CreateFileW(entry->path.c_str(), GENERIC_READ,
+				FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+				FILE_ATTRIBUTE_NORMAL, nullptr);
+			require(entry->keeper != INVALID_HANDLE_VALUE, "cannot retain PC conversion probe");
+			{
+				std::lock_guard lock(cache_mutex);
+				cache[key(zone_name)] = std::move(entry);
+			}
+			game::Com_Printf(16, "^5[Xenon] Prepared explicit PC v470 conversion probe %s\n", zone_name.c_str());
+			return true;
+		}
 		if (be32(signature, 0) != 470)
 		{
 			require(signature[0] != 0 || signature[1] != 0 || be32(signature, 0) == 0,
@@ -585,7 +601,7 @@ namespace fastfiles::xenon
 			std::lock_guard lock(cache_mutex);
 			cache[key(zone_name)] = std::move(entry);
 		}
-		game::Com_Printf(16, "^5[Xenon] Prepared %s: 3 UI materials, 3 base-mip textures and 1 rawfile; PC v470\n", zone_name.c_str());
+		game::Com_Printf(16, "^5[Xenon] Prepared %s: converted to PC v470\n", zone_name.c_str());
 		return true;
 	}
 

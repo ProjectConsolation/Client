@@ -204,6 +204,46 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(col_map["brush_count"], 0)
         self.assertEqual(report["unconsumed_payload_bytes"], 0)
 
+    def test_pc_map_probe_preserves_entities_and_root_names(self):
+        com = bytearray(44)
+        struct.pack_into(">I", com, 0, xenon_ff.INLINE)
+        game = struct.pack(">I", xenon_ff.INLINE)
+        clip = bytearray(324)
+        struct.pack_into(">II", clip, 0, xenon_ff.INLINE, 1)
+        struct.pack_into(">I", clip, 180, xenon_ff.INLINE)
+        entities = (b'{\n"classname" "worldspawn"\n}\n'
+                    b'{\n"classname" "script_model"\n"model" "*1"\n}\0')
+        map_ents = struct.pack(">3I", xenon_ff.INLINE, xenon_ff.INLINE,
+                               len(entities))
+        gfx = bytearray(828)
+        struct.pack_into(">II", gfx, 0, xenon_ff.INLINE, xenon_ff.INLINE)
+        entries = ((14, xenon_ff.INLINE), (16, xenon_ff.INLINE),
+                   (13, xenon_ff.INLINE), (18, xenon_ff.INLINE))
+        payload = struct.pack(">4I", 0, 0, len(entries), xenon_ff.INLINE)
+        payload += b"".join(struct.pack(">2I", *entry) for entry in entries)
+        payload += com + b"maps/mp/test.d3dbsp\0"
+        payload += game + b"mp_test\0"
+        payload += clip + b"maps/mp/test.d3dbsp\0"
+        payload += map_ents + b"maps/mp/test.d3dbsp\0" + entities
+        payload += gfx + b"maps/mp/test.d3dbsp\0mp_test\0"
+
+        with tempfile.TemporaryDirectory(prefix="qos-xenon-probe-") as directory:
+            source = Path(directory) / "source.ff"
+            source.write_bytes(self.zone(payload))
+            converted = xenon_ff.build_pc_map_probe(source)
+
+        version, payload_size = struct.unpack_from("<2I", converted)
+        pc_payload = zlib.decompress(converted[28:])
+        self.assertEqual(version, 470)
+        self.assertEqual(payload_size, len(pc_payload))
+        self.assertEqual(struct.unpack_from("<4I", pc_payload),
+                         (0, 0, 4, xenon_ff.INLINE))
+        self.assertEqual([entry[0] for entry in struct.iter_unpack(
+            "<2I", pc_payload[16:48])], [13, 15, 12, 17])
+        self.assertIn(b'"classname" "worldspawn"', pc_payload)
+        self.assertNotIn(b'"model" "*1"', pc_payload)
+        self.assertIn(b"maps/mp/test.d3dbsp\0mp_test\0", pc_payload)
+
     def test_sound_with_minimal_alias(self):
         sound_header = struct.pack(">3I", xenon_ff.INLINE,
                                    xenon_ff.INLINE, 1)
