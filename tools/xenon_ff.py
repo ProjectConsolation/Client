@@ -23,6 +23,21 @@ ASSET_NAMES = (
     "character xmodelalias rawfile stringtable xmltree scene_animation cutscene "
     "custom_camera"
 ).split()
+PC_ASSET_NAMES = ASSET_NAMES[:7] + ASSET_NAMES[8:]
+PC_LAYOUTS = {
+    "material": (96, 104),
+    "techset": (156, 184),
+    "image": (40, 36),
+    "sound_alias": (96, 80),
+    "xsurface": (200, 80),
+    "gfx_map": (828, 728),
+    "xmodel": (240, 240),
+    "col_map_mp": (324, 324),
+    "com_map": (44, 44),
+    "game_map_mp": (4, 4),
+    "lightdef": (16, 16),
+    "fx": (32, 32),
+}
 INLINE = 0xFFFFFFFF
 INSERT = 0xFFFFFFFE
 MAX_BYTES = 256 * 1024 * 1024
@@ -30,6 +45,14 @@ MAX_BYTES = 256 * 1024 * 1024
 
 class FormatError(ValueError):
     pass
+
+
+def pc_asset_type(xenon_type):
+    if not 0 <= xenon_type < len(ASSET_NAMES):
+        raise FormatError(f"invalid Xenon asset type {xenon_type}")
+    if xenon_type == 7:
+        return None
+    return xenon_type if xenon_type < 7 else xenon_type - 1
 
 
 def u32(data, offset=0):
@@ -101,6 +124,13 @@ def read_zone(path):
         "script_string_count": strings, "asset_count": count,
         "asset_table_offset": hex(table_offset),
         "asset_counts": dict(Counter(ASSET_NAMES[t] for t, _ in entries)),
+        "pc_asset_counts": dict(Counter(
+            PC_ASSET_NAMES[pc_asset_type(t)] for t, _ in entries
+            if pc_asset_type(t) is not None)),
+        "incompatible_pc_layouts": {
+            name: {"xenon_bytes": sizes[0], "pc_bytes": sizes[1]}
+            for name, sizes in PC_LAYOUTS.items() if sizes[0] != sizes[1]
+        },
         "script_strings": script_strings,
     }
     return reader, entries, report
@@ -243,6 +273,34 @@ def _inline_bytes(reader, pointer, size, field):
     return None
 
 
+def convert_xsurface_vertices(primary, attributes, secondary, count):
+    if count and (primary is None or attributes is None):
+        raise FormatError("xsurface is missing a required Xenon vertex stream")
+    if not count:
+        return b"", b"" if secondary is not None else None
+
+    verts0 = bytearray(count * 40)
+    verts1 = bytearray(count * 16) if secondary is not None else None
+    for index in range(count):
+        source = index * 16
+        target = index * 40
+        for component in range(4):
+            value = struct.unpack_from(">f", primary, source + component * 4)[0]
+            struct.pack_into("<f", verts0, target + component * 4, value)
+        struct.pack_into("<I", verts0, target + 16, u32(attributes, source))
+        struct.pack_into("<I", verts0, target + 20, 0)
+        for component in range(2):
+            value = struct.unpack_from(">e", attributes, source + 8 + component * 2)[0]
+            struct.pack_into("<f", verts0, target + 24 + component * 4, value)
+        struct.pack_into("<I", verts0, target + 32, u32(attributes, source + 12))
+        struct.pack_into("<I", verts0, target + 36, u32(attributes, source + 4))
+        if verts1 is not None:
+            for component in range(4):
+                value = struct.unpack_from(">f", secondary, source + component * 4)[0]
+                struct.pack_into("<f", verts1, source + component * 4, value)
+    return bytes(verts0), bytes(verts1) if verts1 is not None else None
+
+
 def xsurface(reader, header, index):
     result = {
         "vertex_count": u16(header, 2),
@@ -262,16 +320,32 @@ def xsurface(reader, header, index):
                   f"xsurface {index} blend vertices")
 
     vertex_bytes = result["vertex_count"] * 16
+    vertex_streams = []
+    vertex_stream_offsets = []
     for offset, field in ((28, "vertices"), (64, "secondary vertices"),
                           (100, "tertiary vertices")):
-        _inline_bytes(reader, u32(header, offset), vertex_bytes,
-                      f"xsurface {index} {field}")
+        stream_offset = reader.pos
+        stream = _inline_bytes(reader, u32(header, offset), vertex_bytes,
+                               f"xsurface {index} {field}")
+        vertex_streams.append(stream)
+        vertex_stream_offsets.append(hex(stream_offset) if stream is not None else None)
+    pc_verts0 = pc_verts1 = None
+    if not result["vertex_count"] or all(stream is not None for stream in vertex_streams[:2]):
+        pc_verts0, pc_verts1 = convert_xsurface_vertices(*vertex_streams,
+                                                         result["vertex_count"])
     _inline_bytes(reader, u32(header, 140), u32(header, 136) * 8,
                   f"xsurface {index} rigid vertices")
     _inline_bytes(reader, u32(header, 8), result["triangle_count"] * 6,
                   f"xsurface {index} indices")
     result["blend_counts"] = blend_counts
     result["rigid_vertex_count"] = u32(header, 136)
+    result["vertex_stream_prefixes"] = [stream[:16].hex() if stream else None
+                                         for stream in vertex_streams]
+    result["vertex_stream_pointers"] = [hex(u32(header, offset))
+                                         for offset in (28, 64, 100)]
+    result["vertex_stream_offsets"] = vertex_stream_offsets
+    result["pc_vertex_prefix"] = pc_verts0[:40].hex() if pc_verts0 else None
+    result["pc_secondary_vertex_prefix"] = pc_verts1[:16].hex() if pc_verts1 else None
     return result
 
 

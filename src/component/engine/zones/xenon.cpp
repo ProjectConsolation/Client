@@ -18,6 +18,49 @@ namespace fastfiles::xenon
 		constexpr uint32_t inline_data = 0xFFFFFFFFu;
 		constexpr uint32_t insert_pointer = 0xFFFFFFFEu;
 		constexpr size_t size_limit = 128u * 1024u * 1024u;
+		constexpr uint32_t xenon_asset_count = 39;
+
+		struct asset_entry
+		{
+			uint32_t xenon_type;
+			uint32_t pointer;
+		};
+
+		struct zone_manifest
+		{
+			uint32_t script_string_count;
+			std::vector<asset_entry> assets;
+		};
+
+		// QoS Xenon has a standalone pixel-shader asset at slot 7. PC does not.
+		// Every later asset is consequently shifted down by one in the PC dispatcher.
+		std::optional<uint32_t> pc_asset_type(const uint32_t xenon_type)
+		{
+			if (xenon_type >= xenon_asset_count) throw std::runtime_error("invalid Xenon asset type");
+			if (xenon_type == 7) return std::nullopt;
+			return xenon_type < 7 ? xenon_type : xenon_type - 1;
+		}
+
+		struct verified_layout
+		{
+			size_t xenon_size;
+			size_t pc_size;
+		};
+
+		// Sizes recovered from the QoS Xenon and PC DB loaders. Records with unequal
+		// sizes require field-wise serialization and must never be byte-swapped in place.
+		constexpr verified_layout material_layout{96, 104};
+		constexpr verified_layout technique_set_layout{156, 184};
+		constexpr verified_layout image_layout{40, 36};
+		constexpr verified_layout sound_alias_layout{96, 80};
+		constexpr verified_layout xsurface_layout{200, 80};
+		constexpr verified_layout gfx_world_layout{828, 728};
+		constexpr verified_layout xmodel_layout{240, 240};
+		constexpr verified_layout clip_map_layout{324, 324};
+		constexpr verified_layout common_world_layout{44, 44};
+		constexpr verified_layout game_world_layout{4, 4};
+		constexpr verified_layout light_layout{16, 16};
+		constexpr verified_layout fx_layout{32, 32};
 
 		void require(const bool condition, const char* message)
 		{
@@ -105,6 +148,39 @@ namespace fastfiles::xenon
 			}
 		};
 
+		zone_manifest read_manifest(reader& input)
+		{
+			const auto list = input.take(16);
+			zone_manifest result{be32(list, 0), {}};
+			const auto script_string_pointer = be32(list, 4);
+			const auto asset_count = be32(list, 8);
+			const auto asset_pointer = be32(list, 12);
+			require(result.script_string_count <= input.data.size() / 4, "invalid Xenon script-string count");
+			require(asset_count <= input.data.size() / 8, "invalid Xenon asset count");
+			require(!result.script_string_count || script_string_pointer == inline_data,
+				"unsupported Xenon script-string array reference");
+			require(!asset_count || asset_pointer == inline_data, "unsupported Xenon asset array reference");
+
+			const auto script_pointers = input.take(size_t(result.script_string_count) * 4);
+			for (uint32_t i = 0; i < result.script_string_count; ++i)
+			{
+				require(be32(script_pointers, size_t(i) * 4) == inline_data,
+					"unsupported Xenon script-string reference");
+				input.string();
+			}
+
+			const auto table = input.take(size_t(asset_count) * 8);
+			result.assets.reserve(asset_count);
+			for (uint32_t i = 0; i < asset_count; ++i)
+			{
+				const auto type = be32(table, size_t(i) * 8);
+				const auto pointer = be32(table, size_t(i) * 8 + 4);
+				(void)pc_asset_type(type); // Validate against the Xenon dispatcher before parsing records.
+				result.assets.push_back({type, pointer});
+			}
+			return result;
+		}
+
 		struct image_asset
 		{
 			std::string name;
@@ -155,7 +231,7 @@ namespace fastfiles::xenon
 		image_asset read_image(reader& input)
 		{
 			// Xenon 0x821E7D60 / 0x821E7C78: image, name, GPU data, load definition, resource.
-			const auto header = input.take(40);
+			const auto header = input.take(image_layout.xenon_size);
 			require(be32(header, 36) == inline_data && be32(header, 24) == inline_data,
 				"unsupported Xenon image reference");
 			require(be32(header, 4) == inline_data || be32(header, 4) == insert_pointer, "unsupported image load reference");
@@ -285,7 +361,7 @@ namespace fastfiles::xenon
 			auto texture = base.texture;
 			le32(texture, 8, inline_data);
 			output.append(texture);
-			bytes image(36, 0);
+			bytes image(image_layout.pc_size, 0);
 			le32(image, 0, 3);
 			le32(image, 4, inline_data);
 			image[10] = 1; // no picmip; UI keeps the original base-level resolution
@@ -321,17 +397,16 @@ namespace fastfiles::xenon
 			const auto status = uncompress(payload.data(), &size, file.data() + 28, static_cast<uLong>(file.size() - 28));
 			require(status == Z_OK && size == expected, "Xenon decompression failed or size mismatch");
 			reader input{payload};
-			const auto list = input.take(16);
-			require(be32(list, 0) == 0 && be32(list, 4) == 0 && be32(list, 8) == 5
-				&& be32(list, 12) == inline_data, "unsupported Xenon zone: only the five-asset UI loading profile is implemented; map worlds are not supported");
-			const auto table = input.take(40);
+			const auto manifest = read_manifest(input);
+			require(manifest.script_string_count == 0 && manifest.assets.size() == 5,
+				"unsupported Xenon zone: map serialization is not complete");
 			constexpr uint32_t kinds[] = {8, 6, 6, 6, 33};
 			for (size_t i = 0; i < 5; ++i)
 			{
-				require(be32(table, i * 8) == kinds[i] && be32(table, i * 8 + 4) == inline_data,
+				require(manifest.assets[i].xenon_type == kinds[i] && manifest.assets[i].pointer == inline_data,
 					"unsupported Xenon loading-zone asset table");
 			}
-			const auto technique = input.take(156);
+			const auto technique = input.take(technique_set_layout.xenon_size);
 			require(be32(technique, 0) == inline_data
 				&& std::all_of(technique.begin() + 4, technique.end(), [](auto b) { return b == 0; }),
 				"Xbox shader conversion is not implemented");
@@ -341,7 +416,7 @@ namespace fastfiles::xenon
 			std::vector<material_asset> materials;
 			for (size_t i = 0; i < 3; ++i)
 			{
-				const auto header = input.take(96);
+				const auto header = input.take(material_layout.xenon_size);
 				require(be32(header, 0) == inline_data && header[60] == 1 && header[61] == 0 && header[62] == 1
 					&& be32(header, 76) == 0x40000005 && be32(header, 80) == inline_data
 					&& be32(header, 84) == 0 && be32(header, 88) == inline_data, "unsupported Xbox UI material layout");
@@ -372,7 +447,9 @@ namespace fastfiles::xenon
 			le32(pc_list, 12, inline_data);
 			for (size_t i = 0; i < 4; ++i)
 			{
-				le32(pc_list, 16 + i * 8, i < 3 ? 6u : 32u);
+				const auto converted_type = pc_asset_type(manifest.assets[i + 1].xenon_type);
+				require(converted_type.has_value(), "Xenon pixel shaders cannot be emitted as PC assets");
+				le32(pc_list, 16 + i * 8, *converted_type);
 				le32(pc_list, 20 + i * 8, inline_data);
 			}
 			output.append(pc_list);

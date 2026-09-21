@@ -299,7 +299,7 @@ namespace fastfiles
 		{
 			if (args.size() != 2)
 			{
-				game::Com_Printf(16, "loadXenonZone <path.ff>: experimental Xenon UI loading-zone adapter; full maps unsupported\n");
+				game::Com_Printf(16, "loadXenonZone <path.ff>: convert and load a supported Xenon v470 fastfile\n");
 				return;
 			}
 			try

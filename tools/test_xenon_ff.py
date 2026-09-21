@@ -18,6 +18,23 @@ class FastfileTests(unittest.TestCase):
         return struct.pack(">7I", 470, len(payload) if size is None else size,
                            64, 0, 64, 0, 0) + zlib.compress(payload)
 
+    def test_xsurface_vertex_stream_conversion(self):
+        primary = struct.pack(">4f", 1.0, 2.0, 3.0, -1.0)
+        attributes = (struct.pack(">2I", 0x11223344, 0x55667788)
+                      + struct.pack(">2e", 0.25, 0.75)
+                      + struct.pack(">I", 0x99AABBCC))
+        secondary = struct.pack(">4f", 4.0, 5.0, 6.0, 7.0)
+
+        verts0, verts1 = xenon_ff.convert_xsurface_vertices(
+            primary, attributes, secondary, 1)
+
+        self.assertEqual(struct.unpack_from("<4f", verts0), (1.0, 2.0, 3.0, -1.0))
+        self.assertEqual(struct.unpack_from("<2I", verts0, 16), (0x11223344, 0))
+        self.assertEqual(struct.unpack_from("<2f", verts0, 24), (0.25, 0.75))
+        self.assertEqual(struct.unpack_from("<2I", verts0, 32),
+                         (0x99AABBCC, 0x55667788))
+        self.assertEqual(struct.unpack("<4f", verts1), (4.0, 5.0, 6.0, 7.0))
+
     def test_rawfile_byte_content_is_not_swapped(self):
         payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
         payload += struct.pack(">2I", 33, xenon_ff.INLINE)
@@ -44,6 +61,21 @@ class FastfileTests(unittest.TestCase):
         payload = struct.pack(">6I", 0, 0, 1, xenon_ff.INLINE, 99, xenon_ff.INLINE)
         with self.assertRaisesRegex(xenon_ff.FormatError, "asset type"):
             self.inspect_blob(self.zone(payload))
+
+    def test_pc_asset_type_skips_xenon_pixel_shader_slot(self):
+        self.assertEqual(xenon_ff.pc_asset_type(6), 6)
+        self.assertIsNone(xenon_ff.pc_asset_type(7))
+        self.assertEqual(xenon_ff.pc_asset_type(8), 7)
+        self.assertEqual(xenon_ff.pc_asset_type(38), 37)
+
+    def test_report_exposes_pc_layout_mismatches(self):
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 33, xenon_ff.INLINE)
+        payload += struct.pack(">3I", xenon_ff.INLINE, 0, 0) + b"empty/raw\0"
+        report = self.inspect_blob(self.zone(payload), True)
+        self.assertEqual(report["pc_asset_counts"], {"rawfile": 1})
+        self.assertEqual(report["incompatible_pc_layouts"]["xsurface"],
+                         {"xenon_bytes": 200, "pc_bytes": 80})
 
     def test_unterminated_string(self):
         payload = struct.pack(">5I", 1, xenon_ff.INLINE, 0, 0, xenon_ff.INLINE)
