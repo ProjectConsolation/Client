@@ -226,7 +226,7 @@ class FastfileTests(unittest.TestCase):
                                   5, 6, 7, 8), payload)
         self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
         self.assertIn(struct.pack("<11I", *range(24, 35)), payload)
-        self.assertIn(struct.pack("<15I", *range(39, 54)), payload)
+        self.assertNotIn(struct.pack("<15I", *range(39, 54)), payload)
         self.assertIn(struct.pack("<6f", -1.0, -2.0, -3.0,
                                   1.0, 2.0, 3.0), payload)
         pc_cell = xenon_ff._pc_gfx_cell_header(
@@ -402,6 +402,26 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(col_map["name"], "maps/mp/test.d3dbsp")
         self.assertEqual(col_map["brush_count"], 0)
         self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_pc_gfx_world_brush_models_use_pc_stride(self):
+        asset = {
+            "world_name": "maps/mp/test.d3dbsp",
+            "name": "mp_test",
+            "geometry": {
+                "planes": "", "nodes": "", "indices": "", "surfaces": "",
+                "brush_models": bytes(4 * 60).hex(),
+                "sky_start_surfs": "", "vertices": "", "vertex_layers": "",
+                "static_model_draws": "", "static_model_insts": "",
+                "cells": [],
+            },
+        }
+        payload = bytearray()
+        xenon_ff.write_pc_gfx_world(payload, asset, 0)
+        self.assertEqual(struct.unpack_from("<2I", payload, 352),
+                         (4, xenon_ff.INLINE))
+        names = (b"maps/mp/test.d3dbsp\0mp_test\0")
+        self.assertEqual(len(payload), 728 + len(names) + 4 * 168)
+        self.assertEqual(payload[-4 * 168:], bytes(4 * 168))
 
     def test_pc_map_probe_preserves_entities_and_root_names(self):
         com = bytearray(44)

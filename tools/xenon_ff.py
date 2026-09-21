@@ -1467,7 +1467,10 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
         payload.extend(_pc_gfx_cell_header(cell, include_static_models))
     for cell in cells:
         _write_pc_gfx_cell_nested(payload, cell, include_static_models)
-    payload.extend(_little_endian_words(xbox_brush_models))
+    # PC GfxWorld brush models are 168 bytes (Xbox records are 60). The
+    # reduced probe has no brush collision, so retain the count with empty
+    # PC-sized records instead of shifting every subsequent asset in the zone.
+    payload.extend(bytes(brush_model_count * 168))
     payload.extend(pc_vertices)
     payload.extend(vertex_layers)
 

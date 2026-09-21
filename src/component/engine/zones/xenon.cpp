@@ -616,7 +616,10 @@ namespace fastfiles::xenon
 			if (found == cache.end()) return std::nullopt;
 			entry = found->second;
 		}
-		return CreateFileW(entry->path.c_str(), access, sharing | FILE_SHARE_DELETE, security, disposition, flags, template_file);
+		// The cache's keeper has GENERIC_READ access. A new open must permit that
+		// existing read handle to remain shared, even if the engine requested 0.
+		return CreateFileW(entry->path.c_str(), access,
+			sharing | FILE_SHARE_READ | FILE_SHARE_DELETE, security, disposition, flags, template_file);
 	}
 
 	void clear()

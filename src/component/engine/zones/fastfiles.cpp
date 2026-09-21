@@ -14,14 +14,27 @@
 #include <utils/nt.hpp>
 
 #include <unordered_set>
+#include <cstring>
 
 namespace fastfiles
 {
 	namespace
 	{
 		utils::hook::detour db_link_xasset_entry_hook;
+		utils::hook::detour db_create_default_asset_hook;
 		utils::hook::detour create_file_a_hook;
 		utils::hook::detour db_load_xassets_hook;
+		utils::hook::detour db_load_xasset_hook;
+		utils::hook::detour db_load_cmodel_hook;
+		utils::hook::detour db_load_map_ents_hook;
+		utils::hook::detour cm_load_map_hook;
+		utils::hook::detour cm_world_init_hook;
+		utils::hook::detour sv_game_init_hook;
+		void* db_create_default_asset_original = nullptr;
+		void* cm_load_map_original = nullptr;
+		void* db_load_xasset_original = nullptr;
+		void* db_load_cmodel_original = nullptr;
+		void* db_load_map_ents_original = nullptr;
 
 		bool common_fastfiles_seen = false;
 		bool patch_consolation_loaded = false;
@@ -36,6 +49,165 @@ namespace fastfiles
 		bool debug_xasset()
 		{
 			return utils::flags::has_flag("debug_xasset");
+		}
+
+		void __cdecl log_default_asset_creation(const int type, const char* name)
+		{
+			game::Com_Printf(16, "^3[fastfiles] creating default for missing asset type=%d name=%s\n",
+				type, name ? name : "<null>");
+		}
+
+		__declspec(naked) void db_create_default_asset_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				push dword ptr[esp + 0x28]
+				push eax
+				call log_default_asset_creation
+				add esp, 8
+				popad
+				popfd
+				jmp dword ptr[db_create_default_asset_original]
+			}
+		}
+
+		void __cdecl log_cm_load_map_start()
+		{
+			game::Com_Printf(16, "^5[map-stage] CM_LoadMap enter\n");
+		}
+
+		__declspec(naked) void cm_load_map_stub()
+		{
+			// CM_LoadMap takes the BSP name in ESI and an output pointer on the stack.
+			__asm
+			{
+				pushfd
+				pushad
+				call log_cm_load_map_start
+				popad
+				popfd
+				jmp dword ptr[cm_load_map_original]
+			}
+		}
+
+		void __cdecl log_map_asset_load(const int returning)
+		{
+			// QoS PC 1.1 DB_LoadXAsset (0x103DD0A0) uses this global to
+			// identify the current 8-byte asset-table entry.
+			const auto entry = *reinterpret_cast<const std::uintptr_t*>(game::game_offset(0x10AB8D14));
+			if (!entry)
+			{
+				return;
+			}
+			const auto type = *reinterpret_cast<const std::uint32_t*>(entry);
+			if (type == game::ASSET_TYPE_COMWORLD || type == game::ASSET_TYPE_GFXWORLD
+				|| type == game::ASSET_TYPE_gameWORLD_MP || type == game::ASSET_TYPE_CLIPMAP_MP)
+			{
+				game::Com_Printf(16, "^5[map-stage] DB_LoadXAsset %s type=%u token=0x%08X entry=%p\n",
+					returning ? "returned" : "enter", type,
+					*reinterpret_cast<const std::uint32_t*>(entry + 4), reinterpret_cast<const void*>(entry));
+			}
+		}
+
+		void __cdecl log_clip_nested_load(const int stage, const int returning)
+		{
+			const auto entry = *reinterpret_cast<const std::uintptr_t*>(game::game_offset(0x10AB8D14));
+			if (entry && *reinterpret_cast<const std::uint32_t*>(entry) == game::ASSET_TYPE_CLIPMAP_MP)
+			{
+				game::Com_Printf(16, "^5[map-stage] clipMap %s %s\n",
+						stage ? "MapEnts" : "cmodels", returning ? "returned" : "enter");
+			}
+		}
+
+		__declspec(naked) void db_load_cmodel_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				push 0
+				push 0
+				call log_clip_nested_load
+				add esp, 8
+				popad
+				popfd
+				call dword ptr[db_load_cmodel_original]
+				pushfd
+				pushad
+				push 1
+				push 0
+				call log_clip_nested_load
+				add esp, 8
+				popad
+				popfd
+				ret
+			}
+		}
+
+		__declspec(naked) void db_load_map_ents_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				push 0
+				push 1
+				call log_clip_nested_load
+				add esp, 8
+				popad
+				popfd
+				call dword ptr[db_load_map_ents_original]
+				pushfd
+				pushad
+				push 1
+				push 1
+				call log_clip_nested_load
+				add esp, 8
+				popad
+				popfd
+				ret
+			}
+		}
+
+		__declspec(naked) void db_load_xasset_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				push 0
+				call log_map_asset_load
+				add esp, 4
+				popad
+				popfd
+				call dword ptr[db_load_xasset_original]
+				pushfd
+				pushad
+				push 1
+				call log_map_asset_load
+				add esp, 4
+				popad
+				popfd
+				ret
+			}
+		}
+
+		int cm_world_init_stub()
+		{
+			game::Com_Printf(16, "^5[map-stage] CM_LoadMap returned; world init enter\n");
+			const auto result = cm_world_init_hook.invoke<int>();
+			game::Com_Printf(16, "^5[map-stage] world init returned\n");
+			return result;
+		}
+
+		int sv_game_init_stub(const int arg1, const int arg2)
+		{
+			game::Com_Printf(16, "^5[map-stage] SV game init enter\n");
+			const auto result = sv_game_init_hook.invoke<int>(arg1, arg2);
+			game::Com_Printf(16, "^5[map-stage] SV game init returned\n");
+			return result;
 		}
 
 		bool zone_name_equals(const char* lhs, const char* rhs)
@@ -214,13 +386,27 @@ namespace fastfiles
 			const DWORD flags_and_attributes, const HANDLE template_file)
 		{
 			const auto original = reinterpret_cast<create_file_a_t>(create_file_a_hook.get_original());
-			if (is_read_open_request(desired_access, creation_disposition) && is_zone_fastfile_path(file_name))
+			// Temporary QoS PC 1.1 probe: verify the map reaches the file-open boundary.
+			if (file_name && ends_with_ignore_case(file_name, "mp_canals.ff"))
+			{
+				game::Com_Printf(16, "^5[Xenon] fastfile open request path=%s access=0x%X share=0x%X disposition=%u flags=0x%X\n",
+					file_name, desired_access, share_mode, creation_disposition, flags_and_attributes);
+			}
+			if (is_read_open_request(desired_access, creation_disposition) && file_name
+				&& ends_with_ignore_case(file_name, ".ff"))
 			{
 				try
 				{
 					const auto converted = xenon::open_prepared(file_name, desired_access, share_mode,
 						security_attributes, creation_disposition, flags_and_attributes, template_file);
-					if (converted) return *converted;
+					if (converted)
+					{
+						const auto open_error = *converted == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+						game::Com_Printf(16, "^5[Xenon] opened prepared fastfile for %s (%s, error=%lu)\n",
+							file_name, *converted == INVALID_HANDLE_VALUE ? "failed" : "ok", open_error);
+						SetLastError(open_error);
+						return *converted;
+					}
 				}
 				catch (const std::exception& error)
 				{
@@ -325,9 +511,8 @@ namespace fastfiles
 				if (!xenon::prepare(source, name, true)) throw std::runtime_error("input is not a recognized v470 fastfile");
 				if (name.starts_with("mp_"))
 				{
-					// Map zones must be linked by the normal server transition. Preloading one
-					// with allocation class 2 corrupts the ownership/unload sequence used by
-					// devmap and can make otherwise-resident external assets disappear.
+					// Keep map-zone ownership in the normal server transition. An explicit
+					// preload followed by devmap causes a second map load after an unload.
 					game::Com_Printf(16, "^5[Xenon] Prepared map zone %s; run devmap %s to load it\n",
 						name.c_str(), name.c_str());
 					return;
@@ -511,6 +696,17 @@ namespace fastfiles
 			normalize_rawfile_name(entry);
 
 			const auto* const incoming_name = get_asset_name(entry);
+			const auto type = entry ? static_cast<int>(entry->asset.type) : -1;
+			// Temporary QoS PC 1.1 probe for the generated mp_canals zone. Remove
+			// once native map asset linking and CM_LoadMap have been verified.
+			const bool trace_map_asset = entry && (type == game::ASSET_TYPE_gameWORLD_MP
+				|| type == game::ASSET_TYPE_CLIPMAP_MP || type == game::ASSET_TYPE_MAP_ENTS
+				|| ((type == game::ASSET_TYPE_GFXWORLD || type == game::ASSET_TYPE_COMWORLD)
+					&& std::strstr(incoming_name, "mp_canals") != nullptr));
+			if (trace_map_asset)
+			{
+				game::Com_Printf(16, "^5[map-stage] link enter type=%d name=%s\n", type, incoming_name);
+			}
 			if (incoming_name[0] == ',')
 			{
 				const auto key = std::to_string(static_cast<int>(entry->asset.type)) + ":" + incoming_name;
@@ -526,6 +722,11 @@ namespace fastfiles
 				}
 			}
 			auto* const linked_entry = db_link_xasset_entry_hook.invoke<game::XAssetEntry*>(entry, allow_override);
+			if (trace_map_asset)
+			{
+				game::Com_Printf(16, "^5[map-stage] link returned type=%d name=%s linked=%p\n",
+					type, incoming_name, linked_entry);
+			}
 			auto* const log_entry = linked_entry ? linked_entry : entry;
 			if (log_entry)
 			{
@@ -669,6 +870,23 @@ namespace fastfiles
 			create_file_a_hook.create(reinterpret_cast<void*>(CreateFileA), create_file_a_stub);
 			db_load_xassets_hook.create(game::DB_LoadXAssets, db_load_xassets_stub);
 			db_link_xasset_entry_hook.create(game::DB_LinkXAssetEntry, db_link_xasset_entry_stub);
+			// QoS PC 1.1 DB_CreateDefaultEntry uses EAX for type and one stack name argument.
+			// Diagnostic only: forward unchanged so missing defaults still fail natively.
+			db_create_default_asset_hook.create(game::game_offset(0x103E0120), db_create_default_asset_stub);
+			db_create_default_asset_original = db_create_default_asset_hook.get_original();
+			// Temporary QoS PC 1.1 probes. Remove after the Xenon clipMap and
+			// server-game path have both been verified against native map startup.
+			cm_load_map_hook.create(game::game_offset(0x103ED060), cm_load_map_stub);
+			cm_load_map_original = cm_load_map_hook.get_original();
+			// Temporary loader-boundary probe for the mp_canals root stream.
+			db_load_xasset_hook.create(game::game_offset(0x103DD0A0), db_load_xasset_stub);
+			db_load_xasset_original = db_load_xasset_hook.get_original();
+			db_load_cmodel_hook.create(game::game_offset(0x103CFAA0), db_load_cmodel_stub);
+			db_load_cmodel_original = db_load_cmodel_hook.get_original();
+			db_load_map_ents_hook.create(game::game_offset(0x103D15D0), db_load_map_ents_stub);
+			db_load_map_ents_original = db_load_map_ents_hook.get_original();
+			cm_world_init_hook.create(game::game_offset(0x101AF9F0), cm_world_init_stub);
+			sv_game_init_hook.create(game::game_offset(0x102F5920), sv_game_init_stub);
 			command::add("loadXenonZone", load_xenon_zone);
 			scheduler::schedule([]()
 			{
