@@ -616,9 +616,12 @@ namespace console
 				va_end(ap);
 			}
 
+			const auto* const source_name = source
+				? reinterpret_cast<const char*>(source)
+				: "<null>";
 			const auto diagnostic = std::format(
-				"[Com_Error] source=0x{:08X}, line={}, code={}: {}\n",
-				static_cast<unsigned int>(source), line, code, result);
+				"[Com_Error] source={} (0x{:08X}), line={}, code={}: {}\n",
+				source_name, static_cast<unsigned int>(source), line, code, result);
 			write_log(diagnostic);
 			OutputDebugStringA(diagnostic.c_str());
 

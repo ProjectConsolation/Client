@@ -28,6 +28,8 @@ namespace fastfiles
 		bool patch_mp_attempted = false;
 		char normalized_rawfile_names[1024][256]{};
 		unsigned int normalized_rawfile_name_index = 0;
+		std::mutex external_asset_log_mutex;
+		std::unordered_set<std::string> logged_external_assets;
 
 		bool debug_xasset()
 		{
@@ -309,6 +311,15 @@ namespace fastfiles
 				if (name.empty() || name.size() >= 64 || name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != std::string::npos)
 					throw std::runtime_error("invalid zone name");
 				if (!xenon::prepare(source, name, true)) throw std::runtime_error("input is not a recognized v470 fastfile");
+				if (name.starts_with("mp_"))
+				{
+					// Map zones must be linked by the normal server transition. Preloading one
+					// with allocation class 2 corrupts the ownership/unload sequence used by
+					// devmap and can make otherwise-resident external assets disappear.
+					game::Com_Printf(16, "^5[Xenon] Prepared map zone %s; run devmap %s to load it\n",
+						name.c_str(), name.c_str());
+					return;
+				}
 				// Native map zones use allocation class 2. Override/patch fastfiles use 0x11.
 				game::XZoneInfo zone{name.c_str(), 2, 0};
 				// Explicit path is already preflighted, so do not resolve a second file by name.
@@ -488,6 +499,20 @@ namespace fastfiles
 			normalize_rawfile_name(entry);
 
 			const auto* const incoming_name = get_asset_name(entry);
+			if (incoming_name[0] == ',')
+			{
+				const auto key = std::to_string(static_cast<int>(entry->asset.type)) + ":" + incoming_name;
+				bool first_reference = false;
+				{
+					std::lock_guard lock(external_asset_log_mutex);
+					first_reference = logged_external_assets.emplace(key).second;
+				}
+				if (first_reference)
+				{
+					game::Com_Printf(16, "^5[fastfiles] resolving external asset type=%d name=%s\n",
+						static_cast<int>(entry->asset.type), incoming_name + 1);
+				}
+			}
 			auto* const linked_entry = db_link_xasset_entry_hook.invoke<game::XAssetEntry*>(entry, allow_override);
 			auto* const log_entry = linked_entry ? linked_entry : entry;
 			if (log_entry)
