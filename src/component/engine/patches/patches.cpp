@@ -13,6 +13,7 @@
 #include <utils/string.hpp>
 #include <array>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <unordered_set>
 #include <d3d9.h>
@@ -120,6 +121,67 @@ namespace patches
 			return 1;
 		}
 
+		void jump_to_generated_stub(const std::uintptr_t site, void* stub)
+		{
+			if (!stub)
+			{
+				throw std::runtime_error("Generated jump stub is null");
+			}
+			if (!utils::hook::is_relatively_far(reinterpret_cast<const void*>(site), stub))
+			{
+				utils::hook::jump(site, stub);
+				return;
+			}
+
+			// QoS PC 1.1 is x86. A nearby push/ret bridge reaches a JIT stub
+			// regardless of where AsmJit allocated it, without altering registers.
+			SYSTEM_INFO info{};
+			GetSystemInfo(&info);
+			const auto granularity = static_cast<std::uint64_t>(info.dwAllocationGranularity);
+			const auto maximum = std::min<std::uint64_t>(
+				reinterpret_cast<std::uintptr_t>(info.lpMaximumApplicationAddress),
+				static_cast<std::uint64_t>(site) + std::numeric_limits<std::int32_t>::max());
+			for (std::uint64_t address = site; address < maximum;)
+			{
+				MEMORY_BASIC_INFORMATION region{};
+				if (!VirtualQuery(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)),
+					&region, sizeof(region)))
+				{
+					break;
+				}
+				const auto region_end = static_cast<std::uint64_t>(
+					reinterpret_cast<std::uintptr_t>(region.BaseAddress)) + region.RegionSize;
+				if (region.State == MEM_FREE)
+				{
+					const auto aligned = (address + granularity - 1) & ~(granularity - 1);
+					if (aligned < region_end && region_end - aligned >= 6 && aligned < maximum)
+					{
+					auto* bridge = static_cast<unsigned char*>(VirtualAlloc(
+						reinterpret_cast<void*>(static_cast<std::uintptr_t>(aligned)), 6,
+						MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+						if (bridge)
+						{
+						bridge[0] = 0x68; // push imm32
+						const auto destination = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(stub));
+						std::memcpy(bridge + 1, &destination, sizeof(destination));
+						bridge[5] = 0xC3; // ret
+						DWORD old_protect{};
+						if (!VirtualProtect(bridge, 6, PAGE_EXECUTE_READ, &old_protect))
+						{
+							VirtualFree(bridge, 0, MEM_RELEASE);
+							throw std::runtime_error("Unable to protect generated jump bridge");
+						}
+						FlushInstructionCache(GetCurrentProcess(), bridge, 6);
+						utils::hook::jump(site, bridge);
+						return;
+					}
+					}
+				}
+				address = std::max(address + granularity, region_end);
+			}
+			throw std::runtime_error("No executable jump bridge available within rel32 range");
+		}
+
 		void apply_cinematic_stats_guard()
 		{
 			// QoS 1.1: cinematic command 0x104547F0 sets state 1 via 0x10454770.
@@ -189,12 +251,7 @@ namespace patches
 					a.mov(ecx, dword_ptr(eax));
 					a.jmp(reinterpret_cast<void*>(game::game_offset(0x102462F2)));
 				});
-				if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(site), stub))
-				{
-					console::error("[patches - voice] skipped: generated stub is outside rel32 range\n");
-					return;
-				}
-				utils::hook::jump(site, stub);
+				jump_to_generated_stub(site, stub);
 
 			// These QoS 1.1 sites load the engine and its vtable before a voice call.
 			// Keep the native peer bookkeeping even without audio: COD4A's remote
@@ -237,13 +294,7 @@ namespace patches
 					a.mov(vtable, dword_ptr(eax));
 					a.jmp(reinterpret_cast<void*>(call_site + sizeof(instructions)));
 				});
-				if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(call_site), call_stub))
-				{
-					console::error("[patches - voice] skipped: generated call stub is outside rel32 range at 0x%08X\n",
-						static_cast<unsigned int>(address));
-					return;
-				}
-				utils::hook::jump(call_site, call_stub);
+				jump_to_generated_stub(call_site, call_stub);
 			};
 
 			// Registration still has five Com_Printf arguments to discard here.
@@ -310,13 +361,8 @@ namespace patches
 					a.call(private_match_set_unpaused);
 					a.jmp(reinterpret_cast<void*>(site + 6));
 				});
-				if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(site), stub))
-				{
-					console::error("[patches - private-match] skipped: generated stub is outside rel32 range\n");
-					return;
-				}
-				utils::hook::nop(site, instruction_size);
-				utils::hook::jump(site, stub);
+				jump_to_generated_stub(site, stub);
+				utils::hook::nop(site + 5, instruction_size - 5);
 				console::info("[patches - private-match] PATCHED: clear cl_paused after server startup\n");
 			}
 			catch (const std::exception& error)
