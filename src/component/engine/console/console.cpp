@@ -132,8 +132,10 @@ namespace console
 
 		struct
 		{
-			bool kill;
-			std::thread thread;
+			std::atomic_bool kill{false};
+			// Keep thread cleanup explicit. A joinable static std::thread calls
+			// std::terminate when DLL teardown bypasses component cleanup.
+			std::thread* thread{};
 			HANDLE kill_event;
 			DWORD thread_id{};
 			char buffer[512]{};
@@ -710,7 +712,8 @@ namespace console
 
 			con.kill_event = CreateEvent(NULL, TRUE, FALSE, NULL);
 
-			con.thread = utils::thread::create_named_thread("Console", []()
+			con.kill = false;
+			con.thread = new std::thread(utils::thread::create_named_thread("Console", []()
 			{
 				con.thread_id = GetCurrentThreadId();
 				MSG msg{};
@@ -771,7 +774,7 @@ namespace console
 						break;
 					}
 				}
-			});
+			}));
 		}
 
 		void pre_destroy() override
@@ -790,11 +793,13 @@ namespace console
 				PostThreadMessageA(con.thread_id, WM_QUIT, 0, 0);
 			}
 
-			if (con.thread.joinable())
+			const auto console_thread = std::exchange(con.thread, nullptr);
+			if (console_thread && console_thread->joinable())
 			{
-				CancelSynchronousIo(static_cast<HANDLE>(con.thread.native_handle()));
-				con.thread.join();
+				CancelSynchronousIo(static_cast<HANDLE>(console_thread->native_handle()));
+				console_thread->join();
 			}
+			delete console_thread;
 
 			ShowWindow(GetConsoleWindow(), SW_HIDE);
 			FreeConsole();
