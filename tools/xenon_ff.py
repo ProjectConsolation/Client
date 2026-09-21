@@ -477,30 +477,37 @@ def lightdef(reader, pointer):
     return result
 
 
-def _gfx_portal(reader, header):
-    if u32(header, 36) == INLINE:
-        reader.take(u32(header, 32) * 4)
+def _gfx_aabb_tree(reader, header):
+    indexes = reader.take(u32(header, 32) * 4) if u32(header, 36) == INLINE else b""
+    children = []
     if u32(header, 44):
-        portals = reader.take(u32(header, 40) * 48)
-        for offset in range(0, len(portals), 48):
-            _gfx_portal(reader, portals[offset:offset + 48])
+        records = reader.take(u32(header, 40) * 48)
+        for offset in range(0, len(records), 48):
+            raw = records[offset:offset + 48]
+            children.append(_gfx_aabb_tree(reader, raw))
+    return {"raw": header.hex(), "indexes": indexes.hex(), "children": children}
 
 
 def _gfx_cell(reader, header):
+    tree = None
     if u32(header, 24):
-        _gfx_portal(reader, reader.take(48))
+        tree = _gfx_aabb_tree(reader, reader.take(48))
+    portals = []
     if u32(header, 32):
         entries = reader.take(u32(header, 28) * 68)
         for offset in range(0, len(entries), 68):
             entry = entries[offset:offset + 68]
+            nested_cell = None
             if u32(entry, 32) == INLINE:
-                _gfx_cell(reader, reader.take(52))
-            if u32(entry, 36):
-                reader.take(12 * entry[40])
-    if u32(header, 40):
-        reader.take(u32(header, 36) * 4)
-    if u32(header, 48):
-        reader.take(header[44])
+                nested_cell = _gfx_cell(reader, reader.take(52))
+            vertices = reader.take(12 * entry[40]) if u32(entry, 36) else b""
+            portals.append({"raw": entry.hex(), "cell": nested_cell,
+                            "vertices": vertices.hex()})
+    cull_groups = reader.take(u32(header, 36) * 4) if u32(header, 40) else b""
+    reflection_probes = reader.take(header[44]) if u32(header, 48) else b""
+    return {"raw": header.hex(), "tree": tree, "portals": portals,
+            "cull_groups": cull_groups.hex(),
+            "reflection_probes": reflection_probes.hex()}
 
 
 def _gfx_dpvs_planes(reader, header):
@@ -565,10 +572,11 @@ def gfx_map(reader, pointer, capture=False):
                 xmodel(reader)
     if u32(header, 384):
         reader.take(u32(header, 376) * 32)
+    parsed_cells = []
     if u32(header, 396):
         cells = reader.take(u32(header, 388) * 52)
         for offset in range(0, len(cells), 52):
-            _gfx_cell(reader, cells[offset:offset + 52])
+            parsed_cells.append(_gfx_cell(reader, cells[offset:offset + 52]))
     if u32(header, 404):
         records = reader.take(u32(header, 400) * 8)
         for offset in range(0, len(records), 4):
@@ -638,6 +646,7 @@ def gfx_map(reader, pointer, capture=False):
             "indices": indices.hex(),
             "surfaces": surfaces.hex(),
             "brush_models": draw_surfaces.hex(),
+            "cells": parsed_cells,
             "sky_start_surfs": sky_start_surfs.hex(),
             "vertices": vertices.hex(),
             "vertex_layers": vertex_layers.hex(),
@@ -1077,6 +1086,65 @@ def _pc_external_material(name=",white"):
     return bytes(header) + name.encode() + b"\0"
 
 
+def _pc_gfx_aabb_header(tree):
+    raw = bytes.fromhex(tree["raw"])
+    indexes = bytes.fromhex(tree["indexes"])
+    children = tree["children"]
+    converted = _little_endian_words(raw, 0, 32)
+    struct.pack_into("<4I", converted, 32, len(indexes) // 4,
+                     INLINE if indexes else 0, len(children),
+                     INLINE if children else 0)
+    return converted
+
+
+def _write_pc_gfx_aabb_nested(payload, tree):
+    indexes = bytes.fromhex(tree["indexes"])
+    payload.extend(_little_endian_words(indexes))
+    children = tree["children"]
+    for child in children:
+        payload.extend(_pc_gfx_aabb_header(child))
+    for child in children:
+        _write_pc_gfx_aabb_nested(payload, child)
+
+
+def _pc_gfx_cell_header(cell, include_static_models=False):
+    raw = bytes.fromhex(cell["raw"])
+    converted = _little_endian_words(raw, 0, 24)
+    cull_groups = bytes.fromhex(cell["cull_groups"])
+    reflection_probes = bytes.fromhex(cell["reflection_probes"])
+    struct.pack_into("<5I", converted, 24,
+                     INLINE if include_static_models and cell["tree"] else 0,
+                     len(cell["portals"]), INLINE if cell["portals"] else 0,
+                     len(cull_groups) // 4, INLINE if cull_groups else 0)
+    converted[44] = len(reflection_probes)
+    converted[45:48] = raw[45:48]
+    struct.pack_into("<I", converted, 48, INLINE if reflection_probes else 0)
+    return converted
+
+
+def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False):
+    if include_static_models and cell["tree"]:
+        payload.extend(_pc_gfx_aabb_header(cell["tree"]))
+        _write_pc_gfx_aabb_nested(payload, cell["tree"])
+
+    for portal in cell["portals"]:
+        raw = bytes.fromhex(portal["raw"])
+        converted = _little_endian_words(raw, 0, 32)
+        converted[40:68] = raw[40:68]
+        struct.pack_into("<2I", converted, 32,
+                         INLINE if portal["cell"] else 0,
+                         INLINE if portal["vertices"] else 0)
+        payload.extend(converted)
+    for portal in cell["portals"]:
+        if portal["cell"]:
+            payload.extend(_pc_gfx_cell_header(portal["cell"], include_static_models))
+            _write_pc_gfx_cell_nested(payload, portal["cell"], include_static_models)
+        payload.extend(_little_endian_words(bytes.fromhex(portal["vertices"])))
+
+    payload.extend(_little_endian_words(bytes.fromhex(cell["cull_groups"])))
+    payload.extend(bytes.fromhex(cell["reflection_probes"]))
+
+
 def write_pc_gfx_world(payload, asset, primary_light_count):
     geometry = asset["geometry"]
     planes = bytes.fromhex(geometry["planes"])
@@ -1087,6 +1155,7 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     sky_start_surfs = bytes.fromhex(geometry["sky_start_surfs"])
     xbox_vertices = bytes.fromhex(geometry["vertices"])
     vertex_layers = bytes.fromhex(geometry["vertex_layers"])
+    cells = geometry.get("cells", [])
 
     if len(xbox_surfaces) % 72 or len(xbox_brush_models) % 60 or len(xbox_vertices) % 44:
         raise FormatError("invalid captured Xbox world geometry")
@@ -1122,6 +1191,8 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     struct.pack_into("<2I", pc_header, 80, vertex_count, INLINE if vertex_count else 0)
     struct.pack_into("<2I", pc_header, 92, len(vertex_layers), INLINE if vertex_layers else 0)
     struct.pack_into("<I", pc_header, 252, primary_light_count)
+    struct.pack_into("<3I", pc_header, 288, len(cells),
+                     (len(cells) + 31) // 32, INLINE if cells else 0)
     struct.pack_into("<2I", pc_header, 352, brush_model_count,
                      INLINE if brush_model_count else 0)
 
@@ -1138,6 +1209,12 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     for _ in range(surface_count):
         payload.extend(_pc_external_material())
     payload.extend(_little_endian_words(sky_start_surfs))
+    for cell in cells:
+        # AABB indexes address static-model arrays. Keep the decoded tree out of
+        # the stream until Xbox 40-byte draw instances are expanded to PC's 64 bytes.
+        payload.extend(_pc_gfx_cell_header(cell, False))
+    for cell in cells:
+        _write_pc_gfx_cell_nested(payload, cell, False)
     payload.extend(_little_endian_words(xbox_brush_models))
     payload.extend(pc_vertices)
     payload.extend(vertex_layers)

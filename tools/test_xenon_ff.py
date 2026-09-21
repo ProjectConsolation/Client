@@ -43,6 +43,14 @@ class FastfileTests(unittest.TestCase):
         struct.pack_into(">6f", surface, 48, 18.0, 19.0, 20.0,
                          21.0, 22.0, 23.0)
         vertex = struct.pack(">11I", *range(24, 35))
+        tree_raw = bytearray(48)
+        struct.pack_into(">4I", tree_raw, 32, 1, xenon_ff.INLINE, 0, 0)
+        cell_raw = bytearray(52)
+        struct.pack_into(">6f", cell_raw, 0, -1.0, -2.0, -3.0,
+                         1.0, 2.0, 3.0)
+        struct.pack_into(">I", cell_raw, 24, xenon_ff.INLINE)
+        cell_raw[44] = 1
+        struct.pack_into(">I", cell_raw, 48, xenon_ff.INLINE)
         asset = {
             "name": "mp_test",
             "world_name": "maps/mp/test.d3dbsp",
@@ -53,6 +61,15 @@ class FastfileTests(unittest.TestCase):
                 "indices": struct.pack(">H", 37).hex(),
                 "surfaces": surface.hex(),
                 "brush_models": struct.pack(">15I", *range(39, 54)).hex(),
+                "cells": [{
+                    "raw": cell_raw.hex(),
+                    "tree": {"raw": tree_raw.hex(),
+                             "indexes": struct.pack(">I", 54).hex(),
+                             "children": []},
+                    "portals": [],
+                    "cull_groups": "",
+                    "reflection_probes": "37",
+                }],
                 "sky_start_surfs": struct.pack(">I", 38).hex(),
                 "vertices": vertex.hex(),
                 "vertex_layers": "2728",
@@ -62,13 +79,19 @@ class FastfileTests(unittest.TestCase):
         xenon_ff.write_pc_gfx_world(payload, asset, 3)
         header = payload[:728]
         self.assertEqual([struct.unpack_from("<I", header, offset)[0]
-                          for offset in (8, 16, 24, 32, 60, 80, 92, 252, 352)],
-                         [1, 1, 1, 1, 1, 1, 2, 3, 1])
+                          for offset in (8, 16, 24, 32, 60, 80, 92, 252,
+                                         288, 292, 352)],
+                         [1, 1, 1, 1, 1, 1, 2, 3, 1, 1, 1])
         self.assertIn(struct.pack("<4f4B", 1.0, 2.0, 3.0, 4.0,
                                   5, 6, 7, 8), payload)
         self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
         self.assertIn(struct.pack("<11I", *range(24, 35)), payload)
         self.assertIn(struct.pack("<15I", *range(39, 54)), payload)
+        self.assertIn(struct.pack("<6f", -1.0, -2.0, -3.0,
+                                  1.0, 2.0, 3.0), payload)
+        pc_cell = xenon_ff._pc_gfx_cell_header(
+            asset["geometry"]["cells"][0], False)
+        self.assertEqual(struct.unpack_from("<I", pc_cell, 24)[0], 0)
         self.assertIn(b",white\0", payload)
 
     def test_rawfile_byte_content_is_not_swapped(self):
