@@ -526,7 +526,8 @@ namespace fastfiles::xenon
 			result.resize(28 + compressed_size);
 			require(compress2(result.data() + 28, &compressed_size, output.data.data(),
 				static_cast<uLong>(output.data.size()), Z_BEST_SPEED) == Z_OK, "PC zone compression failed");
-			result.resize((28 + compressed_size + 0x1FFFF) & ~size_t(0x1FFFF), 0);
+			// Native PC and Xenon QoS fastfiles pad the zlib stream to 32 bytes.
+			result.resize((28 + compressed_size + 31) & ~size_t(31), 0);
 			return result;
 		}
 

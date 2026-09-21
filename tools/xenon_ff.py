@@ -1,4 +1,4 @@
-"""Inspect QoS Xenon v470 fastfiles and emit an experimental PC map-root probe.
+"""Inspect QoS Xenon v470 fastfiles and emit an experimental PC map probe.
 
 Layout evidence: Xenon sub_821E15F8, sub_821E8188, sub_821E7D60,
 sub_821E7C78, sub_821E6100, sub_821E2AD8, and sub_821E99F8 in
@@ -401,21 +401,70 @@ def com_map(reader, pointer):
         "primary_light_count": u32(header, 12),
         "water_light_count": u32(header, 36),
         "primary_light_names": [],
+        "header": header.hex(),
+        "primary_lights": [],
+        "unknown_cells": [],
     }
     if u32(header, 16):
         lights = reader.take(result["primary_light_count"] * 68)
         for index in range(result["primary_light_count"]):
-            pointer = u32(lights, index * 68 + 64)
+            raw = lights[index * 68:(index + 1) * 68]
+            pointer = u32(raw, 64)
+            name = None
             if pointer == INLINE:
-                result["primary_light_names"].append(reader.string(pointer))
+                name = reader.string(pointer)
+                result["primary_light_names"].append(name)
             elif pointer:
                 result["primary_light_names"].append({"reference": hex(pointer)})
+            result["primary_lights"].append({"raw": raw.hex(), "def_name": name})
     if u32(header, 40):
         lights = reader.take(result["water_light_count"] * 36)
         for index in range(result["water_light_count"]):
-            if u32(lights, index * 36 + 32):
-                reader.take(5120)
+            raw = lights[index * 36:(index + 1) * 36]
+            data = reader.take(5120) if u32(raw, 32) else b""
+            result["unknown_cells"].append({"raw": raw.hex(), "data": data.hex()})
     return result
+
+
+def _little_endian_words(raw, start=0, end=None):
+    result = bytearray(raw)
+    end = len(result) if end is None else end
+    if start % 4 or end % 4 or end > len(result):
+        raise FormatError("invalid word-swap range")
+    for offset in range(start, end, 4):
+        struct.pack_into("<I", result, offset, u32(raw, offset))
+    return result
+
+
+def write_pc_com_world(payload, asset):
+    header = _little_endian_words(bytes.fromhex(asset["header"]))
+    lights = asset["primary_lights"]
+    cells = asset["unknown_cells"]
+    struct.pack_into("<I", header, 0, INLINE)
+    struct.pack_into("<I", header, 12, len(lights))
+    struct.pack_into("<I", header, 16, INLINE if lights else 0)
+    struct.pack_into("<I", header, 36, len(cells))
+    struct.pack_into("<I", header, 40, INLINE if cells else 0)
+    payload.extend(header)
+    payload.extend(asset["name"].encode() + b"\0")
+
+    for light in lights:
+        raw = bytes.fromhex(light["raw"])
+        converted = _little_endian_words(raw, 4, 64)
+        struct.pack_into("<I", converted, 64, INLINE if light["def_name"] else 0)
+        payload.extend(converted)
+    for light in lights:
+        if light["def_name"]:
+            payload.extend(light["def_name"].encode() + b"\0")
+
+    for cell in cells:
+        raw = bytes.fromhex(cell["raw"])
+        converted = _little_endian_words(raw, 0, 32)
+        struct.pack_into("<I", converted, 32, INLINE if cell["data"] else 0)
+        payload.extend(converted)
+    for cell in cells:
+        if cell["data"]:
+            payload.extend(bytes.fromhex(cell["data"]))
 
 
 def lightdef(reader, pointer):
@@ -470,19 +519,18 @@ def _gfx_dpvs_planes(reader, header):
         reader.take(u32(header, 44) * 168)
 
 
-def gfx_map(reader, pointer):
+def gfx_map(reader, pointer, capture=False):
     if pointer not in (INLINE, INSERT):
         return {"reference": hex(pointer)}
     header = reader.take(828)
     names = [reader.string(u32(header, offset)) for offset in (0, 4)]
 
-    _inline_bytes(reader, u32(header, 12), u32(header, 8) * 20,
-                  "gfx_map planes")
-    if u32(header, 20):
-        reader.take(u32(header, 16) * 2)
-    if u32(header, 28):
-        reader.take(u32(header, 24) * 2)
+    planes = _inline_bytes(reader, u32(header, 12), u32(header, 8) * 20,
+                          "gfx_map planes")
+    nodes = reader.take(u32(header, 16) * 2) if u32(header, 20) else b""
+    indices = reader.take(u32(header, 24) * 2) if u32(header, 28) else b""
 
+    surfaces = b""
     if u32(header, 68):
         surfaces = reader.take(u32(header, 64) * 72)
         for offset in range(0, len(surfaces), 72):
@@ -495,8 +543,7 @@ def gfx_map(reader, pointer):
         reader.take(u32(light_grid) * 32)
     if u32(light_grid, 12):
         reader.take(u32(light_grid, 8) * 4)
-    if u32(header, 108):
-        reader.take(u32(header, 104) * 4)
+    sky_start_surfs = reader.take(u32(header, 104) * 4) if u32(header, 108) else b""
     attenuation = image(reader, u32(header, 112)) if u32(header, 112) else None
     reader.string(u32(header, 120))
 
@@ -539,11 +586,13 @@ def gfx_map(reader, pointer):
                 material(reader)
 
     vertex_data = header[128:164]
+    vertices = b""
     if u32(vertex_data):
-        reader.take(u32(header, 124) * 44)
+        vertices = reader.take(u32(header, 124) * 44)
     index_data = header[168:204]
+    vertex_layers = b""
     if u32(index_data):
-        reader.take(u32(header, 164))
+        vertex_layers = reader.take(u32(header, 164))
 
     world_draw = header[504:600]
     for offset in (4, 8):
@@ -572,14 +621,28 @@ def gfx_map(reader, pointer):
     if u32(header, 824) in (INLINE, INSERT):
         material(reader)
 
-    return {
+    result = {
         "name": names[1] or names[0],
         "names": names,
-        "surface_count": surface_count,
-        "model_count": u32(header, 376),
+        "surface_count": u32(header, 64),
+        "static_model_count": surface_count,
+        "vertex_count": u32(header, 124),
+        "index_count": u32(header, 24),
         "attenuation_image": attenuation,
         "zero_fill_fields": zero_fill_fields,
     }
+    if capture:
+        result["geometry"] = {
+            "planes": (planes or b"").hex(),
+            "nodes": nodes.hex(),
+            "indices": indices.hex(),
+            "surfaces": surfaces.hex(),
+            "brush_models": draw_surfaces.hex(),
+            "sky_start_surfs": sky_start_surfs.hex(),
+            "vertices": vertices.hex(),
+            "vertex_layers": vertex_layers.hex(),
+        }
+    return result
 
 
 def game_map_mp(reader, pointer):
@@ -954,7 +1017,7 @@ def xmodel(reader):
     }
 
 
-def inspect(path, details=False):
+def inspect(path, details=False, capture_map=False):
     reader, entries, report = read_zone(path)
     if details:
         assets = []
@@ -973,7 +1036,7 @@ def inspect(path, details=False):
             elif kind == 19:
                 asset = lightdef(reader, pointer)
             elif kind == 18:
-                asset = gfx_map(reader, pointer)
+                asset = gfx_map(reader, pointer, capture_map)
             elif kind == 16:
                 asset = game_map_mp(reader, pointer)
             elif kind == 13:
@@ -1001,9 +1064,93 @@ def inspect(path, details=False):
     return report
 
 
+def _little_endian_u16_array(raw):
+    if len(raw) % 2:
+        raise FormatError("unaligned 16-bit array")
+    return b"".join(struct.pack("<H", u16(raw, offset))
+                    for offset in range(0, len(raw), 2))
+
+
+def _pc_external_material(name=",white"):
+    header = bytearray(104)
+    struct.pack_into("<I", header, 0, INLINE)
+    return bytes(header) + name.encode() + b"\0"
+
+
+def write_pc_gfx_world(payload, asset, primary_light_count):
+    geometry = asset["geometry"]
+    planes = bytes.fromhex(geometry["planes"])
+    nodes = bytes.fromhex(geometry["nodes"])
+    indices = bytes.fromhex(geometry["indices"])
+    xbox_surfaces = bytes.fromhex(geometry["surfaces"])
+    xbox_brush_models = bytes.fromhex(geometry.get("brush_models", ""))
+    sky_start_surfs = bytes.fromhex(geometry["sky_start_surfs"])
+    xbox_vertices = bytes.fromhex(geometry["vertices"])
+    vertex_layers = bytes.fromhex(geometry["vertex_layers"])
+
+    if len(xbox_surfaces) % 72 or len(xbox_brush_models) % 60 or len(xbox_vertices) % 44:
+        raise FormatError("invalid captured Xbox world geometry")
+    surface_count = len(xbox_surfaces) // 72
+    vertex_count = len(xbox_vertices) // 44
+    brush_model_count = len(xbox_brush_models) // 60
+
+    pc_planes = bytearray(len(planes))
+    for offset in range(0, len(planes), 20):
+        pc_planes[offset:offset + 16] = _little_endian_words(planes[offset:offset + 20], 0, 16)[:16]
+        pc_planes[offset + 16:offset + 20] = planes[offset + 16:offset + 20]
+
+    pc_surfaces = bytearray(surface_count * 48)
+    for index in range(surface_count):
+        source = xbox_surfaces[index * 72:(index + 1) * 72]
+        target = index * 48
+        struct.pack_into("<IIHHI", pc_surfaces, target,
+                         u32(source, 0), u32(source, 4), u16(source, 8),
+                         u16(source, 10), u32(source, 12))
+        struct.pack_into("<I", pc_surfaces, target + 16, INLINE)
+        pc_surfaces[target + 20:target + 24] = source[44:48]
+        pc_surfaces[target + 24:target + 48] = _little_endian_words(source, 48, 72)[48:72]
+
+    pc_vertices = _little_endian_words(xbox_vertices)
+    pc_header = bytearray(728)
+    struct.pack_into("<2I", pc_header, 0, INLINE, INLINE)
+    struct.pack_into("<2I", pc_header, 8, len(planes) // 20, INLINE if planes else 0)
+    struct.pack_into("<2I", pc_header, 16, len(nodes) // 2, INLINE if nodes else 0)
+    struct.pack_into("<2I", pc_header, 24, len(indices) // 2, INLINE if indices else 0)
+    struct.pack_into("<2I", pc_header, 32, surface_count, INLINE if surface_count else 0)
+    struct.pack_into("<2I", pc_header, 60, len(sky_start_surfs) // 4,
+                     INLINE if sky_start_surfs else 0)
+    struct.pack_into("<2I", pc_header, 80, vertex_count, INLINE if vertex_count else 0)
+    struct.pack_into("<2I", pc_header, 92, len(vertex_layers), INLINE if vertex_layers else 0)
+    struct.pack_into("<I", pc_header, 252, primary_light_count)
+    struct.pack_into("<2I", pc_header, 352, brush_model_count,
+                     INLINE if brush_model_count else 0)
+
+    names = asset.get("names", [])
+    world_name = names[0] if len(names) > 0 and isinstance(names[0], str) else asset["world_name"]
+    base_name = names[1] if len(names) > 1 and isinstance(names[1], str) else asset["name"]
+    payload.extend(pc_header)
+    payload.extend(world_name.encode() + b"\0")
+    payload.extend(base_name.encode() + b"\0")
+    payload.extend(pc_planes)
+    payload.extend(_little_endian_u16_array(nodes))
+    payload.extend(_little_endian_u16_array(indices))
+    payload.extend(pc_surfaces)
+    for _ in range(surface_count):
+        payload.extend(_pc_external_material())
+    payload.extend(_little_endian_words(sky_start_surfs))
+    payload.extend(_little_endian_words(xbox_brush_models))
+    payload.extend(pc_vertices)
+    payload.extend(vertex_layers)
+
+
 def build_pc_map_probe(path):
-    """Build a geometry-free PC zone for testing map-root deserialization."""
-    report = inspect(path, True)
+    """Build a reduced PC zone for testing map and world deserialization.
+
+    QoS PC mp_barge.ff confirms that PC and Xenon both use version 470 and the
+    same 28-byte header. PC stores all seven words little-endian and orders its
+    map roots as ComWorld, GfxWorld, GameWorldMp, then clipMap.
+    """
+    report = inspect(path, True, True)
 
     def one(kind):
         matches = [asset for asset in report["assets"] if asset["type"] == kind]
@@ -1040,15 +1187,15 @@ def build_pc_map_probe(path):
     entities = [entity for entity in entities
                 if '"classname" "worldspawn"' in entity or '"model" "*' not in entity]
     entity_string = "".join(entities).encode("latin-1") + (b"\0" if trailing_nul else b"")
+    gfx_world["world_name"] = com_world["name"]
 
-    assets = ((13, "com"), (15, "game"), (12, "clip"), (17, "gfx"))
+    assets = ((13, "com"), (17, "gfx"), (15, "game"), (12, "clip"))
     payload = bytearray(struct.pack("<4I", 0, 0, len(assets), INLINE))
     payload.extend(b"".join(struct.pack("<2I", kind, INLINE) for kind, _ in assets))
 
-    com_header = bytearray(44)
-    struct.pack_into("<2I", com_header, 0, INLINE, 1)
-    payload.extend(com_header)
-    payload.extend(com_world["name"].encode() + b"\0")
+    write_pc_com_world(payload, com_world)
+
+    write_pc_gfx_world(payload, gfx_world, len(com_world["primary_lights"]))
 
     payload.extend(struct.pack("<I", INLINE))
     payload.extend(game_name.encode() + b"\0")
@@ -1064,17 +1211,15 @@ def build_pc_map_probe(path):
     payload.extend(entity_name.encode() + b"\0")
     payload.extend(entity_string)
 
-    gfx_header = bytearray(728)
-    struct.pack_into("<2I", gfx_header, 0, INLINE, INLINE)
-    payload.extend(gfx_header)
-    payload.extend(world_name.encode() + b"\0")
-    payload.extend(base_name.encode() + b"\0")
-
+    # Native PC zones use distinct allocation sizes for five XFile blocks. The
+    # probe has no physical/runtime payload, while its small temporary and
+    # virtual streams safely fit in this conservative bound.
     allocation = len(payload) + 65536
     result = bytearray(struct.pack("<7I", 470, len(payload), allocation, 0,
                                    allocation, 0, 0))
     result.extend(zlib.compress(payload, 1))
-    result.extend(bytes((-len(result)) % 0x20000))
+    # Native PC and Xenon QoS fastfiles pad the zlib stream to 32 bytes.
+    result.extend(bytes((-len(result)) % 32))
     return bytes(result)
 
 
@@ -1084,7 +1229,7 @@ def main():
     parser.add_argument("--details", action="store_true",
                         help="decode supported asset schemas and require exact stream consumption")
     parser.add_argument("--convert-map-probe", type=Path, metavar="OUTPUT",
-                        help="emit a geometry-free PC v470 zone for loader testing")
+                        help="emit a reduced PC v470 map zone for loader testing")
     args = parser.parse_args()
     if args.convert_map_probe:
         if len(args.files) != 1:

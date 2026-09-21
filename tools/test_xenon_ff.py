@@ -35,6 +35,42 @@ class FastfileTests(unittest.TestCase):
                          (0x99AABBCC, 0x55667788))
         self.assertEqual(struct.unpack("<4f", verts1), (4.0, 5.0, 6.0, 7.0))
 
+    def test_pc_gfx_world_geometry_layout(self):
+        plane = struct.pack(">4f4B", 1.0, 2.0, 3.0, 4.0, 5, 6, 7, 8)
+        surface = bytearray(72)
+        struct.pack_into(">IIHHI", surface, 0, 9, 10, 11, 12, 13)
+        surface[44:48] = bytes((14, 15, 16, 17))
+        struct.pack_into(">6f", surface, 48, 18.0, 19.0, 20.0,
+                         21.0, 22.0, 23.0)
+        vertex = struct.pack(">11I", *range(24, 35))
+        asset = {
+            "name": "mp_test",
+            "world_name": "maps/mp/test.d3dbsp",
+            "names": [{"block_reference": "0x40000001"}, "mp_test"],
+            "geometry": {
+                "planes": plane.hex(),
+                "nodes": struct.pack(">H", 36).hex(),
+                "indices": struct.pack(">H", 37).hex(),
+                "surfaces": surface.hex(),
+                "brush_models": struct.pack(">15I", *range(39, 54)).hex(),
+                "sky_start_surfs": struct.pack(">I", 38).hex(),
+                "vertices": vertex.hex(),
+                "vertex_layers": "2728",
+            },
+        }
+        payload = bytearray()
+        xenon_ff.write_pc_gfx_world(payload, asset, 3)
+        header = payload[:728]
+        self.assertEqual([struct.unpack_from("<I", header, offset)[0]
+                          for offset in (8, 16, 24, 32, 60, 80, 92, 252, 352)],
+                         [1, 1, 1, 1, 1, 1, 2, 3, 1])
+        self.assertIn(struct.pack("<4f4B", 1.0, 2.0, 3.0, 4.0,
+                                  5, 6, 7, 8), payload)
+        self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
+        self.assertIn(struct.pack("<11I", *range(24, 35)), payload)
+        self.assertIn(struct.pack("<15I", *range(39, 54)), payload)
+        self.assertIn(b",white\0", payload)
+
     def test_rawfile_byte_content_is_not_swapped(self):
         payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
         payload += struct.pack(">2I", 33, xenon_ff.INLINE)
@@ -233,13 +269,17 @@ class FastfileTests(unittest.TestCase):
             converted = xenon_ff.build_pc_map_probe(source)
 
         version, payload_size = struct.unpack_from("<2I", converted)
-        pc_payload = zlib.decompress(converted[28:])
+        decoder = zlib.decompressobj()
+        pc_payload = decoder.decompress(converted[28:])
         self.assertEqual(version, 470)
         self.assertEqual(payload_size, len(pc_payload))
+        self.assertTrue(decoder.eof)
+        self.assertEqual(len(converted) % 32, 0)
+        self.assertLess(len(decoder.unused_data), 32)
         self.assertEqual(struct.unpack_from("<4I", pc_payload),
                          (0, 0, 4, xenon_ff.INLINE))
         self.assertEqual([entry[0] for entry in struct.iter_unpack(
-            "<2I", pc_payload[16:48])], [13, 15, 12, 17])
+            "<2I", pc_payload[16:48])], [13, 17, 15, 12])
         self.assertIn(b'"classname" "worldspawn"', pc_payload)
         self.assertNotIn(b'"model" "*1"', pc_payload)
         self.assertIn(b"maps/mp/test.d3dbsp\0mp_test\0", pc_payload)
