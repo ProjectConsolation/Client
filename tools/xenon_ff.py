@@ -56,6 +56,40 @@ def pc_asset_type(xenon_type):
     return xenon_type if xenon_type < 7 else xenon_type - 1
 
 
+def resolve_manifest_references(pointers, entries, expected_type):
+    """Resolve block-2 references to a unique eight-byte manifest table base."""
+    target_indices = [index for index, (kind, _) in enumerate(entries)
+                      if kind == expected_type]
+    offsets = []
+    for pointer in pointers:
+        encoded = pointer - 1
+        if pointer <= 0 or encoded >> 29 != 2:
+            raise FormatError(f"asset reference is not in Xenon block 2: {pointer:#x}")
+        offsets.append(encoded & 0x1FFFFFFF)
+
+    if not offsets:
+        return [], None
+    if not target_indices:
+        raise FormatError(f"manifest has no asset type {expected_type}")
+    target_index_set = set(target_indices)
+    bases = set()
+    for target_index in target_indices:
+        candidate = offsets[0] - target_index * 8
+        if candidate < 0:
+            continue
+        resolved = [(offset - candidate) // 8 for offset in offsets]
+        if all(offset >= candidate and (offset - candidate) % 8 == 0
+               for offset in offsets) and all(
+                   index in target_index_set for index in resolved):
+            bases.add(candidate)
+    if len(bases) != 1:
+        raise FormatError(
+            f"could not uniquely resolve packed asset table base: {sorted(bases)}")
+    base = bases.pop()
+    indices = [(offset - base) // 8 for offset in offsets]
+    return indices, base
+
+
 def u32(data, offset=0):
     return struct.unpack_from(">I", data, offset)[0]
 
@@ -302,7 +336,87 @@ def convert_xsurface_vertices(primary, attributes, secondary, count):
     return bytes(verts0), bytes(verts1) if verts1 is not None else None
 
 
-def xsurface(reader, header, index):
+def convert_xsurface_header(surface):
+    """Collapse a 200-byte Xenos XSurface header to the 80-byte PC layout."""
+    source = bytes.fromhex(surface["header"])
+    if len(source) != 200:
+        raise FormatError("invalid Xbox xsurface header")
+
+    converted = bytearray(80)
+    converted[0:2] = source[0:2]
+    struct.pack_into("<2H", converted, 2, u16(source, 2), u16(source, 4))
+    converted[6:8] = source[6:8]
+    struct.pack_into("<I", converted, 8, INLINE if surface["indices"] is not None else 0)
+    for slot in range(4):
+        struct.pack_into("<h", converted, 12 + slot * 2,
+                         struct.unpack_from(">h", source, 12 + slot * 2)[0])
+    struct.pack_into("<I", converted, 20,
+                     INLINE if surface["blend_indices"] is not None else 0)
+    struct.pack_into("<I", converted, 24,
+                     INLINE if surface["blend_vertices"] is not None else 0)
+    struct.pack_into("<I", converted, 28,
+                     INLINE if surface["pc_vertices"] is not None else 0)
+    struct.pack_into("<I", converted, 36,
+                     INLINE if surface["pc_secondary_vertices"] is not None else 0)
+    struct.pack_into("<I", converted, 44, u32(source, 136))
+    struct.pack_into("<I", converted, 48,
+                     INLINE if surface["rigid_vertices"] is not None else 0)
+    converted[56:80] = _little_endian_words(source, 176, 200)[176:200]
+    return bytes(converted)
+
+
+def _unpack_xenon_unit_vec(value):
+    # QoS uses the engine's third-based PackedUnitVec encoding, not SNORM10.
+    components = []
+    for shift in (0, 10, 20):
+        component = (value >> shift) & 0x3FF
+        bits = (component - 2 * (component & 0x200) + 0x40400000) & 0xFFFFFFFF
+        encoded = struct.unpack("<f", struct.pack("<I", bits))[0]
+        components.append((encoded - 3.0) * 8208.0312)
+    return components
+
+
+def convert_static_model_draws(records, model_pointers=None):
+    """Expand Xenon packed placements into the PC 64-byte record layout."""
+    if len(records) % 40:
+        raise FormatError("invalid Xbox static-model draw record array")
+
+    converted = bytearray(len(records) // 40 * 64)
+    if model_pointers is not None and len(model_pointers) != len(records) // 40:
+        raise FormatError("static-model pointer count does not match draw records")
+    for index in range(len(records) // 40):
+        source = records[index * 40:(index + 1) * 40]
+        target = index * 64
+        struct.pack_into("<4f", converted, target,
+                         *struct.unpack_from(">4f", source))
+        axis = []
+        for offset in (16, 20, 24):
+            axis.extend(_unpack_xenon_unit_vec(u32(source, offset)))
+        struct.pack_into("<9f", converted, target + 16, *axis)
+        struct.pack_into("<f", converted, target + 52,
+                         struct.unpack_from(">f", source, 28)[0])
+        struct.pack_into("<I", converted, target + 56,
+                         (model_pointers[index] if model_pointers is not None
+                          else u32(source, 32)))
+        converted[target + 60:target + 64] = source[36:40]
+    return bytes(converted)
+
+
+def convert_static_model_instances(records):
+    if len(records) % 32:
+        raise FormatError("invalid Xbox static-model instance array")
+
+    converted = bytearray(len(records))
+    for index in range(len(records) // 32):
+        source = records[index * 32:(index + 1) * 32]
+        target = index * 32
+        converted[target:target + 28] = _little_endian_words(source, 0, 28)[:28]
+        # The final word is four byte-sized fields on both platforms.
+        converted[target + 28:target + 32] = source[28:32]
+    return bytes(converted)
+
+
+def xsurface(reader, header, index, capture=False):
     result = {
         "vertex_count": u16(header, 2),
         "triangle_count": u16(header, 4),
@@ -315,10 +429,12 @@ def xsurface(reader, header, index):
     blend_total = sum(blend_counts)
     blend_indices = sum((1, 3, 5, 7)[slot] * count
                         for slot, count in enumerate(blend_counts))
-    _inline_bytes(reader, u32(header, 20), blend_indices * 2,
-                  f"xsurface {index} blend indices")
-    _inline_bytes(reader, u32(header, 24), blend_total * 48,
-                  f"xsurface {index} blend vertices")
+    blend_index_data = _inline_bytes(
+        reader, u32(header, 20), blend_indices * 2,
+        f"xsurface {index} blend indices")
+    blend_vertex_data = _inline_bytes(
+        reader, u32(header, 24), blend_total * 48,
+        f"xsurface {index} blend vertices")
 
     vertex_bytes = result["vertex_count"] * 16
     vertex_streams = []
@@ -335,10 +451,12 @@ def xsurface(reader, header, index):
     if not result["vertex_count"] or all(stream is not None for stream in vertex_streams[:2]):
         pc_verts0, pc_verts1 = convert_xsurface_vertices(*vertex_streams,
                                                          result["vertex_count"])
-    _inline_bytes(reader, u32(header, 140), u32(header, 136) * 8,
-                  f"xsurface {index} rigid vertices")
-    _inline_bytes(reader, u32(header, 8), result["triangle_count"] * 6,
-                  f"xsurface {index} indices")
+    rigid_vertices = _inline_bytes(
+        reader, u32(header, 140), u32(header, 136) * 8,
+        f"xsurface {index} rigid vertices")
+    indices = _inline_bytes(
+        reader, u32(header, 8), result["triangle_count"] * 6,
+        f"xsurface {index} indices")
     result["blend_counts"] = blend_counts
     result["rigid_vertex_count"] = u32(header, 136)
     result["vertex_stream_prefixes"] = [stream[:16].hex() if stream else None
@@ -348,6 +466,19 @@ def xsurface(reader, header, index):
     result["vertex_stream_offsets"] = vertex_stream_offsets
     result["pc_vertex_prefix"] = pc_verts0[:40].hex() if pc_verts0 else None
     result["pc_secondary_vertex_prefix"] = pc_verts1[:16].hex() if pc_verts1 else None
+    if capture:
+        result.update({
+            "header": header.hex(),
+            "blend_indices": blend_index_data.hex() if blend_index_data is not None else None,
+            "blend_vertices": blend_vertex_data.hex() if blend_vertex_data is not None else None,
+            "vertex_streams": [
+                stream.hex() if stream is not None else None for stream in vertex_streams
+            ],
+            "pc_vertices": pc_verts0.hex() if pc_verts0 is not None else None,
+            "pc_secondary_vertices": pc_verts1.hex() if pc_verts1 is not None else None,
+            "rigid_vertices": rigid_vertices.hex() if rigid_vertices is not None else None,
+            "indices": indices.hex() if indices is not None else None,
+        })
     return result
 
 
@@ -565,13 +696,15 @@ def gfx_map(reader, pointer, capture=False):
                 image(reader, u32(records, offset + 12))
     if u32(header, 372):
         reader.take(u32(header, 360) * 32)
+    static_model_draws = b""
     if u32(header, 380):
-        records = reader.take(u32(header, 376) * 40)
-        for offset in range(0, len(records), 40):
-            if u32(records, offset + 32) in (INLINE, INSERT):
+        static_model_draws = reader.take(u32(header, 376) * 40)
+        for offset in range(0, len(static_model_draws), 40):
+            if u32(static_model_draws, offset + 32) in (INLINE, INSERT):
                 xmodel(reader)
+    static_model_insts = b""
     if u32(header, 384):
-        reader.take(u32(header, 376) * 32)
+        static_model_insts = reader.take(u32(header, 376) * 32)
     parsed_cells = []
     if u32(header, 396):
         cells = reader.take(u32(header, 388) * 52)
@@ -646,6 +779,8 @@ def gfx_map(reader, pointer, capture=False):
             "indices": indices.hex(),
             "surfaces": surfaces.hex(),
             "brush_models": draw_surfaces.hex(),
+            "static_model_draws": static_model_draws.hex(),
+            "static_model_insts": static_model_insts.hex(),
             "cells": parsed_cells,
             "sky_start_surfs": sky_start_surfs.hex(),
             "vertices": vertices.hex(),
@@ -952,7 +1087,7 @@ def col_map_mp(reader, pointer):
     }
 
 
-def xmodel(reader):
+def xmodel(reader, capture=False):
     start = reader.pos
     header = reader.take(240)
     name = reader.string(u32(header))
@@ -963,18 +1098,19 @@ def xmodel(reader):
         raise FormatError(f"xmodel {name!r} has more root bones than bones")
     child_bones = bone_count - root_bone_count
 
-    _inline_bytes(reader, u32(header, 8), bone_count * 2,
-                  f"xmodel {name!r} bone names")
-    _inline_bytes(reader, u32(header, 12), child_bones,
-                  f"xmodel {name!r} parent list")
-    _inline_bytes(reader, u32(header, 16), child_bones * 8,
-                  f"xmodel {name!r} quaternions")
-    _inline_bytes(reader, u32(header, 20), child_bones * 16,
-                  f"xmodel {name!r} translations")
-    _inline_bytes(reader, u32(header, 24), bone_count,
-                  f"xmodel {name!r} part classification")
-    _inline_bytes(reader, u32(header, 28), bone_count * 32,
-                  f"xmodel {name!r} base matrices")
+    bone_names = _inline_bytes(reader, u32(header, 8), bone_count * 2,
+                               f"xmodel {name!r} bone names")
+    parent_list = _inline_bytes(reader, u32(header, 12), child_bones,
+                                f"xmodel {name!r} parent list")
+    quaternions = _inline_bytes(reader, u32(header, 16), child_bones * 8,
+                                f"xmodel {name!r} quaternions")
+    translations = _inline_bytes(reader, u32(header, 20), child_bones * 16,
+                                 f"xmodel {name!r} translations")
+    part_classification = _inline_bytes(
+        reader, u32(header, 24), bone_count,
+        f"xmodel {name!r} part classification")
+    base_matrices = _inline_bytes(reader, u32(header, 28), bone_count * 32,
+                                  f"xmodel {name!r} base matrices")
 
     surfaces = []
     surface_pointer = u32(header, 32)
@@ -982,7 +1118,7 @@ def xmodel(reader):
         surface_headers = reader.take(surface_count * 200)
         for index in range(surface_count):
             surface = surface_headers[index * 200:(index + 1) * 200]
-            surfaces.append(xsurface(reader, surface, index))
+            surfaces.append(xsurface(reader, surface, index, capture))
 
     materials = []
     material_pointer = u32(header, 36)
@@ -995,13 +1131,10 @@ def xmodel(reader):
             else:
                 materials.append({"reference": hex(pointer)})
 
-    if u32(header, 168):
-        reader.take(u32(header, 172) * 36)
-    if u32(header, 180):
-        reader.take(bone_count * 40)
+    unknown_records = reader.take(u32(header, 172) * 36) if u32(header, 168) else b""
+    bone_info = reader.take(bone_count * 40) if u32(header, 180) else b""
     collision_count = u16(header, 44)
-    if u32(header, 216):
-        reader.take(collision_count * 24)
+    collisions = reader.take(collision_count * 24) if u32(header, 216) else b""
 
     phys_preset = None
     if u32(header, 228):
@@ -1013,7 +1146,7 @@ def xmodel(reader):
         raise FormatError(f"xmodel {name!r} has unsupported collision tree at "
                           f"stream offset 0x{reader.pos:x}")
 
-    return {
+    result = {
         "name": name,
         "offset": hex(start),
         "bone_count": bone_count,
@@ -1024,6 +1157,93 @@ def xmodel(reader):
         "phys_preset": phys_preset,
         "physics_geometry": physics,
     }
+    if capture:
+        result.update({
+            "header": header.hex(),
+            "bone_names": bone_names.hex() if bone_names is not None else None,
+            "parent_list": parent_list.hex() if parent_list is not None else None,
+            "quaternions": quaternions.hex() if quaternions is not None else None,
+            "translations": translations.hex() if translations is not None else None,
+            "part_classification": (
+                part_classification.hex() if part_classification is not None else None),
+            "base_matrices": base_matrices.hex() if base_matrices is not None else None,
+            "unknown_records": unknown_records.hex(),
+            "bone_info": bone_info.hex(),
+            "collisions": collisions.hex(),
+        })
+    return result
+
+
+def _captured_bytes(value):
+    return bytes.fromhex(value) if value is not None else b""
+
+
+def write_pc_xsurface_nested(payload, surface):
+    payload.extend(_little_endian_u16_array(
+        _captured_bytes(surface["blend_indices"])))
+    payload.extend(_little_endian_words(
+        _captured_bytes(surface["blend_vertices"])))
+    payload.extend(_captured_bytes(surface["pc_vertices"]))
+    payload.extend(_captured_bytes(surface["pc_secondary_vertices"]))
+    payload.extend(_little_endian_u16_array(
+        _captured_bytes(surface["rigid_vertices"])))
+    payload.extend(_little_endian_u16_array(
+        _captured_bytes(surface["indices"])))
+
+
+def convert_xmodel_header(model):
+    source = bytes.fromhex(model["header"])
+    if len(source) != 240:
+        raise FormatError("invalid Xbox xmodel header")
+    converted = bytearray(240)
+    struct.pack_into("<I", converted, 0, INLINE)
+    converted[4:8] = source[4:8]
+    for offset, field in (
+            (8, "bone_names"), (12, "parent_list"), (16, "quaternions"),
+            (20, "translations"), (24, "part_classification"),
+            (28, "base_matrices")):
+        struct.pack_into("<I", converted, offset,
+                         INLINE if model[field] is not None else 0)
+    struct.pack_into("<I", converted, 32, INLINE if model["surfaces"] else 0)
+    struct.pack_into("<I", converted, 36, INLINE if model["materials"] else 0)
+    for offset in range(40, 168, 32):
+        converted[offset:offset + 28] = _little_endian_words(
+            source, offset, offset + 28)[offset:offset + 28]
+        converted[offset + 28:offset + 32] = source[offset + 28:offset + 32]
+
+    # Visual probe models intentionally omit collision and physics.
+    struct.pack_into("<2I", converted, 168, 0, 0)
+    struct.pack_into("<I", converted, 176, u32(source, 176))
+    struct.pack_into("<I", converted, 180, INLINE if model["bone_info"] else 0)
+    converted[184:212] = _little_endian_words(source, 184, 212)[184:212]
+    struct.pack_into("<Hh", converted, 212, u16(source, 212),
+                     struct.unpack_from(">h", source, 214)[0])
+    converted[216:220] = source[216:220]
+    struct.pack_into("<I", converted, 220, u32(source, 220))
+    converted[224:228] = source[224:228]
+    return bytes(converted)
+
+
+def write_pc_xmodel(payload, model):
+    payload.extend(convert_xmodel_header(model))
+    payload.extend(model["name"].encode() + b"\0")
+    payload.extend(_little_endian_u16_array(_captured_bytes(model["bone_names"])))
+    payload.extend(_captured_bytes(model["parent_list"]))
+    payload.extend(_little_endian_u16_array(_captured_bytes(model["quaternions"])))
+    payload.extend(_little_endian_words(_captured_bytes(model["translations"])))
+    payload.extend(_captured_bytes(model["part_classification"]))
+    payload.extend(_little_endian_words(_captured_bytes(model["base_matrices"])))
+
+    for surface in model["surfaces"]:
+        payload.extend(convert_xsurface_header(surface))
+    for surface in model["surfaces"]:
+        write_pc_xsurface_nested(payload, surface)
+
+    for _ in model["materials"]:
+        payload.extend(struct.pack("<I", INLINE))
+    for _ in model["materials"]:
+        payload.extend(_pc_external_material())
+    payload.extend(_little_endian_words(_captured_bytes(model["bone_info"])))
 
 
 def inspect(path, details=False, capture_map=False):
@@ -1037,7 +1257,7 @@ def inspect(path, details=False, capture_map=False):
             if kind == 8:
                 asset = techset(reader)
             elif kind == 5:
-                asset = xmodel(reader)
+                asset = xmodel(reader, capture_map)
             elif kind == 1:
                 asset = _phys_preset(reader, pointer)
             elif kind == 14:
@@ -1065,7 +1285,22 @@ def inspect(path, details=False, capture_map=False):
             else:
                 raise FormatError(f"asset {index}: {ASSET_NAMES[kind]} details unsupported "
                                   f"at stream offset 0x{start:x}")
-            assets.append({"type": ASSET_NAMES[kind], "offset": hex(start), **asset})
+            assets.append({"type": ASSET_NAMES[kind], "manifest_index": index,
+                           "offset": hex(start), **asset})
+        for asset in assets:
+            if asset["type"] != "gfx_map" or "geometry" not in asset:
+                continue
+            draws = bytes.fromhex(asset["geometry"]["static_model_draws"])
+            pointers = [u32(draws, offset + 32)
+                        for offset in range(0, len(draws), 40)]
+            indices, table_base = resolve_manifest_references(pointers, entries, 5)
+            asset["geometry"]["static_model_asset_indices"] = indices
+            asset["geometry"]["static_model_assets"] = [
+                {"manifest_index": index, "name": assets[index].get("name")}
+                for index in sorted(set(indices))
+            ]
+            asset["geometry"]["asset_table_block2_offset"] = (
+                hex(table_base) if table_base is not None else None)
         report["assets"] = assets
         report["unconsumed_payload_bytes"] = len(reader.data) - reader.pos
         if reader.pos != len(reader.data):
@@ -1155,6 +1390,9 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     sky_start_surfs = bytes.fromhex(geometry["sky_start_surfs"])
     xbox_vertices = bytes.fromhex(geometry["vertices"])
     vertex_layers = bytes.fromhex(geometry["vertex_layers"])
+    static_draws = bytes.fromhex(geometry.get("static_model_draws", ""))
+    static_instances = bytes.fromhex(geometry.get("static_model_insts", ""))
+    static_model_pointers = geometry.get("pc_static_model_pointers")
     cells = geometry.get("cells", [])
 
     if len(xbox_surfaces) % 72 or len(xbox_brush_models) % 60 or len(xbox_vertices) % 44:
@@ -1162,6 +1400,12 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     surface_count = len(xbox_surfaces) // 72
     vertex_count = len(xbox_vertices) // 44
     brush_model_count = len(xbox_brush_models) // 60
+    static_model_count = len(static_draws) // 40
+    if len(static_draws) % 40 or len(static_instances) != static_model_count * 32:
+        raise FormatError("invalid captured Xbox static-model arrays")
+    include_static_models = static_model_count > 0 and static_model_pointers is not None
+    if include_static_models and len(static_model_pointers) != static_model_count:
+        raise FormatError("invalid relocated static-model pointer array")
 
     pc_planes = bytearray(len(planes))
     for offset in range(0, len(planes), 20):
@@ -1191,6 +1435,10 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     struct.pack_into("<2I", pc_header, 80, vertex_count, INLINE if vertex_count else 0)
     struct.pack_into("<2I", pc_header, 92, len(vertex_layers), INLINE if vertex_layers else 0)
     struct.pack_into("<I", pc_header, 252, primary_light_count)
+    struct.pack_into("<3I", pc_header, 276,
+                     static_model_count if include_static_models else 0,
+                     INLINE if include_static_models else 0,
+                     INLINE if include_static_models else 0)
     struct.pack_into("<3I", pc_header, 288, len(cells),
                      (len(cells) + 31) // 32, INLINE if cells else 0)
     struct.pack_into("<2I", pc_header, 352, brush_model_count,
@@ -1209,12 +1457,14 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     for _ in range(surface_count):
         payload.extend(_pc_external_material())
     payload.extend(_little_endian_words(sky_start_surfs))
+    if include_static_models:
+        payload.extend(convert_static_model_draws(
+            static_draws, static_model_pointers))
+        payload.extend(convert_static_model_instances(static_instances))
     for cell in cells:
-        # AABB indexes address static-model arrays. Keep the decoded tree out of
-        # the stream until Xbox 40-byte draw instances are expanded to PC's 64 bytes.
-        payload.extend(_pc_gfx_cell_header(cell, False))
+        payload.extend(_pc_gfx_cell_header(cell, include_static_models))
     for cell in cells:
-        _write_pc_gfx_cell_nested(payload, cell, False)
+        _write_pc_gfx_cell_nested(payload, cell, include_static_models)
     payload.extend(_little_endian_words(xbox_brush_models))
     payload.extend(pc_vertices)
     payload.extend(vertex_layers)
@@ -1266,9 +1516,46 @@ def build_pc_map_probe(path):
     entity_string = "".join(entities).encode("latin-1") + (b"\0" if trailing_nul else b"")
     gfx_world["world_name"] = com_world["name"]
 
-    assets = ((13, "com"), (17, "gfx"), (15, "game"), (12, "clip"))
-    payload = bytearray(struct.pack("<4I", 0, 0, len(assets), INLINE))
-    payload.extend(b"".join(struct.pack("<2I", kind, INLINE) for kind, _ in assets))
+    used_model_indices = sorted(set(
+        gfx_world["geometry"]["static_model_asset_indices"]))
+    models_by_index = {
+        asset["manifest_index"]: asset for asset in report["assets"]
+        if asset["type"] == "xmodel"
+    }
+    if any(index not in models_by_index for index in used_model_indices):
+        raise FormatError("static model reference has no captured XModel asset")
+    models = [models_by_index[index] for index in used_model_indices]
+    assets = ([(5, model) for model in models]
+              + [(13, "com"), (17, "gfx"), (15, "game"), (12, "clip")])
+    script_strings = report["script_strings"]
+    payload = bytearray(struct.pack(
+        "<4I", len(script_strings), INLINE if script_strings else 0,
+        len(assets), INLINE))
+    payload.extend(struct.pack("<I", INLINE) * len(script_strings))
+    for value in script_strings:
+        payload.extend(value.encode() + b"\0")
+    asset_table_offset = len(payload)
+    payload.extend(b"".join(struct.pack("<2I", kind, INLINE)
+                            for kind, _ in assets))
+
+    source_table_base = gfx_world["geometry"].get("asset_table_block2_offset")
+    asset_table_base = int(source_table_base, 16) if source_table_base else None
+    if models and asset_table_base is None:
+        raise FormatError("map has no resolved block-2 asset table")
+    if models and asset_table_offset != asset_table_base + 11:
+        raise FormatError(
+            "generated script-string layout changed the verified block-2 table base")
+    destination_indices = {
+        source_index: destination_index
+        for destination_index, source_index in enumerate(used_model_indices)
+    }
+    gfx_world["geometry"]["pc_static_model_pointers"] = [
+        0x40000001 + asset_table_base + destination_indices[source_index] * 8
+        for source_index in gfx_world["geometry"]["static_model_asset_indices"]
+    ] if models else []
+
+    for model in models:
+        write_pc_xmodel(payload, model)
 
     write_pc_com_world(payload, com_world)
 

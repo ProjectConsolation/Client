@@ -35,6 +35,146 @@ class FastfileTests(unittest.TestCase):
                          (0x99AABBCC, 0x55667788))
         self.assertEqual(struct.unpack("<4f", verts1), (4.0, 5.0, 6.0, 7.0))
 
+    def test_xsurface_header_conversion(self):
+        source = bytearray(200)
+        source[0:2] = b"\x03\x01"
+        struct.pack_into(">2H", source, 2, 7, 11)
+        source[6:8] = b"\x05\x06"
+        struct.pack_into(">4h", source, 12, 1, 2, 3, 4)
+        struct.pack_into(">I", source, 136, 9)
+        struct.pack_into(">6I", source, 176, *range(10, 16))
+        surface = {
+            "header": source.hex(),
+            "indices": "00",
+            "blend_indices": "00",
+            "blend_vertices": None,
+            "pc_vertices": "00",
+            "pc_secondary_vertices": None,
+            "rigid_vertices": "00",
+        }
+
+        converted = xenon_ff.convert_xsurface_header(surface)
+
+        self.assertEqual(len(converted), 80)
+        self.assertEqual(converted[:2], b"\x03\x01")
+        self.assertEqual(struct.unpack_from("<2H", converted, 2), (7, 11))
+        self.assertEqual(converted[6:8], b"\x05\x06")
+        self.assertEqual(struct.unpack_from("<4h", converted, 12), (1, 2, 3, 4))
+        self.assertEqual(struct.unpack_from("<7I", converted, 20),
+                         (xenon_ff.INLINE, 0, xenon_ff.INLINE, 0, 0, 0, 9))
+        self.assertEqual(struct.unpack_from("<I", converted, 48)[0],
+                         xenon_ff.INLINE)
+        self.assertEqual(struct.unpack_from("<I", converted, 52)[0], 0)
+        self.assertEqual(struct.unpack_from("<6I", converted, 56),
+                         tuple(range(10, 16)))
+
+    def test_xsurface_header_conversion_rejects_wrong_size(self):
+        with self.assertRaisesRegex(xenon_ff.FormatError, "xsurface header"):
+            xenon_ff.convert_xsurface_header({"header": bytes(199).hex()})
+
+    def test_xmodel_header_conversion_strips_collision_and_physics(self):
+        source = bytearray(240)
+        source[4:8] = bytes((2, 1, 3, 4))
+        struct.pack_into(">I", source, 176, 0x12345678)
+        struct.pack_into(">7I", source, 184, *range(1, 8))
+        struct.pack_into(">Hh", source, 212, 2, -1)
+        struct.pack_into(">I", source, 220, 99)
+        source[224:228] = bytes((5, 1, 0, 0))
+        model = {
+            "header": source.hex(),
+            "bone_names": "00",
+            "parent_list": None,
+            "quaternions": None,
+            "translations": None,
+            "part_classification": "00",
+            "base_matrices": "00",
+            "surfaces": [{}],
+            "materials": [{}],
+            "bone_info": "00",
+        }
+
+        converted = xenon_ff.convert_xmodel_header(model)
+
+        self.assertEqual(len(converted), 240)
+        self.assertEqual(struct.unpack_from("<I", converted)[0], xenon_ff.INLINE)
+        self.assertEqual(converted[4:8], bytes((2, 1, 3, 4)))
+        self.assertEqual(struct.unpack_from("<8I", converted, 8),
+                         (xenon_ff.INLINE, 0, 0, 0, xenon_ff.INLINE,
+                          xenon_ff.INLINE, xenon_ff.INLINE, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<3I", converted, 168),
+                         (0, 0, 0x12345678))
+        self.assertEqual(struct.unpack_from("<7I", converted, 184),
+                         tuple(range(1, 8)))
+        self.assertEqual(struct.unpack_from("<Hh", converted, 212), (2, -1))
+        self.assertEqual(struct.unpack_from("<I", converted, 220)[0], 99)
+        self.assertEqual(converted[224:228], bytes((5, 1, 0, 0)))
+        self.assertEqual(converted[228:240], bytes(12))
+
+    def test_static_model_draw_conversion(self):
+        source = (struct.pack(">4f", 1500.0, 64.0, 1604.0, -48.0)
+                  + struct.pack(">3I", 0x0007FC00, 0x00000201, 0x1FF00000)
+                  + struct.pack(">fI", 1.0, 0x4000062D)
+                  + b"\x01\x00\x00\x00")
+
+        converted = xenon_ff.convert_static_model_draws(source)
+
+        self.assertEqual(len(converted), 64)
+        self.assertEqual(struct.unpack_from("<4f", converted),
+                         (1500.0, 64.0, 1604.0, -48.0))
+        self.assertAlmostEqual(struct.unpack_from("<f", converted, 16)[0], 0.0)
+        self.assertAlmostEqual(struct.unpack_from("<f", converted, 20)[0], 1.0)
+        self.assertAlmostEqual(struct.unpack_from("<f", converted, 24)[0], 0.0)
+        self.assertAlmostEqual(struct.unpack_from("<f", converted, 28)[0], -1.0)
+        self.assertAlmostEqual(struct.unpack_from("<f", converted, 32)[0], 0.0)
+        self.assertAlmostEqual(struct.unpack_from("<f", converted, 36)[0], 0.0)
+        self.assertEqual(struct.unpack_from("<3f", converted, 40), (0.0, 0.0, 1.0))
+        self.assertEqual(struct.unpack_from("<fI", converted, 52),
+                         (1.0, 0x4000062D))
+        self.assertEqual(converted[60:64], b"\x01\x00\x00\x00")
+
+    def test_static_model_draw_conversion_rejects_partial_record(self):
+        with self.assertRaisesRegex(xenon_ff.FormatError, "static-model draw"):
+            xenon_ff.convert_static_model_draws(bytes(39))
+
+    def test_static_model_draw_relocates_model_pointer(self):
+        source = bytes(32) + struct.pack(">I", 0x4000062D) + bytes(4)
+
+        converted = xenon_ff.convert_static_model_draws(
+            source, [0x4000088D])
+
+        self.assertEqual(struct.unpack_from("<I", converted, 56)[0],
+                         0x4000088D)
+
+    def test_static_model_draw_rejects_pointer_count_mismatch(self):
+        with self.assertRaisesRegex(xenon_ff.FormatError, "pointer count"):
+            xenon_ff.convert_static_model_draws(bytes(40), [])
+
+    def test_static_model_instance_conversion(self):
+        source = (struct.pack(">6fI", -1.0, -2.0, -3.0, 1.0, 2.0, 3.0,
+                              0x004C4C65)
+                  + b"\x01\x00\x00\x00")
+
+        converted = xenon_ff.convert_static_model_instances(source)
+
+        self.assertEqual(struct.unpack_from("<6fI", converted),
+                         (-1.0, -2.0, -3.0, 1.0, 2.0, 3.0, 0x004C4C65))
+        self.assertEqual(converted[28:32], b"\x01\x00\x00\x00")
+
+    def test_static_model_instance_conversion_rejects_partial_record(self):
+        with self.assertRaisesRegex(xenon_ff.FormatError, "static-model instance"):
+            xenon_ff.convert_static_model_instances(bytes(31))
+
+    def test_manifest_reference_resolution(self):
+        entries = [(8, xenon_ff.INLINE), (5, xenon_ff.INLINE),
+                   (5, xenon_ff.INLINE), (6, xenon_ff.INLINE),
+                   (5, xenon_ff.INLINE)]
+        pointers = [0x4000062D, 0x40000635, 0x40000645]
+
+        indices, base = xenon_ff.resolve_manifest_references(pointers, entries, 5)
+
+        self.assertEqual(indices, [1, 2, 4])
+        self.assertEqual(base, 0x624)
+
     def test_pc_gfx_world_geometry_layout(self):
         plane = struct.pack(">4f4B", 1.0, 2.0, 3.0, 4.0, 5, 6, 7, 8)
         surface = bytearray(72)
