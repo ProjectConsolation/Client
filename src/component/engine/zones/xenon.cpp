@@ -107,6 +107,61 @@ namespace fastfiles::xenon
 		void le16(bytes& data, const size_t offset, const uint16_t value) { little_endian(data, offset, value); }
 		uint32_t native32(const bytes& data, const size_t offset) { return native<uint32_t>(data, offset); }
 
+		uint32_t half_to_float_bits(const uint16_t value)
+		{
+			const auto sign = uint32_t(value & 0x8000u) << 16;
+			auto exponent = uint32_t(value >> 10) & 0x1Fu;
+			auto mantissa = uint32_t(value & 0x03FFu);
+			if (exponent == 0)
+			{
+				if (!mantissa) return sign;
+				exponent = 113;
+				while (!(mantissa & 0x0400u))
+				{
+					mantissa <<= 1;
+					--exponent;
+				}
+				return sign | (exponent << 23) | ((mantissa & 0x03FFu) << 13);
+			}
+			if (exponent == 0x1Fu) return sign | 0x7F800000u | (mantissa << 13);
+			return sign | ((exponent + 112) << 23) | (mantissa << 13);
+		}
+
+		struct pc_surface_vertices
+		{
+			bytes primary;
+			bytes secondary;
+		};
+
+		[[maybe_unused]] pc_surface_vertices convert_surface_vertices(const bytes& positions,
+			const bytes& attributes, const std::optional<bytes>& secondary, const uint16_t vertex_count)
+		{
+			const auto xenon_size = size_t(vertex_count) * 16;
+			require(positions.size() == xenon_size && attributes.size() == xenon_size,
+				"invalid Xenon surface vertex streams");
+			require(!secondary || secondary->size() == xenon_size, "invalid Xenon secondary vertex stream");
+			pc_surface_vertices result{bytes(size_t(vertex_count) * 40), secondary ? bytes(xenon_size) : bytes{}};
+			for (size_t i = 0; i < vertex_count; ++i)
+			{
+				const auto source = i * 16;
+				const auto target = i * 40;
+				for (size_t component = 0; component < 4; ++component)
+					le32(result.primary, target + component * 4, be32(positions, source + component * 4));
+				le32(result.primary, target + 16, be32(attributes, source)); // color
+				le32(result.primary, target + 20, 0u); // ignored by the QoS PC vertex declaration
+				le32(result.primary, target + 24, half_to_float_bits(be16(attributes, source + 8)));
+				le32(result.primary, target + 28, half_to_float_bits(be16(attributes, source + 10)));
+				le32(result.primary, target + 32, be32(attributes, source + 12)); // normal
+				le32(result.primary, target + 36, be32(attributes, source + 4)); // tangent
+				if (secondary)
+				{
+					for (size_t component = 0; component < 4; ++component)
+						le32(result.secondary, source + component * 4, be32(*secondary, source + component * 4));
+				}
+			}
+			return result;
+		}
+
 		template <typename... Args>
 		void warn(const char* format, Args... args)
 		{
