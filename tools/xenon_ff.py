@@ -1282,6 +1282,8 @@ def inspect(path, details=False, capture_map=False):
                 payload = reader.take(u32(header, 4) + 1) if u32(header, 8) else b""
                 asset["bytes"] = len(payload)
                 asset["sha256"] = hashlib.sha256(payload).hexdigest()
+                if capture_map:
+                    asset["data"] = payload.hex()
             else:
                 raise FormatError(f"asset {index}: {ASSET_NAMES[kind]} details unsupported "
                                   f"at stream offset 0x{start:x}")
@@ -1525,8 +1527,15 @@ def build_pc_map_probe(path):
     if any(index not in models_by_index for index in used_model_indices):
         raise FormatError("static model reference has no captured XModel asset")
     models = [models_by_index[index] for index in used_model_indices]
+    rawfiles = [
+        asset for asset in report["assets"]
+        if asset["type"] == "rawfile"
+        and isinstance(asset.get("name"), str)
+        and "data" in asset
+    ]
     assets = ([(5, model) for model in models]
-              + [(13, "com"), (17, "gfx"), (15, "game"), (12, "clip")])
+              + [(13, "com"), (17, "gfx"), (15, "game"), (12, "clip")]
+              + [(32, rawfile) for rawfile in rawfiles])
     script_strings = report["script_strings"]
     payload = bytearray(struct.pack(
         "<4I", len(script_strings), INLINE if script_strings else 0,
@@ -1574,6 +1583,14 @@ def build_pc_map_probe(path):
     payload.extend(struct.pack("<3I", INLINE, INLINE, len(entity_string)))
     payload.extend(entity_name.encode() + b"\0")
     payload.extend(entity_string)
+
+    for rawfile in rawfiles:
+        data = bytes.fromhex(rawfile["data"])
+        if not data or not data.endswith(b"\0"):
+            raise FormatError(f"rawfile {rawfile['name']} is not NUL-terminated")
+        payload.extend(struct.pack("<3I", INLINE, len(data) - 1, INLINE))
+        payload.extend(rawfile["name"].encode() + b"\0")
+        payload.extend(data)
 
     # Native PC zones use distinct allocation sizes for five XFile blocks. The
     # probe has no physical/runtime payload, while its small temporary and

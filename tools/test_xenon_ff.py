@@ -416,8 +416,12 @@ class FastfileTests(unittest.TestCase):
                                len(entities))
         gfx = bytearray(828)
         struct.pack_into(">II", gfx, 0, xenon_ff.INLINE, xenon_ff.INLINE)
+        rawfile_data = b"main() {\n}\n\0"
+        rawfile = struct.pack(">3I", xenon_ff.INLINE,
+                              len(rawfile_data) - 1, xenon_ff.INLINE)
         entries = ((14, xenon_ff.INLINE), (16, xenon_ff.INLINE),
-                   (13, xenon_ff.INLINE), (18, xenon_ff.INLINE))
+                   (13, xenon_ff.INLINE), (18, xenon_ff.INLINE),
+                   (33, xenon_ff.INLINE))
         payload = struct.pack(">4I", 0, 0, len(entries), xenon_ff.INLINE)
         payload += b"".join(struct.pack(">2I", *entry) for entry in entries)
         payload += com + b"maps/mp/test.d3dbsp\0"
@@ -425,6 +429,7 @@ class FastfileTests(unittest.TestCase):
         payload += clip + b"maps/mp/test.d3dbsp\0"
         payload += map_ents + b"maps/mp/test.d3dbsp\0" + entities
         payload += gfx + b"maps/mp/test.d3dbsp\0mp_test\0"
+        payload += rawfile + b"maps/mp/mp_test.gsc\0" + rawfile_data
 
         with tempfile.TemporaryDirectory(prefix="qos-xenon-probe-") as directory:
             source = Path(directory) / "source.ff"
@@ -440,12 +445,13 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(len(converted) % 32, 0)
         self.assertLess(len(decoder.unused_data), 32)
         self.assertEqual(struct.unpack_from("<4I", pc_payload),
-                         (0, 0, 4, xenon_ff.INLINE))
+                         (0, 0, 5, xenon_ff.INLINE))
         self.assertEqual([entry[0] for entry in struct.iter_unpack(
-            "<2I", pc_payload[16:48])], [13, 17, 15, 12])
+            "<2I", pc_payload[16:56])], [13, 17, 15, 12, 32])
         self.assertIn(b'"classname" "worldspawn"', pc_payload)
         self.assertNotIn(b'"model" "*1"', pc_payload)
         self.assertIn(b"maps/mp/test.d3dbsp\0mp_test\0", pc_payload)
+        self.assertIn(b"maps/mp/mp_test.gsc\0" + rawfile_data, pc_payload)
 
     def test_sound_with_minimal_alias(self):
         sound_header = struct.pack(">3I", xenon_ff.INLINE,
