@@ -975,17 +975,17 @@ extern "C"
 		{
 			*engine = nullptr;
 		}
-		return E_NOTIMPL;
+		return static_cast<DWORD>(E_NOTIMPL);
 	}
 	DWORD WINAPI xlive_XLivePBufferAllocate(ULONG size, void** buffer)
 	{
 		if (!buffer)
 		{
-			return E_INVALIDARG;
+			return static_cast<DWORD>(E_INVALIDARG);
 		}
 
 		*buffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
-		return *buffer ? success : E_OUTOFMEMORY;
+		return *buffer ? success : static_cast<DWORD>(E_OUTOFMEMORY);
 	}
 	DWORD WINAPI xlive_XLivePBufferFree(void* buffer)
 	{
@@ -1002,7 +1002,7 @@ extern "C"
 	{
 		if (data_size != 0 && !data)
 		{
-			return E_INVALIDARG;
+			return static_cast<DWORD>(E_INVALIDARG);
 		}
 		return copy_blob(data, data_size, protected_data, protected_data_size);
 	}
@@ -1010,7 +1010,7 @@ extern "C"
 	{
 		if (protected_data_size != 0 && !protected_data)
 		{
-			return E_INVALIDARG;
+			return static_cast<DWORD>(E_INVALIDARG);
 		}
 		if (protected_data_handle)
 		{
@@ -1022,7 +1022,7 @@ extern "C"
 	{
 		if (!handle)
 		{
-			return E_INVALIDARG;
+			return static_cast<DWORD>(E_INVALIDARG);
 		}
 		*handle = reinterpret_cast<HANDLE>(1);
 		return success;
@@ -1031,7 +1031,7 @@ extern "C"
 	{
 		if (!information || information[0] < sizeof(DWORD) * 2)
 		{
-			return E_INVALIDARG;
+			return static_cast<DWORD>(E_INVALIDARG);
 		}
 		information[1] = 1; // XLIVE_PROTECTED_DATA_FLAG_OFFLINE_ONLY
 		return success;
