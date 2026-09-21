@@ -1578,10 +1578,19 @@ def build_pc_map_probe(path):
 
     clip_header = bytearray(324)
     struct.pack_into("<2I", clip_header, 0, INLINE, 1)
+    struct.pack_into("<2I", clip_header, 8, 1, INLINE)
+    struct.pack_into("<2I", clip_header, 48, 1, INLINE)
+    struct.pack_into("<2I", clip_header, 56, 1, INLINE)
     struct.pack_into("<2I", clip_header, 148, 1, INLINE)
     struct.pack_into("<I", clip_header, 180, INLINE)
     payload.extend(clip_header)
     payload.extend(clip_name.encode() + b"\0")
+    # The PC server queries BSP node zero during game initialization. Route
+    # both sides of one inert split plane to a single empty leaf.
+    payload.extend(struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0))
+    payload.extend(struct.pack("<Ihh", INLINE, -1, -1))
+    payload.extend(struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0))
+    payload.extend(bytes(44))
     payload.extend(bytes(72))  # world cmodel; brush-model entities were removed above
     payload.extend(struct.pack("<3I", INLINE, INLINE, len(entity_string)))
     payload.extend(entity_name.encode() + b"\0")

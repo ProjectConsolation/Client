@@ -472,6 +472,22 @@ class FastfileTests(unittest.TestCase):
         self.assertNotIn(b'"model" "*1"', pc_payload)
         self.assertIn(b"maps/mp/test.d3dbsp\0mp_test\0", pc_payload)
         self.assertIn(b"maps/mp/mp_test.gsc\0" + rawfile_data, pc_payload)
+        first_game_name = pc_payload.index(b"mp_test\0")
+        game_name = pc_payload.index(b"mp_test\0", first_game_name + 1)
+        clip_start = game_name + len(b"mp_test\0")
+        self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 8),
+                         (1, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 48),
+                         (1, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 56),
+                         (1, xenon_ff.INLINE))
+        tree_start = clip_start + 324 + len(b"maps/mp/test.d3dbsp\0")
+        plane = struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0)
+        self.assertEqual(pc_payload[tree_start:tree_start + 20], plane)
+        self.assertEqual(pc_payload[tree_start + 20:tree_start + 28],
+                         struct.pack("<Ihh", xenon_ff.INLINE, -1, -1))
+        self.assertEqual(pc_payload[tree_start + 28:tree_start + 48], plane)
+        self.assertEqual(pc_payload[tree_start + 48:tree_start + 92], bytes(44))
 
     def test_sound_with_minimal_alias(self):
         sound_header = struct.pack(">3I", xenon_ff.INLINE,
