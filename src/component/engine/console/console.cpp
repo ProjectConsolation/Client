@@ -24,6 +24,7 @@ namespace console
 	{
 		utils::hook::detour printf_hook;
 		utils::hook::detour com_printf_hook;
+		utils::hook::detour com_error_hook;
 
 		std::recursive_mutex print_mutex;
 		std::mutex log_mutex;
@@ -604,6 +605,30 @@ namespace console
 			skip_dispatch_log = false;
 		}
 
+		void com_error_stub(const int source, const int line, const int code, char* fmt, ...)
+		{
+			std::string result = "<null format>";
+			if (fmt)
+			{
+				va_list ap;
+				va_start(ap, fmt);
+				result = format(&ap, fmt);
+				va_end(ap);
+			}
+
+			const auto diagnostic = std::format(
+				"[Com_Error] source=0x{:08X}, line={}, code={}: {}\n",
+				static_cast<unsigned int>(source), line, code, result);
+			write_log(diagnostic);
+			OutputDebugStringA(diagnostic.c_str());
+
+			if (com_error_hook.get_original())
+			{
+				com_error_hook.invoke<void>(source, line, code,
+					const_cast<char*>("%s"), result.c_str());
+			}
+		}
+
 		/*
 		utils::hook::detour compiler_error_2_hook;
 
@@ -695,6 +720,7 @@ namespace console
 			printf_hook.create(printf, printf_stub);
 //#ifndef DEBUG
 			com_printf_hook.create(game::game_offset(0x103F6400), com_printf_stub);
+			com_error_hook.create(game::Com_Error, com_error_stub);
 //#endif
 // 
 			// setup external console
@@ -781,6 +807,7 @@ namespace console
 		{
 			printf_hook.clear();
 			com_printf_hook.clear();
+			com_error_hook.clear();
 
 			con.kill = true;
 			if (con.kill_event)
