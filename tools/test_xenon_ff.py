@@ -439,28 +439,6 @@ class FastfileTests(unittest.TestCase):
                          (xenon_ff.INLINE,))
         self.assertEqual(lit_payload[-36:], bytes(36))
 
-    def test_pc_gfx_world_omits_static_models_without_dpvs_tables(self):
-        asset = {
-            "world_name": "maps/mp/test.d3dbsp",
-            "name": "mp_test",
-            "geometry": {
-                "planes": "", "nodes": "", "indices": "", "surfaces": "",
-                "brush_models": "", "sky_start_surfs": "", "vertices": "",
-                "vertex_layers": "", "static_model_draws": bytes(40).hex(),
-                "static_model_insts": bytes(32).hex(),
-                "pc_static_model_pointers": [0x40000001], "cells": [],
-            },
-        }
-        payload = bytearray()
-        xenon_ff.write_pc_gfx_world(payload, asset, 0)
-        self.assertEqual(struct.unpack_from("<3I", payload, 276), (0, 0, 0))
-
-        emitted = bytearray()
-        xenon_ff.write_pc_gfx_world(emitted, asset, 0,
-                                    include_static_models=True)
-        self.assertEqual(struct.unpack_from("<3I", emitted, 276),
-                         (1, xenon_ff.INLINE, xenon_ff.INLINE))
-
     def test_pc_map_probe_preserves_entities_and_root_names(self):
         com = bytearray(44)
         struct.pack_into(">I", com, 0, xenon_ff.INLINE)

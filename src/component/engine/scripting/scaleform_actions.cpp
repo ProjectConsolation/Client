@@ -4,6 +4,7 @@
 #include "component/engine/console/command.hpp"
 #include "game/game.hpp"
 
+#include <utils/flags.hpp>
 #include <utils/hook.hpp>
 
 namespace scaleform_actions
@@ -12,24 +13,6 @@ namespace scaleform_actions
 	{
 		utils::hook::detour action_dispatch_hook;
 		using action_dispatch_t = void(__stdcall*)(int, const char*, const char*);
-		using is_wow64_process_2_t = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
-
-		bool is_x86_on_arm64()
-		{
-			const auto kernel32 = GetModuleHandleW(L"kernel32.dll");
-			const auto is_wow64_process_2 = reinterpret_cast<is_wow64_process_2_t>(
-				GetProcAddress(kernel32, "IsWow64Process2"));
-			if (!is_wow64_process_2)
-			{
-				return false;
-			}
-
-			USHORT process_machine = IMAGE_FILE_MACHINE_UNKNOWN;
-			USHORT native_machine = IMAGE_FILE_MACHINE_UNKNOWN;
-			return is_wow64_process_2(GetCurrentProcess(), &process_machine, &native_machine)
-				&& process_machine == IMAGE_FILE_MACHINE_I386
-				&& native_machine == IMAGE_FILE_MACHINE_ARM64;
-		}
 
 		struct action_binding
 		{
@@ -90,16 +73,14 @@ namespace scaleform_actions
 	class component final : public component_interface
 	{
 	public:
+		bool is_supported() override
+		{
+			// This is an unverified diagnostic hook, not a startup dependency.
+			return utils::flags::has_flag("scaleform-actions");
+		}
+
 		void post_load() override
 		{
-			// MinHook's generated relay is not a valid CFG target under ARM64's
-			// x86 emulation. This optional diagnostic hook must not block startup.
-			if (is_x86_on_arm64())
-			{
-				game::Com_Printf(13, "^3[scaleform - actions] skipped: unsupported under x86-on-ARM64 emulation\n");
-				return;
-			}
-
 			const auto target = game::game_offset(0x10002280);
 			if (utils::hook::is_relatively_far(reinterpret_cast<const void*>(target),
 				reinterpret_cast<const void*>(action_dispatch_stub)))
@@ -110,6 +91,11 @@ namespace scaleform_actions
 
 			action_dispatch_hook.create(target, action_dispatch_stub);
 			game::Com_Printf(13, "[scaleform - actions] installed: action dispatch logging + server browser binding\n");
+		}
+
+		void pre_destroy() override
+		{
+			action_dispatch_hook.clear();
 		}
 	};
 }

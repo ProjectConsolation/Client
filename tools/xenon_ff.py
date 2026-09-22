@@ -1382,8 +1382,7 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False):
     payload.extend(bytes.fromhex(cell["reflection_probes"]))
 
 
-def write_pc_gfx_world(payload, asset, primary_light_count,
-                       include_static_models=False):
+def write_pc_gfx_world(payload, asset, primary_light_count):
     geometry = asset["geometry"]
     planes = bytes.fromhex(geometry["planes"])
     nodes = bytes.fromhex(geometry["nodes"])
@@ -1406,8 +1405,7 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     static_model_count = len(static_draws) // 40
     if len(static_draws) % 40 or len(static_instances) != static_model_count * 32:
         raise FormatError("invalid captured Xbox static-model arrays")
-    if include_static_models and static_model_pointers is None:
-        raise FormatError("static-model emission requires relocated model pointers")
+    include_static_models = static_model_count > 0 and static_model_pointers is not None
     if include_static_models and len(static_model_pointers) != static_model_count:
         raise FormatError("invalid relocated static-model pointer array")
 
