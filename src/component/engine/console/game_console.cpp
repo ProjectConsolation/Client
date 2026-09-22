@@ -186,33 +186,6 @@ namespace game_console
 			return version;
 		}
 
-		std::string build_prompt_version()
-		{
-			std::string version = VERSION_PRODUCT;
-
-#ifdef DEBUG
-			version += "-dbg";
-#elif defined(NDEBUG)
-			// release keeps the plain semantic version
-#else
-			version += "-nightly";
-#endif
-
-			std::string short_hash = GIT_HASH;
-			if (short_hash.size() > 7)
-			{
-				short_hash.resize(7);
-			}
-
-			std::string hash_label = short_hash;
-			if (GIT_DIRTY)
-			{
-				hash_label += "-dirty";
-			}
-
-			return version + " [" + hash_label + "]";
-		}
-
 		std::string build_full_version_string()
 		{
 			std::string version = "Project: Consolation ";
@@ -251,7 +224,13 @@ namespace game_console
 
 		std::string build_console_prompt()
 		{
-			return "Project: Consolation " + build_prompt_version() + " >";
+			std::string revision = VERSION_BUILD;
+			if (revision.size() < 4)
+			{
+				revision.insert(0, 4 - revision.size(), '0');
+			}
+
+			return "CSL (r" + revision + ") >";
 		}
 
 		std::string to_lower(std::string value)
@@ -1798,9 +1777,13 @@ namespace game_console
 
 			float draw_x = bounds.x;
 			const auto prompt_prefix = build_console_prompt();
+			constexpr auto prompt_brand = "CSL";
+			const auto prompt_suffix = prompt_prefix.substr(std::char_traits<char>::length(prompt_brand));
 			const auto input_y = bounds.y + bounds.font_height;
-			draw_text(prompt_prefix.c_str(), draw_x, input_y, color_qos, 1.0f);
-			draw_x += static_cast<float>(game::R_TextWidth(prompt_prefix.c_str(), 0x7FFFFFFF, get_console_font())) + 6.0f;
+			draw_text(prompt_brand, draw_x, input_y, color_qos, 1.0f);
+			draw_x += static_cast<float>(game::R_TextWidth(prompt_brand, 0x7FFFFFFF, get_console_font()));
+			draw_text(prompt_suffix.c_str(), draw_x, input_y, color_white, 1.0f);
+			draw_x += static_cast<float>(game::R_TextWidth(prompt_suffix.c_str(), 0x7FFFFFFF, get_console_font())) + 6.0f;
 			const auto hint_x = draw_x;
 			const auto cursor_position = std::min(con->cursor, con->input.size());
 

@@ -417,11 +417,49 @@ class FastfileTests(unittest.TestCase):
         }
         payload = bytearray()
         xenon_ff.write_pc_gfx_world(payload, asset, 0)
+        self.assertEqual(struct.unpack_from("<I", payload, 232),
+                         (xenon_ff.INLINE,))
         self.assertEqual(struct.unpack_from("<2I", payload, 352),
                          (4, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<2I", payload, 360),
+                         (1, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<2I", payload, 664),
+                         (xenon_ff.INLINE, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<2I", payload, 576), (1, 1))
+        self.assertEqual(struct.unpack_from("<2I", payload, 680),
+                         (xenon_ff.INLINE, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<I", payload, 712), (0,))
         names = (b"maps/mp/test.d3dbsp\0mp_test\0")
-        self.assertEqual(len(payload), 728 + len(names) + 4 * 168)
-        self.assertEqual(payload[-4 * 168:], bytes(4 * 168))
+        self.assertEqual(len(payload), 728 + len(names) + 68 + 4 * 168 + 60)
+        self.assertEqual(payload[-(4 * 168 + 60):], bytes(4 * 168 + 60))
+
+        lit_payload = bytearray()
+        xenon_ff.write_pc_gfx_world(lit_payload, asset, 3)
+        self.assertEqual(struct.unpack_from("<I", lit_payload, 712),
+                         (xenon_ff.INLINE,))
+        self.assertEqual(lit_payload[-36:], bytes(36))
+
+    def test_pc_gfx_world_omits_static_models_without_dpvs_tables(self):
+        asset = {
+            "world_name": "maps/mp/test.d3dbsp",
+            "name": "mp_test",
+            "geometry": {
+                "planes": "", "nodes": "", "indices": "", "surfaces": "",
+                "brush_models": "", "sky_start_surfs": "", "vertices": "",
+                "vertex_layers": "", "static_model_draws": bytes(40).hex(),
+                "static_model_insts": bytes(32).hex(),
+                "pc_static_model_pointers": [0x40000001], "cells": [],
+            },
+        }
+        payload = bytearray()
+        xenon_ff.write_pc_gfx_world(payload, asset, 0)
+        self.assertEqual(struct.unpack_from("<3I", payload, 276), (0, 0, 0))
+
+        emitted = bytearray()
+        xenon_ff.write_pc_gfx_world(emitted, asset, 0,
+                                    include_static_models=True)
+        self.assertEqual(struct.unpack_from("<3I", emitted, 276),
+                         (1, xenon_ff.INLINE, xenon_ff.INLINE))
 
     def test_pc_map_probe_preserves_entities_and_root_names(self):
         com = bytearray(44)
@@ -456,10 +494,12 @@ class FastfileTests(unittest.TestCase):
             source.write_bytes(self.zone(payload))
             converted = xenon_ff.build_pc_map_probe(source)
 
-        version, payload_size = struct.unpack_from("<2I", converted)
+        version, payload_size, _, runtime_block_size = struct.unpack_from(
+            "<4I", converted)
         decoder = zlib.decompressobj()
         pc_payload = decoder.decompress(converted[28:])
         self.assertEqual(version, 470)
+        self.assertEqual(runtime_block_size, 65536)
         self.assertEqual(payload_size, len(pc_payload))
         self.assertTrue(decoder.eof)
         self.assertEqual(len(converted) % 32, 0)
@@ -481,6 +521,8 @@ class FastfileTests(unittest.TestCase):
                          (1, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 56),
                          (1, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<I", pc_payload, clip_start + 184),
+                         (xenon_ff.INLINE,))
         tree_start = clip_start + 324 + len(b"maps/mp/test.d3dbsp\0")
         plane = struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0)
         self.assertEqual(pc_payload[tree_start:tree_start + 20], plane)
@@ -488,6 +530,15 @@ class FastfileTests(unittest.TestCase):
                          struct.pack("<Ihh", xenon_ff.INLINE, -1, -1))
         self.assertEqual(pc_payload[tree_start + 28:tree_start + 48], plane)
         self.assertEqual(pc_payload[tree_start + 48:tree_start + 92], bytes(44))
+        map_ents_start = tree_start + 92 + 72
+        box_brush_start = (map_ents_start + 12
+                           + len(b"maps/mp/test.d3dbsp\0")
+                           + len(b'{\n"classname" "worldspawn"\n}\n\0'))
+        self.assertEqual(pc_payload[box_brush_start:box_brush_start + 80],
+                         bytes(80))
+        self.assertEqual(pc_payload[box_brush_start + 80:box_brush_start + 92],
+                         struct.pack("<3I", xenon_ff.INLINE,
+                                     len(rawfile_data) - 1, xenon_ff.INLINE))
 
     def test_sound_with_minimal_alias(self):
         sound_header = struct.pack(">3I", xenon_ff.INLINE,

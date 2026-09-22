@@ -1382,7 +1382,8 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False):
     payload.extend(bytes.fromhex(cell["reflection_probes"]))
 
 
-def write_pc_gfx_world(payload, asset, primary_light_count):
+def write_pc_gfx_world(payload, asset, primary_light_count,
+                       include_static_models=False):
     geometry = asset["geometry"]
     planes = bytes.fromhex(geometry["planes"])
     nodes = bytes.fromhex(geometry["nodes"])
@@ -1405,7 +1406,8 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     static_model_count = len(static_draws) // 40
     if len(static_draws) % 40 or len(static_instances) != static_model_count * 32:
         raise FormatError("invalid captured Xbox static-model arrays")
-    include_static_models = static_model_count > 0 and static_model_pointers is not None
+    if include_static_models and static_model_pointers is None:
+        raise FormatError("static-model emission requires relocated model pointers")
     if include_static_models and len(static_model_pointers) != static_model_count:
         raise FormatError("invalid relocated static-model pointer array")
 
@@ -1436,6 +1438,9 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
                      INLINE if sky_start_surfs else 0)
     struct.pack_into("<2I", pc_header, 80, vertex_count, INLINE if vertex_count else 0)
     struct.pack_into("<2I", pc_header, 92, len(vertex_layers), INLINE if vertex_layers else 0)
+    # The renderer dereferences this 68-byte world-sun record while bringing
+    # up a map. Its final light-definition pointer remains null in the probe.
+    struct.pack_into("<I", pc_header, 232, INLINE)
     struct.pack_into("<I", pc_header, 252, primary_light_count)
     struct.pack_into("<3I", pc_header, 276,
                      static_model_count if include_static_models else 0,
@@ -1445,6 +1450,19 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
                      (len(cells) + 31) // 32, INLINE if cells else 0)
     struct.pack_into("<2I", pc_header, 352, brush_model_count,
                      INLINE if brush_model_count else 0)
+    # R_UpdateScene always reads the first 60-byte DPVS world record before
+    # checking its internal surface count.
+    struct.pack_into("<2I", pc_header, 360, 1, INLINE)
+    # Renderer visibility initialization clears these buffers even when the
+    # associated secondary visibility counts are zero. The free-list arrays
+    # need one terminator entry beyond the world cell count.
+    visibility_capacity = len(cells) + 1
+    struct.pack_into("<2I", pc_header, 576,
+                     visibility_capacity, visibility_capacity)
+    struct.pack_into("<2I", pc_header, 664, INLINE, INLINE)
+    struct.pack_into("<2I", pc_header, 680, INLINE, INLINE)
+    struct.pack_into("<I", pc_header, 712,
+                     INLINE if primary_light_count else 0)
 
     names = asset.get("names", [])
     world_name = names[0] if len(names) > 0 and isinstance(names[0], str) else asset["world_name"]
@@ -1459,6 +1477,7 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     for _ in range(surface_count):
         payload.extend(_pc_external_material())
     payload.extend(_little_endian_words(sky_start_surfs))
+    payload.extend(bytes(68))
     if include_static_models:
         payload.extend(convert_static_model_draws(
             static_draws, static_model_pointers))
@@ -1471,8 +1490,10 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     # reduced probe has no brush collision, so retain the count with empty
     # PC-sized records instead of shifting every subsequent asset in the zone.
     payload.extend(bytes(brush_model_count * 168))
+    payload.extend(bytes(60))
     payload.extend(pc_vertices)
     payload.extend(vertex_layers)
+    payload.extend(bytes(primary_light_count * 12))
 
 
 def build_pc_map_probe(path):
@@ -1583,6 +1604,7 @@ def build_pc_map_probe(path):
     struct.pack_into("<2I", clip_header, 56, 1, INLINE)
     struct.pack_into("<2I", clip_header, 148, 1, INLINE)
     struct.pack_into("<I", clip_header, 180, INLINE)
+    struct.pack_into("<I", clip_header, 184, INLINE)
     payload.extend(clip_header)
     payload.extend(clip_name.encode() + b"\0")
     # The PC server queries BSP node zero during game initialization. Route
@@ -1595,6 +1617,8 @@ def build_pc_map_probe(path):
     payload.extend(struct.pack("<3I", INLINE, INLINE, len(entity_string)))
     payload.extend(entity_name.encode() + b"\0")
     payload.extend(entity_string)
+    # CM_GetQueryContext copies the inline 80-byte box brush unconditionally.
+    payload.extend(bytes(80))
 
     for rawfile in rawfiles:
         data = bytes.fromhex(rawfile["data"])
@@ -1608,8 +1632,9 @@ def build_pc_map_probe(path):
     # probe has no physical/runtime payload, while its small temporary and
     # virtual streams safely fit in this conservative bound.
     allocation = len(payload) + 65536
-    result = bytearray(struct.pack("<7I", 470, len(payload), allocation, 0,
-                                   allocation, 0, 0))
+    runtime_allocation = 65536
+    result = bytearray(struct.pack("<7I", 470, len(payload), allocation,
+                                   runtime_allocation, allocation, 0, 0))
     result.extend(zlib.compress(payload, 1))
     # Native PC and Xenon QoS fastfiles pad the zlib stream to 32 bytes.
     result.extend(bytes((-len(result)) % 32))
