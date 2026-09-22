@@ -132,6 +132,45 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(converted[224:228], bytes((5, 1, 0, 0)))
         self.assertEqual(converted[228:240], bytes(12))
 
+    def test_pc_xmodel_probe_omits_xenon_gpu_streams(self):
+        source = bytearray(240)
+        source[4:8] = bytes((1, 0, 1, 0))
+        surface_source = bytearray(200)
+        surface = {
+            "header": surface_source.hex(),
+            "blend_indices": "0001",
+            "blend_vertices": bytes(48).hex(),
+            "pc_vertices": bytes(40).hex(),
+            "pc_secondary_vertices": bytes(16).hex(),
+            "rigid_vertices": bytes(8).hex(),
+            "indices": bytes(6).hex(),
+        }
+        model = {
+            "header": source.hex(),
+            "name": "m",
+            "bone_names": "0001",
+            "parent_list": "00",
+            "quaternions": bytes(8).hex(),
+            "translations": bytes(16).hex(),
+            "part_classification": "00",
+            "base_matrices": bytes(32).hex(),
+            "surfaces": [surface],
+            "materials": [{}],
+            "bone_info": bytes(40).hex(),
+        }
+        payload = bytearray()
+
+        xenon_ff.write_pc_xmodel(payload, model)
+
+        surface_offset = 240 + 2 + 2 + 1 + 8 + 16 + 1 + 32
+        material_array_offset = surface_offset + 80
+        converted_surface = payload[surface_offset:material_array_offset]
+        self.assertEqual(struct.unpack_from("<2H", converted_surface, 2), (0, 0))
+        self.assertEqual(struct.unpack_from("<7I", converted_surface, 20),
+                         (0, 0, 0, 0, 0, 0, 0))
+        self.assertEqual(struct.unpack_from("<I", payload, material_array_offset)[0],
+                         xenon_ff.INLINE)
+
     def test_static_model_draw_conversion(self):
         source = (struct.pack(">4f", 1500.0, 64.0, 1604.0, -48.0)
                   + struct.pack(">3I", 0x0007FC00, 0x00000201, 0x1FF00000)
@@ -448,10 +487,14 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<2I", payload, 664),
                          (xenon_ff.INLINE, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<2I", payload, 576), (1, 1))
+        self.assertEqual(struct.unpack_from("<4I", payload, 584),
+                         (xenon_ff.INLINE,) * 4)
         self.assertEqual(struct.unpack_from("<2I", payload, 680),
                          (xenon_ff.INLINE, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<3I", payload, 620),
                          (xenon_ff.INLINE, xenon_ff.INLINE, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<I", payload, 700),
+                         (xenon_ff.INLINE,))
         self.assertEqual(struct.unpack_from("<I", payload, 712), (0,))
         names = (b"maps/mp/test.d3dbsp\0mp_test\0")
         self.assertEqual(len(payload), 728 + len(names) + 68 + 4 * 168 + 60)
@@ -469,6 +512,8 @@ class FastfileTests(unittest.TestCase):
         game = struct.pack(">I", xenon_ff.INLINE)
         clip = bytearray(324)
         struct.pack_into(">II", clip, 0, xenon_ff.INLINE, 1)
+        visibility = b"\xff\xff\xff\xff"
+        struct.pack_into(">3I", clip, 164, 1, len(visibility), xenon_ff.INLINE)
         struct.pack_into(">I", clip, 180, xenon_ff.INLINE)
         entities = (b'{\n"classname" "worldspawn"\n}\n'
                     b'{\n"classname" "script_model"\n"model" "*1"\n}\0')
@@ -486,7 +531,7 @@ class FastfileTests(unittest.TestCase):
         payload += b"".join(struct.pack(">2I", *entry) for entry in entries)
         payload += com + b"maps/mp/test.d3dbsp\0"
         payload += game + b"mp_test\0"
-        payload += clip + b"maps/mp/test.d3dbsp\0"
+        payload += clip + b"maps/mp/test.d3dbsp\0" + visibility
         payload += map_ents + b"maps/mp/test.d3dbsp\0" + entities
         payload += gfx + b"maps/mp/test.d3dbsp\0mp_test\0"
         payload += rawfile + b"maps/mp/mp_test.gsc\0" + rawfile_data
@@ -525,6 +570,8 @@ class FastfileTests(unittest.TestCase):
                          (1, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<I", pc_payload, clip_start + 184),
                          (xenon_ff.INLINE,))
+        self.assertEqual(struct.unpack_from("<3I", pc_payload, clip_start + 164),
+                         (1, len(visibility), xenon_ff.INLINE))
         tree_start = clip_start + 324 + len(b"maps/mp/test.d3dbsp\0")
         plane = struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0)
         self.assertEqual(pc_payload[tree_start:tree_start + 20], plane)
@@ -532,7 +579,10 @@ class FastfileTests(unittest.TestCase):
                          struct.pack("<Ihh", xenon_ff.INLINE, -1, -1))
         self.assertEqual(pc_payload[tree_start + 28:tree_start + 48], plane)
         self.assertEqual(pc_payload[tree_start + 48:tree_start + 92], bytes(44))
-        map_ents_start = tree_start + 92 + 72
+        visibility_start = tree_start + 92 + 72
+        self.assertEqual(pc_payload[visibility_start:visibility_start + len(visibility)],
+                         visibility)
+        map_ents_start = visibility_start + len(visibility)
         box_brush_start = (map_ents_start + 12
                            + len(b"maps/mp/test.d3dbsp\0")
                            + len(b'{\n"classname" "worldspawn"\n}\n\0'))

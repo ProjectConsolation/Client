@@ -336,7 +336,7 @@ def convert_xsurface_vertices(primary, attributes, secondary, count):
     return bytes(verts0), bytes(verts1) if verts1 is not None else None
 
 
-def convert_xsurface_header(surface):
+def convert_xsurface_header(surface, include_geometry=True):
     """Collapse a 200-byte Xenos XSurface header to the 80-byte PC layout."""
     source = bytes.fromhex(surface["header"])
     if len(source) != 200:
@@ -348,29 +348,33 @@ def convert_xsurface_header(surface):
     # surfaces use packed/shared pointers that the probe cannot relocate yet;
     # retaining their counts with null PC pointers crashes in the D3D buffer
     # creation path while it copies the missing source data.
-    vertex_count = u16(source, 2) if surface["pc_vertices"] is not None else 0
-    triangle_count = u16(source, 4) if surface["indices"] is not None else 0
+    vertex_count = (u16(source, 2) if include_geometry
+                    and surface["pc_vertices"] is not None else 0)
+    triangle_count = (u16(source, 4) if include_geometry
+                      and surface["indices"] is not None else 0)
     struct.pack_into("<2H", converted, 2, vertex_count, triangle_count)
     converted[6:8] = source[6:8]
-    struct.pack_into("<I", converted, 8, INLINE if surface["indices"] is not None else 0)
-    has_blend_data = (surface["blend_indices"] is not None
+    struct.pack_into("<I", converted, 8,
+                     INLINE if include_geometry and surface["indices"] is not None else 0)
+    has_blend_data = (include_geometry and surface["blend_indices"] is not None
                       and surface["blend_vertices"] is not None)
     for slot in range(4):
         struct.pack_into("<h", converted, 12 + slot * 2,
                          (struct.unpack_from(">h", source, 12 + slot * 2)[0]
                           if has_blend_data else 0))
     struct.pack_into("<I", converted, 20,
-                     INLINE if surface["blend_indices"] is not None else 0)
+                     INLINE if include_geometry and surface["blend_indices"] is not None else 0)
     struct.pack_into("<I", converted, 24,
-                     INLINE if surface["blend_vertices"] is not None else 0)
+                     INLINE if include_geometry and surface["blend_vertices"] is not None else 0)
     struct.pack_into("<I", converted, 28,
-                     INLINE if surface["pc_vertices"] is not None else 0)
+                     INLINE if include_geometry and surface["pc_vertices"] is not None else 0)
     struct.pack_into("<I", converted, 36,
-                     INLINE if surface["pc_secondary_vertices"] is not None else 0)
+                     INLINE if include_geometry and surface["pc_secondary_vertices"] is not None else 0)
     struct.pack_into("<I", converted, 44,
-                     u32(source, 136) if surface["rigid_vertices"] is not None else 0)
+                     (u32(source, 136) if include_geometry
+                      and surface["rigid_vertices"] is not None else 0))
     struct.pack_into("<I", converted, 48,
-                     INLINE if surface["rigid_vertices"] is not None else 0)
+                     INLINE if include_geometry and surface["rigid_vertices"] is not None else 0)
     converted[56:80] = _little_endian_words(source, 176, 200)[176:200]
     return bytes(converted)
 
@@ -1050,8 +1054,9 @@ def col_map_mp(reader, pointer):
         brushes = reader.take(u16(header, 156) * 80)
         for offset in range(0, len(brushes), 80):
             _col_brush(reader, brushes[offset:offset + 80])
+    visibility = b""
     if u32(header, 172):
-        reader.take(u32(header, 164) * u32(header, 168))
+        visibility = reader.take(u32(header, 164) * u32(header, 168))
 
     map_ents = None
     if u32(header, 180) in (INLINE, INSERT):
@@ -1092,6 +1097,9 @@ def col_map_mp(reader, pointer):
         "plane_count": u32(header, 8),
         "brush_count": u16(header, 156),
         "dynamic_entity_counts": list(entity_counts),
+        "visibility_count": u32(header, 164),
+        "visibility_stride": u32(header, 168),
+        "visibility": visibility.hex(),
         "zero_fill_bytes": zero_fill_bytes,
         "map_ents": map_ents,
     }
@@ -1244,10 +1252,10 @@ def write_pc_xmodel(payload, model):
     payload.extend(_captured_bytes(model["part_classification"]))
     payload.extend(_little_endian_words(_captured_bytes(model["base_matrices"])))
 
+    # The map-entry probe keeps XModel identity and bounds, but omits all Xenon
+    # GPU streams until their PC sizes and semantics are verified end to end.
     for surface in model["surfaces"]:
-        payload.extend(convert_xsurface_header(surface))
-    for surface in model["surfaces"]:
-        write_pc_xsurface_nested(payload, surface)
+        payload.extend(convert_xsurface_header(surface, include_geometry=False))
 
     for _ in model["materials"]:
         payload.extend(struct.pack("<I", INLINE))
@@ -1467,12 +1475,17 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     visibility_capacity = len(cells) + 1
     struct.pack_into("<2I", pc_header, 576,
                      visibility_capacity, visibility_capacity)
+    # Four one-byte-per-static-model visibility arrays are allocated from
+    # stream 1. They are runtime zero-fill storage and consume no archive data.
+    struct.pack_into("<4I", pc_header, 584, INLINE, INLINE, INLINE, INLINE)
     struct.pack_into("<2I", pc_header, 664, INLINE, INLINE)
     struct.pack_into("<2I", pc_header, 680, INLINE, INLINE)
     # These three renderer work buffers are stream-1 zero-fill allocations.
     # The native loader sizes them from the DPVS surface count and cell count;
     # they consume virtual block space but no compressed archive bytes.
     struct.pack_into("<3I", pc_header, 620, INLINE, INLINE, INLINE)
+    # Primary-light visibility is a stream-1 bitset sized by the native loader.
+    struct.pack_into("<I", pc_header, 700, INLINE)
     struct.pack_into("<I", pc_header, 712,
                      INLINE if primary_light_count else 0)
 
@@ -1544,6 +1557,11 @@ def build_pc_map_probe(path):
     if not isinstance(entity_name, str):
         entity_name = clip_name
     entity_string = map_ents["entity_string"].encode("latin-1")
+    visibility = bytes.fromhex(clip_map.get("visibility", ""))
+    visibility_count = clip_map.get("visibility_count", 0)
+    visibility_stride = clip_map.get("visibility_stride", 0)
+    if len(visibility) != visibility_count * visibility_stride:
+        raise FormatError("clipMap visibility size does not match its dimensions")
     trailing_nul = entity_string.endswith(b"\0")
     text = entity_string.rstrip(b"\0").decode("latin-1")
     entities = re.findall(r"\{.*?\}\s*", text, re.DOTALL)
@@ -1615,6 +1633,8 @@ def build_pc_map_probe(path):
     struct.pack_into("<2I", clip_header, 48, 1, INLINE)
     struct.pack_into("<2I", clip_header, 56, 1, INLINE)
     struct.pack_into("<2I", clip_header, 148, 1, INLINE)
+    struct.pack_into("<3I", clip_header, 164, visibility_count,
+                     visibility_stride, INLINE if visibility else 0)
     struct.pack_into("<I", clip_header, 180, INLINE)
     struct.pack_into("<I", clip_header, 184, INLINE)
     payload.extend(clip_header)
@@ -1626,6 +1646,7 @@ def build_pc_map_probe(path):
     payload.extend(struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0))
     payload.extend(bytes(44))
     payload.extend(bytes(72))  # world cmodel; brush-model entities were removed above
+    payload.extend(visibility)
     payload.extend(struct.pack("<3I", INLINE, INLINE, len(entity_string)))
     payload.extend(entity_name.encode() + b"\0")
     payload.extend(entity_string)

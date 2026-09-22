@@ -229,14 +229,35 @@ namespace console
 			return 7;
 		}
 
+		std::string build_input_prompt()
+		{
+			std::string revision = VERSION_BUILD;
+			if (revision.size() < 4)
+			{
+				revision.insert(0, 4 - revision.size(), '0');
+			}
+
+			return "CSL (r" + revision + ") >";
+		}
+
+		void set_input_cursor_pos()
+		{
+			set_cursor_pos(static_cast<int>(build_input_prompt().size()) + con.cursor);
+		}
+
 		void update()
 		{
 			std::lock_guard _0(print_mutex);
 
 			show_cursor(false);
 			set_cursor_pos(0);
+			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_error));
+			invoke_printf("CSL");
+			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_info));
+			const auto prompt = build_input_prompt();
+			invoke_printf("%s", prompt.c_str() + 3);
 			invoke_printf("%s", con.buffer);
-			set_cursor_pos(con.cursor);
+			set_input_cursor_pos();
 			show_cursor(true);
 		}
 
@@ -247,12 +268,13 @@ namespace console
 			show_cursor(false);
 			set_cursor_pos(0);
 
-			for (auto i = 0; i < static_cast<int>(std::strlen(con.buffer)); i++)
+			const auto line_length = build_input_prompt().size() + std::strlen(con.buffer);
+			for (size_t i = 0; i < line_length; i++)
 			{
 				invoke_printf(" ");
 			}
 
-			set_cursor_pos(con.cursor);
+			set_input_cursor_pos();
 			show_cursor(true);
 		}
 
@@ -326,7 +348,9 @@ namespace console
 			CONSOLE_SCREEN_BUFFER_INFO info{};
 			GetConsoleScreenBufferInfo(OUTPUT_HANDLE, &info);
 			const auto columns = static_cast<size_t>(info.srWindow.Right - info.srWindow.Left - 1);
-			return std::max(size_t(0), std::min(columns, sizeof(con.buffer)));
+			const auto prompt_length = build_input_prompt().size();
+			const auto input_columns = columns > prompt_length ? columns - prompt_length : 0;
+			return std::min(input_columns, sizeof(con.buffer));
 		}
 
 		void handle_resize()
@@ -394,7 +418,7 @@ namespace console
 				if (con.cursor > 0)
 				{
 					con.cursor--;
-					set_cursor_pos(con.cursor);
+					set_input_cursor_pos();
 				}
 
 				break;
@@ -404,7 +428,7 @@ namespace console
 				if (con.cursor < static_cast<int>(std::strlen(con.buffer)))
 				{
 					con.cursor++;
-					set_cursor_pos(con.cursor);
+					set_input_cursor_pos();
 				}
 
 				break;
@@ -443,6 +467,7 @@ namespace console
 				invoke_printf("]%s\r\n", con.buffer);
 				SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_info));
 				strncpy_s(con.buffer, "", sizeof(con.buffer));
+				update();
 				break;
 			}
 			case VK_BACK:
@@ -466,6 +491,7 @@ namespace console
 				con.cursor = 0;
 				clear_output();
 				strncpy_s(con.buffer, "", sizeof(con.buffer));
+				update();
 				break;
 			}
 			default:
