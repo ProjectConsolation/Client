@@ -344,12 +344,21 @@ def convert_xsurface_header(surface):
 
     converted = bytearray(80)
     converted[0:2] = source[0:2]
-    struct.pack_into("<2H", converted, 2, u16(source, 2), u16(source, 4))
+    # Do not advertise geometry that the PC renderer cannot upload. Some Xenon
+    # surfaces use packed/shared pointers that the probe cannot relocate yet;
+    # retaining their counts with null PC pointers crashes in the D3D buffer
+    # creation path while it copies the missing source data.
+    vertex_count = u16(source, 2) if surface["pc_vertices"] is not None else 0
+    triangle_count = u16(source, 4) if surface["indices"] is not None else 0
+    struct.pack_into("<2H", converted, 2, vertex_count, triangle_count)
     converted[6:8] = source[6:8]
     struct.pack_into("<I", converted, 8, INLINE if surface["indices"] is not None else 0)
+    has_blend_data = (surface["blend_indices"] is not None
+                      and surface["blend_vertices"] is not None)
     for slot in range(4):
         struct.pack_into("<h", converted, 12 + slot * 2,
-                         struct.unpack_from(">h", source, 12 + slot * 2)[0])
+                         (struct.unpack_from(">h", source, 12 + slot * 2)[0]
+                          if has_blend_data else 0))
     struct.pack_into("<I", converted, 20,
                      INLINE if surface["blend_indices"] is not None else 0)
     struct.pack_into("<I", converted, 24,
@@ -358,7 +367,8 @@ def convert_xsurface_header(surface):
                      INLINE if surface["pc_vertices"] is not None else 0)
     struct.pack_into("<I", converted, 36,
                      INLINE if surface["pc_secondary_vertices"] is not None else 0)
-    struct.pack_into("<I", converted, 44, u32(source, 136))
+    struct.pack_into("<I", converted, 44,
+                     u32(source, 136) if surface["rigid_vertices"] is not None else 0)
     struct.pack_into("<I", converted, 48,
                      INLINE if surface["rigid_vertices"] is not None else 0)
     converted[56:80] = _little_endian_words(source, 176, 200)[176:200]
@@ -1459,6 +1469,10 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
                      visibility_capacity, visibility_capacity)
     struct.pack_into("<2I", pc_header, 664, INLINE, INLINE)
     struct.pack_into("<2I", pc_header, 680, INLINE, INLINE)
+    # These three renderer work buffers are stream-1 zero-fill allocations.
+    # The native loader sizes them from the DPVS surface count and cell count;
+    # they consume virtual block space but no compressed archive bytes.
+    struct.pack_into("<3I", pc_header, 620, INLINE, INLINE, INLINE)
     struct.pack_into("<I", pc_header, 712,
                      INLINE if primary_light_count else 0)
 

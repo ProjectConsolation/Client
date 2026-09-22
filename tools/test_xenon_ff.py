@@ -47,7 +47,7 @@ class FastfileTests(unittest.TestCase):
             "header": source.hex(),
             "indices": "00",
             "blend_indices": "00",
-            "blend_vertices": None,
+            "blend_vertices": "00",
             "pc_vertices": "00",
             "pc_secondary_vertices": None,
             "rigid_vertices": "00",
@@ -61,12 +61,34 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(converted[6:8], b"\x05\x06")
         self.assertEqual(struct.unpack_from("<4h", converted, 12), (1, 2, 3, 4))
         self.assertEqual(struct.unpack_from("<7I", converted, 20),
-                         (xenon_ff.INLINE, 0, xenon_ff.INLINE, 0, 0, 0, 9))
+                         (xenon_ff.INLINE, xenon_ff.INLINE,
+                          xenon_ff.INLINE, 0, 0, 0, 9))
         self.assertEqual(struct.unpack_from("<I", converted, 48)[0],
                          xenon_ff.INLINE)
         self.assertEqual(struct.unpack_from("<I", converted, 52)[0], 0)
         self.assertEqual(struct.unpack_from("<6I", converted, 56),
                          tuple(range(10, 16)))
+
+    def test_xsurface_header_clears_counts_for_missing_geometry(self):
+        source = bytearray(200)
+        struct.pack_into(">2H", source, 2, 7, 4)
+        struct.pack_into(">4h", source, 12, 1, 2, 3, 4)
+        struct.pack_into(">I", source, 136, 9)
+        surface = {
+            "header": source.hex(),
+            "indices": None,
+            "blend_indices": None,
+            "blend_vertices": None,
+            "pc_vertices": None,
+            "pc_secondary_vertices": None,
+            "rigid_vertices": None,
+        }
+
+        converted = xenon_ff.convert_xsurface_header(surface)
+
+        self.assertEqual(struct.unpack_from("<2H", converted, 2), (0, 0))
+        self.assertEqual(struct.unpack_from("<4h", converted, 12), (0, 0, 0, 0))
+        self.assertEqual(struct.unpack_from("<I", converted, 44), (0,))
 
     def test_xsurface_header_conversion_rejects_wrong_size(self):
         with self.assertRaisesRegex(xenon_ff.FormatError, "xsurface header"):
@@ -428,6 +450,8 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<2I", payload, 576), (1, 1))
         self.assertEqual(struct.unpack_from("<2I", payload, 680),
                          (xenon_ff.INLINE, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<3I", payload, 620),
+                         (xenon_ff.INLINE, xenon_ff.INLINE, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<I", payload, 712), (0,))
         names = (b"maps/mp/test.d3dbsp\0mp_test\0")
         self.assertEqual(len(payload), 728 + len(names) + 68 + 4 * 168 + 60)
