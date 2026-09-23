@@ -621,6 +621,34 @@ class FastfileTests(unittest.TestCase):
             xenon_ff._relocate_collision_pointer(
                 0x40000001 + 0x5000, source, destination)
 
+    def test_shared_clip_planes_use_gfx_world_allocation(self):
+        header = bytearray(324)
+        struct.pack_into(">2I", header, 8, 1, 0x40001235)
+        plane = struct.pack(">4f4B", 1.0, 0.0, 0.0, 32.0, 3, 5, 0, 0)
+        clip_map = {
+            "header": header.hex(),
+            "collision": {"planes": {"data": bytes(20).hex()}},
+        }
+        gfx_world = {"geometry": {"planes": plane.hex()}}
+
+        xenon_ff._bind_shared_clip_planes(clip_map, gfx_world)
+
+        self.assertEqual(bytes.fromhex(
+            clip_map["collision"]["planes"]["data"]), plane)
+
+    def test_shared_clip_planes_reject_invalid_sign_mask(self):
+        header = bytearray(324)
+        struct.pack_into(">2I", header, 8, 1, 0x40001235)
+        plane = struct.pack(">4f4B", 1.0, 0.0, 0.0, 32.0, 3, 8, 0, 0)
+        clip_map = {
+            "header": header.hex(),
+            "collision": {"planes": {"data": bytes(20).hex()}},
+        }
+        gfx_world = {"geometry": {"planes": plane.hex()}}
+
+        with self.assertRaisesRegex(xenon_ff.FormatError, "sign mask"):
+            xenon_ff._bind_shared_clip_planes(clip_map, gfx_world)
+
     def test_clip_header_keeps_brush_count_in_first_halfword(self):
         header = bytearray(324)
         struct.pack_into(">2H", header, 156, 8878, 3)

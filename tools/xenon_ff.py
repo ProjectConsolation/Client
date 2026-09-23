@@ -1843,6 +1843,26 @@ def _convert_clip_header(asset):
     return converted
 
 
+def _bind_shared_clip_planes(asset, gfx_world):
+    source = bytes.fromhex(asset["header"])
+    plane_pointer = u32(source, 12)
+    if plane_pointer in (0, INLINE, INSERT):
+        return
+
+    plane_count = u32(source, 8)
+    planes = bytes.fromhex(gfx_world["geometry"]["planes"])
+    if len(planes) != plane_count * 20:
+        raise FormatError(
+            "shared clipMap plane count does not match GfxWorld planes")
+    for offset in range(0, len(planes), 20):
+        if planes[offset + 17] >= 8:
+            raise FormatError("GfxWorld plane has an invalid sign mask")
+
+    # Xenon clipMap points into the GfxWorld block-2 plane allocation. A packed
+    # offset is logical, not an offset into the flat decompressed byte stream.
+    asset["collision"]["planes"]["data"] = planes.hex()
+
+
 def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
                       entity_name):
     collision = asset["collision"]
@@ -1958,6 +1978,7 @@ def build_pc_map_probe(path):
     game_world = one("game_map_mp")
     clip_map = one("col_map_mp")
     gfx_world = one("gfx_map")
+    _bind_shared_clip_planes(clip_map, gfx_world)
     map_ents = clip_map.get("map_ents")
     if not map_ents or not map_ents.get("entity_string"):
         raise FormatError("map probe requires inline map entities")
