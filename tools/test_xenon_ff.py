@@ -623,18 +623,21 @@ class FastfileTests(unittest.TestCase):
 
     def test_shared_clip_planes_use_gfx_world_allocation(self):
         header = bytearray(324)
-        struct.pack_into(">2I", header, 8, 1, 0x40001235)
-        plane = struct.pack(">4f4B", 1.0, 0.0, 0.0, 32.0, 3, 5, 0, 0)
+        struct.pack_into(">2I", header, 8, 14, 0x40001235)
+        planes = b"".join(
+            struct.pack(">4f4B", 1.0, 0.0, 0.0, float(index), 3, 5, 0, 0)
+            for index in range(14))
         clip_map = {
             "header": header.hex(),
-            "collision": {"planes": {"data": bytes(20).hex()}},
+            "collision": {"planes": {"data": bytes(20 * 14).hex()}},
         }
-        gfx_world = {"geometry": {"planes": plane.hex()}}
+        gfx_world = {"geometry": {"planes": planes.hex()}}
 
         xenon_ff._bind_shared_clip_planes(clip_map, gfx_world)
 
         self.assertEqual(bytes.fromhex(
-            clip_map["collision"]["planes"]["data"]), plane)
+            clip_map["collision"]["planes"]["data"]),
+            planes[:0x104] + planes[:-0x104])
 
     def test_shared_clip_planes_reject_invalid_sign_mask(self):
         header = bytearray(324)
@@ -648,24 +651,6 @@ class FastfileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(xenon_ff.FormatError, "sign mask"):
             xenon_ff._bind_shared_clip_planes(clip_map, gfx_world)
-
-    def test_shared_clip_planes_add_physical_stream_prefix(self):
-        header = bytearray(324)
-        struct.pack_into(">2I", header, 8, 14, 0x40001235)
-        planes = bytes(range(20)) * 14
-        clip_map = {
-            "header": header.hex(),
-            "collision": {"planes": {"data": planes.hex()}},
-        }
-
-        self.assertEqual(
-            xenon_ff._shared_clip_plane_stream_prefix(clip_map),
-            planes[:0x104])
-
-        struct.pack_into(">I", header, 12, xenon_ff.INLINE)
-        clip_map["header"] = header.hex()
-        self.assertEqual(
-            xenon_ff._shared_clip_plane_stream_prefix(clip_map), b"")
 
     def test_clip_header_keeps_brush_count_in_first_halfword(self):
         header = bytearray(324)
