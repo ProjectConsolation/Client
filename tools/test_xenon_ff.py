@@ -649,6 +649,24 @@ class FastfileTests(unittest.TestCase):
         with self.assertRaisesRegex(xenon_ff.FormatError, "sign mask"):
             xenon_ff._bind_shared_clip_planes(clip_map, gfx_world)
 
+    def test_shared_clip_planes_add_physical_stream_prefix(self):
+        header = bytearray(324)
+        struct.pack_into(">2I", header, 8, 14, 0x40001235)
+        planes = bytes(range(20)) * 14
+        clip_map = {
+            "header": header.hex(),
+            "collision": {"planes": {"data": planes.hex()}},
+        }
+
+        self.assertEqual(
+            xenon_ff._shared_clip_plane_stream_prefix(clip_map),
+            planes[:0x104])
+
+        struct.pack_into(">I", header, 12, xenon_ff.INLINE)
+        clip_map["header"] = header.hex()
+        self.assertEqual(
+            xenon_ff._shared_clip_plane_stream_prefix(clip_map), b"")
+
     def test_clip_header_keeps_brush_count_in_first_halfword(self):
         header = bytearray(324)
         struct.pack_into(">2H", header, 156, 8878, 3)

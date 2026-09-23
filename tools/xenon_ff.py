@@ -1863,6 +1863,23 @@ def _bind_shared_clip_planes(asset, gfx_world):
     asset["collision"]["planes"]["data"] = planes.hex()
 
 
+def _shared_clip_plane_stream_prefix(asset):
+    source = bytes.fromhex(asset["header"])
+    plane_pointer = u32(source, 12)
+    if plane_pointer in (0, INLINE, INSERT):
+        return b""
+
+    planes = bytes.fromhex(asset["collision"]["planes"]["data"])
+    # QoS PC 1.1 resumes the physical block-2 archive cursor 0x104 bytes after
+    # the logical clipMap plane allocation begins. Keep the logical pointer
+    # unchanged and duplicate the 13 consumed records as a stream prefix. This
+    # is a runtime-proven probe until the complete five-block writer exists.
+    prefix_size = 0x104
+    if len(planes) < prefix_size:
+        raise FormatError("shared clipMap plane array is smaller than stream prefix")
+    return planes[:prefix_size]
+
+
 def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
                       entity_name):
     collision = asset["collision"]
@@ -1895,6 +1912,7 @@ def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
 
     payload.extend(header)
     payload.extend(clip_name.encode() + b"\0")
+    payload.extend(_shared_clip_plane_stream_prefix(asset))
 
     nested_fields = {
         "brush_sides": "inline_planes",
