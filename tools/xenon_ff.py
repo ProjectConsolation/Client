@@ -44,6 +44,21 @@ INSERT = 0xFFFFFFFE
 PC_CLIP_BLOCK2_CURSOR_BIAS = -0x12C
 MAX_BYTES = 256 * 1024 * 1024
 
+# Xbox 360 GPU texture format IDs used by QoS. The tiling equations below are
+# adapted from michaeloliverx/codxe's xenos_texture implementation.
+XENOS_TEXTURE_FORMATS = {
+    0x12: (4, 4, 8, "DXT1"),
+    0x13: (4, 4, 16, "DXT2_3"),
+    0x14: (4, 4, 16, "DXT4_5"),
+    0x31: (4, 4, 16, "DXN"),
+}
+PC_TEXTURE_FOURCC = {
+    "DXT1": b"DXT1",
+    "DXT2_3": b"DXT3",
+    "DXT4_5": b"DXT5",
+    "DXN": b"ATI2",
+}
+
 
 class FormatError(ValueError):
     pass
@@ -97,6 +112,125 @@ def u32(data, offset=0):
 
 def u16(data, offset=0):
     return struct.unpack_from(">H", data, offset)[0]
+
+
+def _divide_round_up(value, divisor):
+    return (value + divisor - 1) // divisor
+
+
+def _align(value, alignment):
+    return _divide_round_up(value, alignment) * alignment
+
+
+def _xenos_texture_layout(width, height, gpu_format, base_pitch=0):
+    if width <= 0 or height <= 0:
+        raise FormatError("Xenos texture dimensions must be positive")
+    try:
+        block_width, block_height, bytes_per_block, _ = XENOS_TEXTURE_FORMATS[gpu_format]
+    except KeyError as error:
+        raise FormatError(f"unsupported Xenos texture format {gpu_format:#x}") from error
+
+    width_blocks = max(1, _divide_round_up(width, block_width))
+    height_blocks = max(1, _divide_round_up(height, block_height))
+    if base_pitch:
+        pitch = base_pitch
+    elif block_width > 1:
+        pitch = _align(width_blocks, 32) // 8
+    else:
+        pitch = _align(width, 32) // 32
+    row_pitch_texels = pitch << 5
+    row_pitch = max(1, _divide_round_up(
+        row_pitch_texels, block_width)) * bytes_per_block
+    stored_width_blocks = row_pitch // bytes_per_block
+    stored_height_blocks = _align(height_blocks, 32)
+    tiled_size = _align(row_pitch * stored_height_blocks, 4096)
+    linear_row_pitch = width_blocks * bytes_per_block
+    linear_size = linear_row_pitch * height_blocks
+    return (width_blocks, height_blocks, stored_width_blocks,
+            bytes_per_block, linear_row_pitch, linear_size, tiled_size)
+
+
+def _xenos_log2_bytes_per_block(bytes_per_block):
+    return bytes_per_block // 4 + ((bytes_per_block // 2) >> (bytes_per_block // 4))
+
+
+def _xenos_tiled_row_offset(y, width, log2_bytes_per_block):
+    macro = ((y // 32) * (width // 32)) << (log2_bytes_per_block + 7)
+    micro = ((y & 6) << 2) << log2_bytes_per_block
+    return (macro + ((micro & ~0xF) << 1) + (micro & 0xF)
+            + ((y & 8) << (3 + log2_bytes_per_block)) + ((y & 1) << 4))
+
+
+def _xenos_tiled_column_offset(x, y, log2_bytes_per_block, base_offset):
+    macro = (x // 32) << (log2_bytes_per_block + 7)
+    micro = (x & 7) << log2_bytes_per_block
+    offset = base_offset + macro + ((micro & ~0xF) << 1) + (micro & 0xF)
+    return (((offset & ~0x1FF) << 3) + ((offset & 0x1C0) << 2)
+            + (offset & 0x3F) + ((y & 16) << 7)
+            + (((((y & 8) >> 2) + (x >> 3)) & 3) << 6))
+
+
+def apply_xenos_gpu_endian(data, endian):
+    """Return bytes transformed from one Xenos GPU endian mode to the other."""
+    result = bytearray(data)
+    widths = {0: 1, 1: 2, 2: 4, 3: 4}
+    if endian not in widths:
+        raise FormatError(f"invalid Xenos GPU endian mode {endian}")
+    width = widths[endian]
+    for offset in range(0, len(result) - width + 1, width):
+        if endian in (1, 2):
+            result[offset:offset + width] = reversed(result[offset:offset + width])
+        elif endian == 3:
+            result[offset:offset + 4] = (result[offset + 2:offset + 4]
+                                         + result[offset:offset + 2])
+    return bytes(result)
+
+
+def _copy_xenos_texture_blocks(width, height, gpu_format, source,
+                               base_pitch, to_tiled):
+    (width_blocks, height_blocks, stored_width_blocks, bytes_per_block,
+     linear_row_pitch, linear_size, tiled_size) = _xenos_texture_layout(
+         width, height, gpu_format, base_pitch)
+    source_size = linear_size if to_tiled else tiled_size
+    destination_size = tiled_size if to_tiled else linear_size
+    if len(source) < source_size:
+        raise FormatError(
+            f"truncated Xenos texture: need {source_size} bytes, have {len(source)}")
+
+    result = bytearray(destination_size)
+    log2_bytes = _xenos_log2_bytes_per_block(bytes_per_block)
+    for y in range(height_blocks):
+        row_offset = _xenos_tiled_row_offset(y, stored_width_blocks, log2_bytes)
+        for x in range(width_blocks):
+            tiled_block = _xenos_tiled_column_offset(
+                x, y, log2_bytes, row_offset) >> log2_bytes
+            linear_offset = y * linear_row_pitch + x * bytes_per_block
+            tiled_offset = tiled_block * bytes_per_block
+            source_offset, destination_offset = (
+                (linear_offset, tiled_offset) if to_tiled
+                else (tiled_offset, linear_offset))
+            if (source_offset + bytes_per_block > source_size
+                    or destination_offset + bytes_per_block > destination_size):
+                raise FormatError("Xenos tiled texture offset exceeds allocation")
+            result[destination_offset:destination_offset + bytes_per_block] = \
+                source[source_offset:source_offset + bytes_per_block]
+    return bytes(result)
+
+
+def tile_xenos_texture(width, height, gpu_format, linear, base_pitch=0,
+                       endian=0):
+    tiled = _copy_xenos_texture_blocks(
+        width, height, gpu_format, linear, base_pitch, True)
+    return apply_xenos_gpu_endian(tiled, endian)
+
+
+def untile_xenos_texture(width, height, format_word, tiled, base_pitch=0):
+    """Convert the base Xenos texture level to linear PC block-compressed data."""
+    gpu_format = format_word & 0x3F
+    gpu_endian = (format_word >> 6) & 0x3
+    native_tiled = apply_xenos_gpu_endian(tiled, gpu_endian)
+    return _copy_xenos_texture_blocks(
+        width, height, gpu_format, native_tiled, base_pitch, False)
 
 
 class Reader:
@@ -172,7 +306,7 @@ def read_zone(path):
     return reader, entries, report
 
 
-def image(reader, pointer):
+def image(reader, pointer, capture=False):
     if pointer not in (INLINE, INSERT):
         return {"reference": hex(pointer)}
     start = reader.pos
@@ -191,13 +325,26 @@ def image(reader, pointer):
     }
     if load_pointer in (INLINE, INSERT):
         load = reader.take(16)
+        format_word = u32(load, 8)
         result["load_definition"] = {
             "levels": load[0], "flags": load[1],
             "dimensions": struct.unpack_from(">3H", load, 2),
-            "format": hex(u32(load, 8)),
+            "format": hex(format_word),
         }
         if u32(load, 12):
             result["texture_resource_words"] = struct.unpack(">13I", reader.take(52))
+        if capture and pixels:
+            try:
+                linear = untile_xenos_texture(
+                    result["width"], result["height"], format_word, pixels)
+                result["pc_base_level"] = {
+                    "format": XENOS_TEXTURE_FORMATS[format_word & 0x3F][3],
+                    "bytes": len(linear),
+                    "sha256": hashlib.sha256(linear).hexdigest(),
+                    "data": linear.hex(),
+                }
+            except FormatError as error:
+                result["pc_base_level_error"] = str(error)
     elif load_pointer:
         result["load_reference"] = hex(load_pointer)
     return result
@@ -274,9 +421,11 @@ def techset(reader):
     return {"name": name, "techniques": techniques}
 
 
-def material(reader):
+def material(reader, capture=False):
+    start = reader.pos
     header = reader.take(96)
-    result = {"name": reader.string(u32(header)), "textures": []}
+    result = {"name": reader.string(u32(header)), "offset": hex(start),
+              "textures": []}
     pointer = u32(header, 76)
     if pointer in (INLINE, INSERT):
         result["techset"] = techset(reader)
@@ -288,7 +437,10 @@ def material(reader):
         for offset in range(0, len(textures), 12):
             if textures[offset + 7] == 11:
                 raise FormatError("water texture requires a separate decoder")
-            result["textures"].append(image(reader, u32(textures, offset + 8)))
+            image_value = image(reader, u32(textures, offset + 8), capture)
+            if capture:
+                image_value["definition"] = textures[offset:offset + 12].hex()
+            result["textures"].append(image_value)
     elif pointer:
         result["texture_reference"] = hex(pointer)
     for offset, count, size, name in ((84, header[61], 32, "constants"),
@@ -298,6 +450,8 @@ def material(reader):
             result[name] = reader.take(count * size).hex()
         elif pointer:
             result[name + "_reference"] = hex(pointer)
+    if capture:
+        result["header"] = header.hex()
     return result
 
 
@@ -684,12 +838,15 @@ def gfx_map(reader, pointer, capture=False):
     indices = reader.take(u32(header, 24) * 2) if u32(header, 28) else b""
 
     surfaces = b""
+    surface_materials = []
     if u32(header, 68):
         surfaces = reader.take(u32(header, 64) * 72)
         for offset in range(0, len(surfaces), 72):
             material_pointer = u32(surfaces, offset + 40)
             if material_pointer in (INLINE, INSERT):
-                material(reader)
+                surface_materials.append(material(reader, capture))
+            else:
+                surface_materials.append({"reference": hex(material_pointer)})
 
     light_grid = header[72:88]
     if u32(light_grid, 4):
@@ -697,7 +854,8 @@ def gfx_map(reader, pointer, capture=False):
     if u32(light_grid, 12):
         reader.take(u32(light_grid, 8) * 4)
     sky_start_surfs = reader.take(u32(header, 104) * 4) if u32(header, 108) else b""
-    attenuation = image(reader, u32(header, 112)) if u32(header, 112) else None
+    attenuation = image(
+        reader, u32(header, 112), capture) if u32(header, 112) else None
     reader.string(u32(header, 120))
 
     if u32(header, 332) == INLINE:
@@ -708,7 +866,7 @@ def gfx_map(reader, pointer, capture=False):
         records = reader.take(u32(header, 364) * 16)
         for offset in range(0, len(records), 16):
             if u32(records, offset + 12) in (INLINE, INSERT):
-                image(reader, u32(records, offset + 12))
+                image(reader, u32(records, offset + 12), capture)
     if u32(header, 372):
         reader.take(u32(header, 360) * 32)
     static_model_draws = b""
@@ -729,7 +887,7 @@ def gfx_map(reader, pointer, capture=False):
         records = reader.take(u32(header, 400) * 8)
         for offset in range(0, len(records), 4):
             if u32(records, offset) in (INLINE, INSERT):
-                image(reader, u32(records, offset))
+                image(reader, u32(records, offset), capture)
 
     _gfx_dpvs_planes(reader, header[408:460])
     draw_surfaces = b""
@@ -739,7 +897,7 @@ def gfx_map(reader, pointer, capture=False):
         records = reader.take(u32(header, 496) * 8)
         for offset in range(0, len(records), 8):
             if u32(records, offset) in (INLINE, INSERT):
-                material(reader)
+                material(reader, capture)
 
     vertex_data = header[128:164]
     vertices = b""
@@ -753,9 +911,9 @@ def gfx_map(reader, pointer, capture=False):
     world_draw = header[504:600]
     for offset in (4, 8):
         if u32(world_draw, offset) in (INLINE, INSERT):
-            material(reader)
+            material(reader, capture)
     if u32(header, 664):
-        attenuation = image(reader, u32(header, 664))
+        attenuation = image(reader, u32(header, 664), capture)
 
     surface_count = u32(header, 376)
     static_surface_count = u32(draw_surfaces, 48) if draw_surfaces else 0
@@ -775,7 +933,7 @@ def gfx_map(reader, pointer, capture=False):
     if u32(header, 820):
         reader.take(u32(header, 816) * 24)
     if u32(header, 824) in (INLINE, INSERT):
-        material(reader)
+        material(reader, capture)
 
     result = {
         "name": names[1] or names[0],
@@ -793,6 +951,7 @@ def gfx_map(reader, pointer, capture=False):
             "nodes": nodes.hex(),
             "indices": indices.hex(),
             "surfaces": surfaces.hex(),
+            "surface_materials": surface_materials,
             "brush_models": draw_surfaces.hex(),
             "static_model_draws": static_model_draws.hex(),
             "static_model_insts": static_model_insts.hex(),
@@ -1219,7 +1378,7 @@ def xmodel(reader, capture=False):
         for index in range(surface_count):
             pointer = u32(references, index * 4)
             if pointer in (INLINE, INSERT):
-                materials.append(material(reader))
+                materials.append(material(reader, capture))
             else:
                 materials.append({"reference": hex(pointer)})
 
@@ -1367,7 +1526,7 @@ def inspect(path, details=False, capture_map=False):
             elif kind == 27:
                 asset = fx(reader, pointer)
             elif kind == 6:
-                asset = material(reader)
+                asset = material(reader, capture_map)
             elif kind == 33:
                 header = reader.take(12)
                 asset = {"name": reader.string(u32(header))}
@@ -1395,6 +1554,25 @@ def inspect(path, details=False, capture_map=False):
             ]
             asset["geometry"]["asset_table_block2_offset"] = (
                 hex(table_base) if table_base is not None else None)
+            if table_base is not None:
+                for material_value in asset["geometry"]["surface_materials"]:
+                    reference = material_value.get("techset_reference")
+                    if reference is None:
+                        continue
+                    pointer = int(reference, 16)
+                    encoded = pointer - 1
+                    offset = encoded & 0x1FFFFFFF
+                    if pointer <= 0 or encoded >> 29 != 2 or offset < table_base:
+                        raise FormatError("material technique reference is not in the asset table")
+                    delta = offset - table_base
+                    if delta % 8:
+                        raise FormatError("material technique reference is not asset-aligned")
+                    technique_index = delta // 8
+                    if (technique_index >= len(entries)
+                            or entries[technique_index][0] != 8):
+                        raise FormatError("material technique reference does not target a techset")
+                    material_value["techset_manifest_index"] = technique_index
+                    material_value["techset_name"] = assets[technique_index].get("name")
         report["assets"] = assets
         report["unconsumed_payload_bytes"] = len(reader.data) - reader.pos
         if reader.pos != len(reader.data):
@@ -1413,6 +1591,83 @@ def _pc_external_material(name=",white"):
     header = bytearray(104)
     struct.pack_into("<I", header, 0, INLINE)
     return bytes(header) + name.encode() + b"\0"
+
+
+def _pc_external_techset(name):
+    header = bytearray(184)
+    struct.pack_into("<I", header, 0, INLINE)
+    return bytes(header) + name.encode() + b"\0"
+
+
+def write_pc_material(payload, material_value, techset_pointer,
+                      image_pointers):
+    source = bytes.fromhex(material_value["header"])
+    if len(source) != 96 or len(image_pointers) != len(material_value["textures"]):
+        raise FormatError("invalid captured Xbox material")
+    name = material_value.get("name")
+    if not isinstance(name, str) or not isinstance(material_value.get("techset_name"), str):
+        raise FormatError("material is missing a PC-resolvable name or technique set")
+
+    converted = bytearray(104)
+    struct.pack_into("<I", converted, 0, INLINE)
+    converted[4:8] = source[4:8]
+    struct.pack_into("<3I", converted, 8, u32(source, 8), u32(source, 12),
+                     u32(source, 16))
+    struct.pack_into("<H", converted, 20, u16(source, 20))
+    converted[24:67] = b"\xFF" * 43
+    converted[24:64] = source[20:60]
+    converted[67:70] = source[60:63]
+    converted[70:83] = source[63:76]
+    struct.pack_into("<4I", converted, 84, techset_pointer,
+                     INLINE if image_pointers else 0,
+                     INLINE if material_value.get("constants") else 0,
+                     INLINE if material_value.get("state_bits") else 0)
+    payload.extend(converted)
+    payload.extend(name.encode() + b"\0")
+
+    for texture, image_pointer in zip(material_value["textures"], image_pointers):
+        definition = bytes.fromhex(texture["definition"])
+        if len(definition) != 12:
+            raise FormatError(f"material {name!r} has an invalid texture definition")
+        payload.extend(struct.pack("<I", u32(definition)))
+        payload.extend(definition[4:8])
+        payload.extend(struct.pack("<I", image_pointer))
+    payload.extend(_little_endian_words(bytes.fromhex(
+        material_value.get("constants", ""))))
+    payload.extend(_little_endian_words(bytes.fromhex(
+        material_value.get("state_bits", ""))))
+
+
+def write_pc_image(payload, image_value):
+    base = image_value.get("pc_base_level")
+    if not base or "data" not in base:
+        raise FormatError(f"image {image_value.get('name')!r} has no decoded base level")
+    name = image_value.get("name")
+    if not isinstance(name, str):
+        raise FormatError("decoded image has no string name")
+    try:
+        fourcc = PC_TEXTURE_FOURCC[base["format"]]
+    except KeyError as error:
+        raise FormatError(f"unsupported PC texture format {base['format']}") from error
+    data = bytes.fromhex(base["data"])
+    if len(data) != base["bytes"]:
+        raise FormatError(f"image {name!r} decoded byte count changed")
+
+    width = image_value["width"]
+    height = image_value["height"]
+    depth = max(1, image_value["depth"])
+    header = bytearray(36)
+    struct.pack_into("<2I", header, 0, 3, INSERT)
+    header[11] = 2  # TS_COLOR_MAP; material bindings may override semantics later.
+    struct.pack_into("<2I", header, 16, len(data), len(data))
+    struct.pack_into("<3H", header, 24, width, height, depth)
+    header[30] = 3  # IMG_CATEGORY_LOAD_FROM_FILE
+    struct.pack_into("<I", header, 32, INLINE)
+    payload.extend(header)
+    payload.extend(name.encode() + b"\0")
+    payload.extend(struct.pack("<2B3H4sI", 0, 0, width, height, depth,
+                               fourcc, len(data)))
+    payload.extend(data)
 
 
 def _pc_gfx_aabb_header(tree):
@@ -1485,7 +1740,8 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
     # Reflection-probe indices are omitted with their root allocation.
 
 
-def write_pc_gfx_world(payload, asset, primary_light_count):
+def write_pc_gfx_world(payload, asset, primary_light_count,
+                       converted_materials=None):
     geometry = asset["geometry"]
     planes = bytes.fromhex(geometry["planes"])
     nodes = bytes.fromhex(geometry["nodes"])
@@ -1591,8 +1847,14 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     payload.extend(_little_endian_u16_array(nodes))
     payload.extend(_little_endian_u16_array(indices))
     payload.extend(pc_surfaces)
-    for _ in range(surface_count):
-        payload.extend(_pc_external_material())
+    if converted_materials is not None and len(converted_materials) != surface_count:
+        raise FormatError("converted material count does not match world surfaces")
+    for index in range(surface_count):
+        material_value = converted_materials[index] if converted_materials else None
+        if material_value is None:
+            payload.extend(_pc_external_material())
+        else:
+            write_pc_material(payload, *material_value)
     payload.extend(_little_endian_words(sky_start_surfs))
     payload.extend(bytes(68))
     if include_static_models:
@@ -1985,7 +2247,7 @@ def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
     return collision_end
 
 
-def build_pc_map_probe(path):
+def build_pc_map_probe(path, include_images=False, include_materials=False):
     """Build a reduced PC zone for testing map and world deserialization.
 
     QoS PC mp_barge.ff confirms that PC and Xenon both use version 470 and the
@@ -2053,9 +2315,32 @@ def build_pc_map_probe(path):
         and isinstance(asset.get("name"), str)
         and "data" in asset
     ]
+    include_images = include_images or include_materials
+    images_by_name = {}
+    if include_images:
+        for material_value in gfx_world["geometry"]["surface_materials"]:
+            for image_value in material_value.get("textures", []):
+                if "pc_base_level" in image_value:
+                    images_by_name.setdefault(image_value["name"], image_value)
+    images = list(images_by_name.values())
+    convertible_materials = []
+    techsets_by_name = {}
+    if include_materials:
+        for material_value in gfx_world["geometry"]["surface_materials"]:
+            convertible = ("header" in material_value
+                           and isinstance(material_value.get("techset_name"), str)
+                           and all(image_value.get("name") in images_by_name
+                                   for image_value in material_value.get("textures", [])))
+            convertible_materials.append(material_value if convertible else None)
+            if convertible:
+                techsets_by_name.setdefault(
+                    material_value["techset_name"], material_value)
+    techset_names = list(techsets_by_name)
     assets = ([(12, "clip")]
               + [(5, model) for model in models]
+              + [(7, name) for name in techset_names]
               + [(13, "com"), (17, "gfx"), (15, "game")]
+              + [(8, image_value) for image_value in images]
               + [(32, rawfile) for rawfile in rawfiles])
     script_strings = report["script_strings"]
     payload = bytearray(struct.pack(
@@ -2093,12 +2378,40 @@ def build_pc_map_probe(path):
     for model in models:
         write_pc_xmodel(payload, model)
 
+    for name in techset_names:
+        payload.extend(_pc_external_techset(name))
+
     write_pc_com_world(payload, com_world)
 
-    write_pc_gfx_world(payload, gfx_world, len(com_world["primary_lights"]))
+    converted_material_bindings = None
+    if include_materials:
+        techset_start = 1 + len(models)
+        techset_pointers = {
+            name: 0x40000001 + asset_table_base + (techset_start + index) * 8
+            for index, name in enumerate(techset_names)
+        }
+        image_start = techset_start + len(techset_names) + 3
+        image_pointers = {
+            image_value["name"]: 0x40000001 + asset_table_base
+            + (image_start + index) * 8
+            for index, image_value in enumerate(images)
+        }
+        converted_material_bindings = [
+            ((material_value,
+              techset_pointers[material_value["techset_name"]],
+              [image_pointers[image_value["name"]]
+               for image_value in material_value["textures"]])
+             if material_value else None)
+            for material_value in convertible_materials
+        ]
+    write_pc_gfx_world(payload, gfx_world, len(com_world["primary_lights"]),
+                       converted_material_bindings)
 
     payload.extend(struct.pack("<I", INLINE))
     payload.extend(game_name.encode() + b"\0")
+
+    for image_value in images:
+        write_pc_image(payload, image_value)
 
     for rawfile in rawfiles:
         data = bytes.fromhex(rawfile["data"])
@@ -2121,6 +2434,32 @@ def build_pc_map_probe(path):
     return bytes(result)
 
 
+def summarize_world_textures(gfx_world):
+    materials = gfx_world.get("geometry", {}).get("surface_materials", [])
+    images = [texture for material_value in materials
+              if "textures" in material_value
+              for texture in material_value["textures"]]
+    decoded = [value for value in images if "pc_base_level" in value]
+    errors = [{"name": value.get("name"),
+               "error": value["pc_base_level_error"]}
+              for value in images if "pc_base_level_error" in value]
+    formats = Counter(value["pc_base_level"]["format"] for value in decoded)
+    return {
+        "surface_count": len(materials),
+        "inline_materials": sum("textures" in value for value in materials),
+        "packed_material_references": sum(
+            "reference" in value for value in materials),
+        "inline_images": len(images),
+        "unique_image_names": len(set(
+            value["name"] for value in images if isinstance(value.get("name"), str))),
+        "decoded_base_levels": len(decoded),
+        "decoded_base_bytes": sum(
+            value["pc_base_level"]["bytes"] for value in decoded),
+        "formats": dict(sorted(formats.items())),
+        "errors": errors,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="+", type=Path)
@@ -2128,12 +2467,33 @@ def main():
                         help="decode supported asset schemas and require exact stream consumption")
     parser.add_argument("--convert-map-probe", type=Path, metavar="OUTPUT",
                         help="emit a reduced PC v470 map zone for loader testing")
+    parser.add_argument("--include-images", action="store_true",
+                        help="include decoded base-level images in a converted map probe")
+    parser.add_argument("--include-materials", action="store_true",
+                        help="bind directly serialized world materials to converted images")
+    parser.add_argument("--texture-summary", action="store_true",
+                        help="validate captured GfxWorld base textures without emitting a zone")
     args = parser.parse_args()
+    if args.texture_summary:
+        if len(args.files) != 1:
+            parser.error("--texture-summary requires exactly one input")
+        try:
+            report = inspect(args.files[0], True, True)
+            worlds = [asset for asset in report["assets"]
+                      if asset["type"] == "gfx_map"]
+            if len(worlds) != 1:
+                raise FormatError("texture summary requires exactly one gfx_map asset")
+            print(json.dumps(summarize_world_textures(worlds[0]), indent=2))
+            return 0
+        except (OSError, FormatError) as error:
+            print(json.dumps({"file": str(args.files[0]), "error": str(error)}))
+            return 1
     if args.convert_map_probe:
         if len(args.files) != 1:
             parser.error("--convert-map-probe requires exactly one input")
         try:
-            args.convert_map_probe.write_bytes(build_pc_map_probe(args.files[0]))
+            args.convert_map_probe.write_bytes(build_pc_map_probe(
+                args.files[0], args.include_images, args.include_materials))
             print(json.dumps({"input": str(args.files[0]),
                               "output": str(args.convert_map_probe),
                               "bytes": args.convert_map_probe.stat().st_size}))

@@ -13,6 +13,7 @@ namespace exception
 		constexpr MINIDUMP_TYPE get_minidump_type()
 		{
 			const auto type = MiniDumpIgnoreInaccessibleMemory //
+				| MiniDumpWithDataSegs //
 				| MiniDumpWithHandleData //
 				| MiniDumpScanMemory //
 				| MiniDumpWithProcessThreadData //

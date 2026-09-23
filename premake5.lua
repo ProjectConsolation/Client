@@ -335,7 +335,10 @@ workspace "consolation-client"
 			"./src/**.h",
 			"./src/**.hpp",
 			"./src/**.cpp",
-			"./src/**.rc"
+			"./src/**.rc",
+			"./required_files/icon.ico",
+			"./required_files/jb.bmp",
+			"./required_files/jblogo.bmp"
 		}
 
 		vpaths
@@ -355,6 +358,7 @@ workspace "consolation-client"
 			["game"] = { "./src/game/**.cpp", "./src/game/**.hpp", "./src/game/**.h" },
 			["loader"] = { "./src/loader/**.cpp", "./src/loader/**.hpp", "./src/loader/**.h" },
 			["utils"] = { "./src/utils/**.cpp", "./src/utils/**.hpp", "./src/utils/**.h" },
+			["resources"] = { "./required_files/icon.ico", "./required_files/jb.bmp", "./required_files/jblogo.bmp" },
 			[""] = { "./src/main.cpp", "./src/sdllp.cpp", "./src/std_include.cpp", "./src/resource.rc", "./src/resource.hpp" },
 		}
 

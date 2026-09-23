@@ -18,6 +18,13 @@ namespace exception
         decltype(&ExitProcess) exit_process_original = nullptr;
         decltype(&TerminateProcess) terminate_process_original = nullptr;
 
+#ifdef DEBUG
+        constexpr DWORD stack_buffer_overrun = 0xC0000409;
+        constexpr auto report_gs_failure_terminate_return = 0x10138651;
+        constexpr auto gs_exception_record_address = 0x10576DF8;
+        constexpr auto gs_context_address = 0x10576E50;
+#endif
+
         void show_mouse_cursor()
         {
             while (ShowCursor(TRUE) < 0);
@@ -110,6 +117,35 @@ namespace exception
             std::fflush(stdout);
         }
 
+        bool write_gs_failure_minidump(const DWORD code, void* const caller)
+        {
+            if (code != stack_buffer_overrun ||
+                caller != reinterpret_cast<void*>(game::game_offset(report_gs_failure_terminate_return)))
+            {
+                return false;
+            }
+
+            if (InterlockedExchange(&writing_exit_dump, 1) != 0 || handling_exception != 0)
+            {
+                return true;
+            }
+
+            auto* const record = reinterpret_cast<EXCEPTION_RECORD*>(
+                game::game_offset(gs_exception_record_address));
+            auto* const context = reinterpret_cast<CONTEXT*>(game::game_offset(gs_context_address));
+            EXCEPTION_POINTERS pointers{record, context};
+            const auto dump_name = write_minidump(&pointers, "gs-failure");
+            const auto diagnostic = utils::string::va(
+                "[exception] /GS failure code=0x%08X address=%p eip=%p dump=%s\n",
+                record->ExceptionCode, record->ExceptionAddress,
+                reinterpret_cast<void*>(context->Eip),
+                dump_name.empty() ? "<write failed>" : dump_name.c_str());
+            OutputDebugStringA(diagnostic);
+            std::printf("%s", diagnostic);
+            std::fflush(stdout);
+            return true;
+        }
+
         DECLSPEC_NORETURN void WINAPI exit_process_stub(const UINT code)
         {
             write_exit_minidump(code, _ReturnAddress());
@@ -120,7 +156,11 @@ namespace exception
         {
             if (GetProcessId(process) == GetCurrentProcessId())
             {
-                write_exit_minidump(code, _ReturnAddress());
+                const auto caller = _ReturnAddress();
+                if (!write_gs_failure_minidump(code, caller))
+                {
+                    write_exit_minidump(code, caller);
+                }
             }
 
             return terminate_process_original(process, code);

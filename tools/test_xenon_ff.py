@@ -18,6 +18,121 @@ class FastfileTests(unittest.TestCase):
         return struct.pack(">7I", 470, len(payload) if size is None else size,
                            64, 0, 64, 0, 0) + zlib.compress(payload)
 
+    def test_xenos_gpu_endian_modes(self):
+        data = bytes(range(8))
+        self.assertEqual(xenon_ff.apply_xenos_gpu_endian(data, 0), data)
+        self.assertEqual(xenon_ff.apply_xenos_gpu_endian(data, 1),
+                         bytes((1, 0, 3, 2, 5, 4, 7, 6)))
+        self.assertEqual(xenon_ff.apply_xenos_gpu_endian(data, 2),
+                         bytes((3, 2, 1, 0, 7, 6, 5, 4)))
+        self.assertEqual(xenon_ff.apply_xenos_gpu_endian(data, 3),
+                         bytes((2, 3, 0, 1, 6, 7, 4, 5)))
+
+    def test_xenos_texture_layout_matches_observed_canals_dxt1(self):
+        layout = xenon_ff._xenos_texture_layout(256, 256, 0x12)
+        self.assertEqual(layout[4:], (512, 32768, 32768))
+
+    def test_xenos_dxt1_tile_untile_round_trip_with_gpu_endian(self):
+        width, height = 68, 36
+        linear_size = xenon_ff._xenos_texture_layout(width, height, 0x12)[5]
+        linear = bytes((index * 37 + 11) & 0xFF for index in range(linear_size))
+
+        tiled = xenon_ff.tile_xenos_texture(
+            width, height, 0x12, linear, endian=1)
+        restored = xenon_ff.untile_xenos_texture(
+            width, height, 0x12 | (1 << 6), tiled)
+
+        self.assertEqual(restored, linear)
+
+    def test_xenos_texture_rejects_unknown_format(self):
+        with self.assertRaisesRegex(xenon_ff.FormatError, "unsupported Xenos"):
+            xenon_ff.untile_xenos_texture(64, 64, 0x2F, bytes(4096))
+
+    def test_world_texture_summary(self):
+        world = {"geometry": {"surface_materials": [
+            {"textures": [
+                {"name": "a", "pc_base_level": {
+                    "format": "DXT1", "bytes": 32, "sha256": "a"}},
+                {"name": "b", "pc_base_level_error": "bad texture"},
+            ]},
+            {"reference": "0x40000001"},
+            {"textures": [
+                {"name": "a", "pc_base_level": {
+                    "format": "DXT4_5", "bytes": 64, "sha256": "b"}},
+            ]},
+        ]}}
+
+        summary = xenon_ff.summarize_world_textures(world)
+
+        self.assertEqual(summary["surface_count"], 3)
+        self.assertEqual(summary["inline_materials"], 2)
+        self.assertEqual(summary["packed_material_references"], 1)
+        self.assertEqual(summary["inline_images"], 3)
+        self.assertEqual(summary["unique_image_names"], 2)
+        self.assertEqual(summary["decoded_base_levels"], 2)
+        self.assertEqual(summary["decoded_base_bytes"], 96)
+        self.assertEqual(summary["formats"], {"DXT1": 1, "DXT4_5": 1})
+        self.assertEqual(summary["errors"], [
+            {"name": "b", "error": "bad texture"}])
+
+    def test_pc_image_base_level_serialization(self):
+        payload = bytearray()
+        image = {
+            "name": "test_image", "width": 8, "height": 4, "depth": 1,
+            "pc_base_level": {
+                "format": "DXT1", "bytes": 16,
+                "sha256": "unused", "data": bytes(range(16)).hex(),
+            },
+        }
+
+        xenon_ff.write_pc_image(payload, image)
+
+        header = payload[:36]
+        self.assertEqual(struct.unpack_from("<2I", header),
+                         (3, xenon_ff.INSERT))
+        self.assertEqual(header[11], 2)
+        self.assertEqual(struct.unpack_from("<2I", header, 16), (16, 16))
+        self.assertEqual(struct.unpack_from("<3H", header, 24), (8, 4, 1))
+        self.assertEqual(header[30], 3)
+        self.assertEqual(struct.unpack_from("<I", header, 32)[0],
+                         xenon_ff.INLINE)
+        load_offset = 36 + len("test_image") + 1
+        self.assertEqual(
+            struct.unpack_from("<2B3H4sI", payload, load_offset),
+            (0, 0, 8, 4, 1, b"DXT1", 16))
+        self.assertEqual(payload[load_offset + 16:], bytes(range(16)))
+
+    def test_pc_material_serialization_uses_manifest_aliases(self):
+        source = bytearray(96)
+        source[4:8] = b"\x01\x02\x03\x04"
+        struct.pack_into(">3I", source, 8, 1, 2, 3)
+        source[20:60] = bytes(range(40))
+        source[60:63] = bytes((1, 1, 1))
+        definition = struct.pack(">I4B", 0x12345678, 1, 2, 3, 2) + struct.pack(">I", 1)
+        material = {
+            "header": source.hex(), "name": "test_material",
+            "techset_name": "test_techset",
+            "textures": [{"definition": definition.hex(), "name": "test_image"}],
+            "constants": (bytes(range(32))).hex(),
+            "state_bits": bytes(range(8)).hex(),
+        }
+        payload = bytearray()
+
+        xenon_ff.write_pc_material(
+            payload, material, 0x40000101, [0x40000201])
+
+        header = payload[:104]
+        self.assertEqual(struct.unpack_from("<I", header)[0], xenon_ff.INLINE)
+        self.assertEqual(header[67:70], bytes((1, 1, 1)))
+        self.assertEqual(struct.unpack_from("<4I", header, 84),
+                         (0x40000101, xenon_ff.INLINE,
+                          xenon_ff.INLINE, xenon_ff.INLINE))
+        nested = 104 + len("test_material") + 1
+        self.assertEqual(struct.unpack_from("<I", payload, nested)[0],
+                         0x12345678)
+        self.assertEqual(struct.unpack_from("<I", payload, nested + 8)[0],
+                         0x40000201)
+
     def test_xsurface_vertex_stream_conversion(self):
         primary = struct.pack(">4f", 1.0, 2.0, 3.0, -1.0)
         attributes = (struct.pack(">2I", 0x11223344, 0x55667788)

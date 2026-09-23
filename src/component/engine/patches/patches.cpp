@@ -81,7 +81,9 @@ namespace patches
 				jmp dword ptr[cg_draw_fps_detail_continue]
 
 			simple:
-				add esp, 0Ch
+				// The skipped native block consumes all five arguments from the
+				// preceding draw call before reaching the shared /GS epilogue.
+				add esp, 14h
 				jmp dword ptr[cg_draw_fps_simple_exit]
 			}
 		}
