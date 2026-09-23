@@ -3,7 +3,7 @@
 #include "loader/component_loader.hpp"
 
 #include "component/engine/console/command.hpp"
-#include "component/engine/console/console.hpp"
+#include "component/engine/console/game_console.hpp"
 #include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"
@@ -26,7 +26,7 @@ namespace draw_origin
 		float text_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 		float shadow_color[4] = {0.0f, 0.0f, 0.0f, 0.75f};
 #ifdef DEBUG
-		std::atomic_bool console_output_enabled = false;
+		std::atomic_bool internal_console_status_enabled = false;
 #endif
 
 		bool read_player_motion(float (&origin)[3], float (&velocity)[3])
@@ -82,9 +82,9 @@ namespace draw_origin
 		}
 
 #ifdef DEBUG
-		void print_motion()
+		void update_internal_console_status()
 		{
-			if (!console_output_enabled.load(std::memory_order_relaxed))
+			if (!internal_console_status_enabled.load(std::memory_order_relaxed))
 			{
 				return;
 			}
@@ -93,16 +93,20 @@ namespace draw_origin
 			float velocity[3]{};
 			if (read_player_motion(origin, velocity))
 			{
-				console::info("%s\n", format_motion(origin, velocity));
+				game_console::set_live_status(format_motion(origin, velocity));
+			}
+			else
+			{
+				game_console::set_live_status("origin: unavailable velocity: unavailable");
 			}
 		}
 
 		void origin_command(const command::params& params)
 		{
-			bool enabled = !console_output_enabled.load(std::memory_order_relaxed);
+			bool enabled = !internal_console_status_enabled.load(std::memory_order_relaxed);
 			if (params.size() > 2)
 			{
-				console::info("usage: origin [0|1]\n");
+				game_console::set_live_status("usage: origin [0|1]");
 				return;
 			}
 
@@ -118,16 +122,19 @@ namespace draw_origin
 				}
 				else
 				{
-					console::info("usage: origin [0|1]\n");
+					game_console::set_live_status("usage: origin [0|1]");
 					return;
 				}
 			}
 
-			console_output_enabled.store(enabled, std::memory_order_relaxed);
-			console::info("origin live output: %s\n", enabled ? "on" : "off");
+			internal_console_status_enabled.store(enabled, std::memory_order_relaxed);
 			if (enabled)
 			{
-				print_motion();
+				update_internal_console_status();
+			}
+			else
+			{
+				game_console::clear_live_status();
 			}
 		}
 #endif
@@ -181,14 +188,15 @@ namespace draw_origin
 			scheduler::loop(draw, scheduler::pipeline::renderer);
 #ifdef DEBUG
 			command::add("origin", origin_command);
-			scheduler::loop(print_motion, scheduler::pipeline::main, console_update_interval);
+			scheduler::loop(update_internal_console_status, scheduler::pipeline::main, console_update_interval);
 #endif
 		}
 
 		void pre_destroy() override
 		{
 #ifdef DEBUG
-			console_output_enabled.store(false, std::memory_order_relaxed);
+			internal_console_status_enabled.store(false, std::memory_order_relaxed);
+			game_console::clear_live_status();
 #endif
 		}
 	};

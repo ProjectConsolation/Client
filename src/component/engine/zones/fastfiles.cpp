@@ -886,6 +886,12 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
+			// QoS PC 1.1 sub_10266D10 asserts when an asset-provided transform mode
+			// is outside 0..7, then deliberately falls through to its generic matrix
+			// transform. Xenon fallback FX can reach that recoverable path, so remove
+			// only the ten-byte debug trap block and preserve the native fallback.
+			utils::hook::nop(game::game_offset(0x10266F46), 10);
+
 			// Runtime crash evidence: 0x1036E769 read [0x00000B5A] with a null
 			// TLS surface-list base at the end of mp_canals. Preserve native work
 			// when the list exists and skip only the stale-list iteration.

@@ -462,6 +462,7 @@ namespace console
 				con.cursor = 0;
 
 				clear_output();
+				set_cursor_pos(0);
 				SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_info));
 				write_log(utils::string::va("]%s\n", con.buffer));
 				invoke_printf("]%s\r\n", con.buffer);

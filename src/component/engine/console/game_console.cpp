@@ -96,6 +96,24 @@ namespace game_console
 			return *queue;
 		}
 
+		std::mutex& get_live_status_mutex()
+		{
+			static auto* mutex = new std::mutex{};
+			return *mutex;
+		}
+
+		std::string& get_live_status_text()
+		{
+			static auto* text = new std::string{};
+			return *text;
+		}
+
+		std::string get_live_status_snapshot()
+		{
+			std::lock_guard _(get_live_status_mutex());
+			return get_live_status_text();
+		}
+
 		float color_white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 		float color_qos[4] = { 0.85f, 0.15f, 0.15f, 1.0f };
 		float color_input_box[4] = { 0.20f, 0.20f, 0.20f, 0.90f };
@@ -1655,14 +1673,16 @@ namespace game_console
 		void draw_hint_box(const overlay_bounds& bounds, const float hint_x, const int lines, float* color, const float offset_y)
 		{
 			const auto height = lines * bounds.font_height + 12.0f;
-			const auto y = bounds.y - 3.0f + bounds.font_height + 12.0f + offset_y;
+			const auto live_status_offset = get_live_status_snapshot().empty() ? 0.0f : bounds.font_height;
+			const auto y = bounds.y - 3.0f + bounds.font_height + 12.0f + offset_y + live_status_offset;
 			const auto width = (bounds.screen_max[0] - bounds.screen_min[0]) - ((hint_x - 6.0f) - bounds.screen_min[0]);
 			draw_box(hint_x - 6.0f, y, width, height, color);
 		}
 
 		void draw_hint_text(const overlay_bounds& bounds, const float hint_x, const int line, const char* text, float* color, const float offset, const float offset_y)
 		{
-			const auto y = bounds.font_height + bounds.y + (bounds.font_height * (line + 1)) + 15.0f + offset_y;
+			const auto live_status_offset = get_live_status_snapshot().empty() ? 0.0f : bounds.font_height;
+			const auto y = bounds.font_height + bounds.y + (bounds.font_height * (line + 1)) + 15.0f + offset_y + live_status_offset;
 			draw_text(text, hint_x + offset, y, color, 1.0f);
 		}
 
@@ -1788,7 +1808,8 @@ namespace game_console
 				return;
 			}
 
-			draw_input_box(bounds, 1, color_input_box);
+			const auto live_status = get_live_status_snapshot();
+			draw_input_box(bounds, live_status.empty() ? 1 : 2, color_input_box);
 
 			float draw_x = bounds.x;
 			const auto prompt_prefix = build_console_prompt();
@@ -1809,6 +1830,10 @@ namespace game_console
 			}
 
 			draw_text(con->input.c_str(), draw_x, input_y, color_white, 1.0f);
+			if (!live_status.empty())
+			{
+				draw_text(live_status.c_str(), bounds.x, input_y + bounds.font_height, color_cmd_match, 1.0f);
+			}
 
 			const auto blink_on = ((GetTickCount() / 500u) & 1u) == 0u;
 			if (blink_on)
@@ -2535,6 +2560,18 @@ namespace game_console
 		}
 	}
 
+	void set_live_status(const std::string_view text)
+	{
+		std::lock_guard _(get_live_status_mutex());
+		get_live_status_text().assign(text);
+	}
+
+	void clear_live_status()
+	{
+		std::lock_guard _(get_live_status_mutex());
+		get_live_status_text().clear();
+	}
+
 	void toggle()
 	{
 		toggle_overlay_state();
@@ -2644,6 +2681,7 @@ namespace game_console
 			cl_key_event_hook.clear();
 			cl_console_print_hook.clear();
 			con_set_console_rect_hook.clear();
+			clear_live_status();
 			con = nullptr;
 		}
 	};
