@@ -47,6 +47,55 @@ namespace patches
 		constexpr std::size_t k_huffman_max_compressed_bytes = k_huffman_max_decoded_bytes;
 		constexpr std::size_t k_ui_replace_directive_max_len = 0x100;
 		constexpr std::size_t k_party_member_join_max_message_bytes = 0x4000;
+		const char* cg_draw_fps_modes[] =
+		{
+			"Off",
+			"Simple",
+			"Detailed",
+			"Detailed 3",
+			"Detailed 4",
+			"Detailed 5",
+			"Detailed 6",
+			"Detailed 7",
+		};
+		std::uintptr_t cg_draw_fps_dvar_pointer_address{};
+		std::uintptr_t cg_draw_fps_detail_continue{};
+		std::uintptr_t cg_draw_fps_simple_exit{};
+
+		__declspec(naked) void cg_draw_fps_detail_gate_stub()
+		{
+			__asm
+			{
+				// Replay QoS PC 1.1 0x102B4FFA-0x102B500E, then let mode 1
+				// leave after the FPS line while modes 2+ draw the base detail block.
+				movss xmm1, dword ptr[ebp + 8]
+				cvtss2sd xmm0, xmm0
+				cvtps2pd xmm1, xmm1
+				addsd xmm0, xmm1
+				cvtsd2ss xmm0, xmm0
+				movss dword ptr[ebp + 8], xmm0
+				mov ecx, dword ptr[cg_draw_fps_dvar_pointer_address]
+				mov ecx, dword ptr[ecx]
+				cmp dword ptr[ecx + 10h], 1
+				je simple
+				jmp dword ptr[cg_draw_fps_detail_continue]
+
+			simple:
+				add esp, 0Ch
+				jmp dword ptr[cg_draw_fps_simple_exit]
+			}
+		}
+
+		void apply_cg_draw_fps_modes()
+		{
+			cg_draw_fps_dvar_pointer_address = game::game_offset(0x113F25F0);
+			cg_draw_fps_detail_continue = game::game_offset(0x102B5013);
+			cg_draw_fps_simple_exit = game::game_offset(0x102B54BF);
+
+			utils::hook::jump(game::game_offset(0x102B4FFA), cg_draw_fps_detail_gate_stub);
+			utils::hook::nop(game::game_offset(0x102B51BA), 6);
+			utils::hook::jump(game::game_offset(0x102B51BA), cg_draw_fps_simple_exit);
+		}
 
 		std::size_t bounded_length(const char* value, const std::size_t max_len)
 		{
@@ -769,6 +818,8 @@ namespace patches
 					const auto writable_flags = flags
 						& ~static_cast<unsigned short>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
 					flags = static_cast<unsigned short>(writable_flags | static_cast<unsigned short>(game::dvar_flags::saved));
+					domain.enumeration.stringCount = static_cast<int>(std::size(cg_draw_fps_modes));
+					domain.enumeration.strings = cg_draw_fps_modes;
 				}
 			}
 
@@ -920,6 +971,7 @@ namespace patches
 			apply_cinematic_stats_guard();
 			apply_missing_voice_engine_guard();
 			apply_private_match_unpause();
+			apply_cg_draw_fps_modes();
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 

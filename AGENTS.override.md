@@ -90,6 +90,8 @@ When a relevant mandatory reference cannot be checked, state that verification i
 - Match verification effort to risk. Shared protocols, persistence, profile formats, and cross-module contracts need repeatable regression coverage.
 - A successful return code or UI transition does not prove that the underlying side effects and state transitions are correct.
 - Do not delete user data, external reference databases, or non-reproducible files. Verify scope and value before removing obsolete generated artifacts or duplicate repository documentation.
+- Document every newly registered user-facing command in the appropriate `docs/wiki` page in the same change.
+- When an external project provides a structure that is relevant and verified against the QoS PC build, keep the required declaration locally with a concise source-attribution comment. Validate its layout with QoS evidence and `static_assert` checks where practical, avoid importing unverified fields wholesale, and tell the user which attributed definitions were added or adapted.
 
 ## Workspace Constraints
 

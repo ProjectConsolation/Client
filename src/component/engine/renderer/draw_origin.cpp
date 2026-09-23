@@ -2,6 +2,8 @@
 
 #include "loader/component_loader.hpp"
 
+#include "component/engine/console/command.hpp"
+#include "component/engine/console/console.hpp"
 #include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"
@@ -19,9 +21,13 @@ namespace draw_origin
 		constexpr float native_line_spacing = 0.75f;
 		constexpr float native_text_y_scale = 1.1f;
 		constexpr float right_margin = 4.0f;
+		constexpr auto console_update_interval = 500ms;
 
 		float text_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 		float shadow_color[4] = {0.0f, 0.0f, 0.0f, 0.75f};
+#ifdef DEBUG
+		std::atomic_bool console_output_enabled = false;
+#endif
 
 		bool read_player_motion(float (&origin)[3], float (&velocity)[3])
 		{
@@ -57,6 +63,75 @@ namespace draw_origin
 				1.0f, native_text_y_scale, 0.0f, text_color, 0);
 		}
 
+		int fps_line_count()
+		{
+			const auto* const draw_fps = game::Dvar_FindVar("cg_drawFPS");
+			if (!draw_fps || draw_fps->current.integer <= 0)
+			{
+				return 0;
+			}
+
+			return draw_fps->current.integer == 1 ? 1 : 3;
+		}
+
+		const char* format_motion(const float (&origin)[3], const float (&velocity)[3])
+		{
+			return utils::string::va(
+				"origin: (%.2f, %.2f, %.2f) velocity: (%.2f, %.2f, %.2f)",
+				origin[0], origin[1], origin[2], velocity[0], velocity[1], velocity[2]);
+		}
+
+#ifdef DEBUG
+		void print_motion()
+		{
+			if (!console_output_enabled.load(std::memory_order_relaxed))
+			{
+				return;
+			}
+
+			float origin[3]{};
+			float velocity[3]{};
+			if (read_player_motion(origin, velocity))
+			{
+				console::info("%s\n", format_motion(origin, velocity));
+			}
+		}
+
+		void origin_command(const command::params& params)
+		{
+			bool enabled = !console_output_enabled.load(std::memory_order_relaxed);
+			if (params.size() > 2)
+			{
+				console::info("usage: origin [0|1]\n");
+				return;
+			}
+
+			if (params.size() == 2)
+			{
+				if (!_stricmp(params[1], "1") || !_stricmp(params[1], "on"))
+				{
+					enabled = true;
+				}
+				else if (!_stricmp(params[1], "0") || !_stricmp(params[1], "off"))
+				{
+					enabled = false;
+				}
+				else
+				{
+					console::info("usage: origin [0|1]\n");
+					return;
+				}
+			}
+
+			console_output_enabled.store(enabled, std::memory_order_relaxed);
+			console::info("origin live output: %s\n", enabled ? "on" : "off");
+			if (enabled)
+			{
+				print_motion();
+			}
+		}
+#endif
+
 		void draw()
 		{
 			if (!dvars::cg_drawOrigin || !dvars::cg_drawOrigin->current.enabled)
@@ -86,19 +161,14 @@ namespace draw_origin
 			float y = debug_offset ? debug_offset->current.vector[1] : 0.0f;
 			const auto line_height = static_cast<float>(font->pixelHeight) * native_line_spacing;
 
-			const auto* const draw_fps = game::Dvar_FindVar("cg_drawFPS");
-			if (draw_fps && draw_fps->current.integer != 0)
-			{
-				// Native mode 1 draws FPS, frame time, and view triangles.
-				y += line_height * 3.0f;
-			}
+			y += line_height * static_cast<float>(fps_line_count());
 
 			y += static_cast<float>(font->pixelHeight) * native_text_y_scale;
-			const auto origin_text = utils::string::va("origin %.2f %.2f %.2f", origin[0], origin[1], origin[2]);
+			const auto origin_text = utils::string::va("origin: (%.2f, %.2f, %.2f)", origin[0], origin[1], origin[2]);
 			draw_right_aligned(origin_text, font, right, y);
 
 			y += line_height;
-			const auto velocity_text = utils::string::va("velocity %.2f %.2f %.2f", velocity[0], velocity[1], velocity[2]);
+			const auto velocity_text = utils::string::va("velocity: (%.2f, %.2f, %.2f)", velocity[0], velocity[1], velocity[2]);
 			draw_right_aligned(velocity_text, font, right, y);
 		}
 	}
@@ -109,6 +179,17 @@ namespace draw_origin
 		void post_load() override
 		{
 			scheduler::loop(draw, scheduler::pipeline::renderer);
+#ifdef DEBUG
+			command::add("origin", origin_command);
+			scheduler::loop(print_motion, scheduler::pipeline::main, console_update_interval);
+#endif
+		}
+
+		void pre_destroy() override
+		{
+#ifdef DEBUG
+			console_output_enabled.store(false, std::memory_order_relaxed);
+#endif
 		}
 	};
 }

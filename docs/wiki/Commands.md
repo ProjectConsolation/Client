@@ -10,6 +10,7 @@ Project: Consolation includes a small set of utility and debugging commands that
 | `dvarDump [filename]` | Prints all registered dvars to the console and can optionally write them to a text file under the `consolation` folder. | `dvarDump` `dvarDump dvars` |
 | `commandDump [filename]` | Prints all registered command names to the console and can optionally write them to a text file under the `consolation` folder. | `commandDump` `commandDump commands` |
 | `listassetpool <poolnumber> [filter]` | Lists assets from the selected asset pool and can optionally filter the output by text. | `listassetpool 0` `listassetpool 13 weapon` |
+| `origin [0|1]` | Debug builds only. Toggles a safe twice-per-second console report of the local player's origin and velocity; an explicit value enables or disables it. | `origin` `origin 1` `origin 0` |
 
 ## Notes
 

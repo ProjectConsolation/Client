@@ -18,7 +18,7 @@ namespace draw_version
 		constexpr float shadow_offset_x = 1.0f;
 		constexpr float shadow_offset_y = 1.0f;
 		float shadow_color[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
-		float text_color[4] = { 0.86f, 0.82f, 0.72f, 0.60f };
+		float text_color[4] = { 0.20f, 0.58f, 1.0f, 0.85f };
 		const char* watermark_text = "Project: Consolation";
 		float resolve_layout_width(const game::ScreenPlacement& scr_place)
 		{
@@ -157,13 +157,6 @@ namespace draw_version
 				return;
 			}
 
-			const auto scr_place = game::ScrPlace_GetViewPlacement();
-			const auto viewport_width = scr_place.realViewportSize[0] > 0.0f ? scr_place.realViewportSize[0] : get_layout_width();
-			if (viewport_width <= 0.0f)
-			{
-				return;
-			}
-
 			const auto* const version_buffer_ptr = get_version_text();
 			if (!version_buffer_ptr || !*version_buffer_ptr)
 			{
@@ -173,8 +166,15 @@ namespace draw_version
 			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr, std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font)));
 			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
 			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 18.0f;
-			const auto x = x_offset + viewport_width - text_width;
-			const auto y = y_offset + static_cast<float>(font->pixelHeight);
+			const auto placement = game::ScrPlace_GetViewPlacement();
+			const auto right = placement.virtualViewableMax[0] > placement.virtualViewableMin[0]
+				? placement.virtualViewableMax[0]
+				: get_layout_width();
+			const auto bottom = placement.virtualViewableMax[1] > placement.virtualViewableMin[1]
+				? placement.virtualViewableMax[1]
+				: get_layout_height();
+			const auto x = right - text_width - x_offset;
+			const auto y = bottom - y_offset;
 
 			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font);
 		}
@@ -195,4 +195,4 @@ namespace draw_version
 	};
 }
 
-//REGISTER_COMPONENT(draw_version::component)
+REGISTER_COMPONENT(draw_version::component)

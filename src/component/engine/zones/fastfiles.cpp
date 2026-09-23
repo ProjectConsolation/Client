@@ -35,6 +35,8 @@ namespace fastfiles
 		void* db_load_xasset_original = nullptr;
 		void* db_load_cmodel_original = nullptr;
 		void* db_load_map_ents_original = nullptr;
+		std::uintptr_t renderer_surface_list_continue = 0;
+		std::uintptr_t renderer_surface_list_return = 0;
 
 		bool common_fastfiles_seen = false;
 		bool patch_consolation_loaded = false;
@@ -70,6 +72,23 @@ namespace fastfiles
 				popad
 				popfd
 				jmp dword ptr[db_create_default_asset_original]
+			}
+		}
+
+		__declspec(naked) void renderer_surface_list_guard_stub()
+		{
+			__asm
+			{
+				// QoS PC 1.1 sub_1036E6F0 can retain a non-zero surface count
+				// after its TLS list has been released during a Xenon map teardown.
+				mov edx, dword ptr[edi + 1Ch]
+				mov eax, dword ptr[eax + 20h]
+				test eax, eax
+				jz no_list
+				jmp dword ptr[renderer_surface_list_continue]
+
+			no_list:
+				jmp dword ptr[renderer_surface_list_return]
 			}
 		}
 
@@ -867,6 +886,13 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
+			// Runtime crash evidence: 0x1036E769 read [0x00000B5A] with a null
+			// TLS surface-list base at the end of mp_canals. Preserve native work
+			// when the list exists and skip only the stale-list iteration.
+			renderer_surface_list_continue = game::game_offset(0x1036E75C);
+			renderer_surface_list_return = game::game_offset(0x1036E780);
+			utils::hook::nop(game::game_offset(0x1036E756), 6);
+			utils::hook::jump(game::game_offset(0x1036E756), renderer_surface_list_guard_stub);
 			create_file_a_hook.create(reinterpret_cast<void*>(CreateFileA), create_file_a_stub);
 			db_load_xassets_hook.create(game::DB_LoadXAssets, db_load_xassets_stub);
 			db_link_xasset_entry_hook.create(game::DB_LinkXAssetEntry, db_link_xasset_entry_stub);
