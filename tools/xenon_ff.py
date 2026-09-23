@@ -1988,15 +1988,18 @@ def build_pc_map_probe(path):
     entity_string = "".join(entities).encode("latin-1") + (b"\0" if trailing_nul else b"")
     gfx_world["world_name"] = com_world["name"]
 
-    used_model_indices = sorted(set(
-        gfx_world["geometry"]["static_model_asset_indices"]))
     models_by_index = {
         asset["manifest_index"]: asset for asset in report["assets"]
         if asset["type"] == "xmodel"
     }
+    used_model_indices = sorted(set(
+        gfx_world["geometry"]["static_model_asset_indices"]))
     if any(index not in models_by_index for index in used_model_indices):
         raise FormatError("static model reference has no captured XModel asset")
-    models = [models_by_index[index] for index in used_model_indices]
+    # Entity-driven models (for example script_model and skybox models) do not
+    # appear in the GfxWorld static-draw list. Keep every manifest XModel so the
+    # server can resolve those names without entering native default creation.
+    models = [models_by_index[index] for index in sorted(models_by_index)]
     rawfiles = [
         asset for asset in report["assets"]
         if asset["type"] == "rawfile"
@@ -2028,8 +2031,8 @@ def build_pc_map_probe(path):
         raise FormatError(
             "generated script-string layout changed the verified block-2 table base")
     destination_indices = {
-        source_index: destination_index + 1
-        for destination_index, source_index in enumerate(used_model_indices)
+        model["manifest_index"]: destination_index + 1
+        for destination_index, model in enumerate(models)
     }
     gfx_world["geometry"]["pc_static_model_pointers"] = [
         0x40000001 + asset_table_base + destination_indices[source_index] * 8

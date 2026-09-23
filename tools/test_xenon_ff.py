@@ -524,6 +524,8 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(lit_payload[-36:], bytes(36))
 
     def test_pc_map_probe_preserves_entities_and_root_names(self):
+        model = bytearray(240)
+        struct.pack_into(">I", model, 0, xenon_ff.INLINE)
         com = bytearray(44)
         struct.pack_into(">I", com, 0, xenon_ff.INLINE)
         game = struct.pack(">I", xenon_ff.INLINE)
@@ -541,11 +543,13 @@ class FastfileTests(unittest.TestCase):
         rawfile_data = b"main() {\n}\n\0"
         rawfile = struct.pack(">3I", xenon_ff.INLINE,
                               len(rawfile_data) - 1, xenon_ff.INLINE)
-        entries = ((14, xenon_ff.INLINE), (16, xenon_ff.INLINE),
+        entries = ((5, xenon_ff.INLINE),
+                   (14, xenon_ff.INLINE), (16, xenon_ff.INLINE),
                    (13, xenon_ff.INLINE), (18, xenon_ff.INLINE),
                    (33, xenon_ff.INLINE))
         payload = struct.pack(">4I", 0, 0, len(entries), xenon_ff.INLINE)
         payload += b"".join(struct.pack(">2I", *entry) for entry in entries)
+        payload += model + b"entity_only_model\0"
         payload += com + b"maps/mp/test.d3dbsp\0"
         payload += game + b"mp_test\0"
         payload += clip + b"maps/mp/test.d3dbsp\0" + visibility
@@ -569,14 +573,15 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(len(converted) % 32, 0)
         self.assertLess(len(decoder.unused_data), 32)
         self.assertEqual(struct.unpack_from("<4I", pc_payload),
-                         (0, 0, 5, xenon_ff.INLINE))
+                         (0, 0, 6, xenon_ff.INLINE))
         self.assertEqual([entry[0] for entry in struct.iter_unpack(
-            "<2I", pc_payload[16:56])], [12, 13, 17, 15, 32])
+            "<2I", pc_payload[16:64])], [12, 5, 13, 17, 15, 32])
+        self.assertIn(b"entity_only_model\0", pc_payload)
         self.assertIn(b'"classname" "worldspawn"', pc_payload)
         self.assertIn(b'"model" "*1"', pc_payload)
         self.assertIn(b"maps/mp/test.d3dbsp\0mp_test\0", pc_payload)
         self.assertIn(b"maps/mp/mp_test.gsc\0" + rawfile_data, pc_payload)
-        clip_start = 56
+        clip_start = 64
         self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 8),
                          (0, 0))
         self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 48),
