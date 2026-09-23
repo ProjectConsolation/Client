@@ -92,6 +92,7 @@ When a relevant mandatory reference cannot be checked, state that verification i
 - Do not delete user data, external reference databases, or non-reproducible files. Verify scope and value before removing obsolete generated artifacts or duplicate repository documentation.
 - Document every newly registered user-facing command in the appropriate `docs/wiki` page in the same change.
 - When an external project provides a structure that is relevant and verified against the QoS PC build, keep the required declaration locally with a concise source-attribution comment. Validate its layout with QoS evidence and `static_assert` checks where practical, avoid importing unverified fields wholesale, and tell the user which attributed definitions were added or adapted.
+- When an update changes multiple related areas, provide both a concise Conventional Commit title (`fix:`, `feat:`, and so on) and a polished multi-paragraph summary suitable for the GitHub commit description. The description should explain the problem, the important implementation changes, and the verification performed without becoming a file-by-file changelog.
 
 ## Workspace Constraints
 

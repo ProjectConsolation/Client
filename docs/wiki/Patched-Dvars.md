@@ -24,8 +24,8 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 | `ui_extraBigFont` | Saved float dvar. Adjusts the extra-large UI font scale. | Range: `0` to `1` |
 | `cg_overheadNamesSize` | Saved float dvar. Adjusts the size of overhead player names. | Default: `0.5`, Range: `0` to `1` |
 | `cg_drawVersion` | Saved boolean dvar added by Project: Consolation. Draws the build version string in the bottom-right corner. | Boolean |
-| `cg_drawVersionX` | Saved horizontal inset from the right edge for the version string. | Default: `50`, Range: `-1024` to `1024` |
-| `cg_drawVersionY` | Saved vertical inset from the bottom edge for the version string. | Default: `18`, Range: `-1024` to `1024` |
+| `cg_drawVersionX` | Saved horizontal offset from the version string's original right-aligned position. | Default: `50`, Range: `-1024` to `1024` |
+| `cg_drawVersionY` | Saved vertical offset from the top edge for the version string. | Default: `18`, Range: `-1024` to `1024` |
 | `cg_drawOrigin` | Draws live player origin and velocity below the active `cg_drawFPS` block. | Boolean |
 | `cg_drawFPS` | Saved debug overlay mode. `1` draws FPS only; values `2` and higher draw the standard three-line FPS, frame-time, and triangle block. | `0` to `7` |
 | `cg_debugInfoCornerOffset` | Default value corrected to `0 0`. Affects the corner offset used by some debug-style HUD info such as `cg_drawFPS`. | Default: `0 0` |

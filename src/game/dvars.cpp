@@ -586,8 +586,8 @@ namespace dvars
 					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
 					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
-					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Inset from the right edge for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
-					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Inset from the bottom edge for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Horizontal offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Vertical offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawOrigin = dvars::Dvar_RegisterBool("cg_drawOrigin", 0, "Draw player origin and velocity.", game::dvar_flags::none);
 					replace_dvar(make_int("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);

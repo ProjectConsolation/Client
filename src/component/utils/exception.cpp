@@ -6,13 +6,17 @@
 #include <utils/thread.hpp>
 
 #include <exception/minidump.hpp>
+#include "game/game.hpp"
 
 namespace exception
 {
     namespace
     {
         volatile LONG handling_exception = 0;
+        volatile LONG writing_exit_dump = 0;
         utils::hook::detour set_unhandled_exception_filter_hook;
+        decltype(&ExitProcess) exit_process_original = nullptr;
+        decltype(&TerminateProcess) terminate_process_original = nullptr;
 
         void show_mouse_cursor()
         {
@@ -54,14 +58,74 @@ namespace exception
             return info;
         }
 
-        std::string write_minidump(const LPEXCEPTION_POINTERS exceptioninfo)
+        std::string write_minidump(const LPEXCEPTION_POINTERS exceptioninfo,
+            const char* kind = "crash")
         {
-            const std::string crash_name = utils::string::va("minidumps/consolation-crash-%s.dmp",
-                                                             utils::string::get_timestamp().data());
+            const auto timestamp = utils::string::get_timestamp();
+            const std::string crash_name = utils::string::va("minidumps/consolation-%s-%s.dmp",
+                kind, timestamp.data());
             const auto dump = create_minidump(exceptioninfo);
-            utils::io::write_file(crash_name, dump, false);
-            return crash_name;
+            if (utils::io::write_file(crash_name, dump, false))
+            {
+                return crash_name;
+            }
+
+            char temp_path[MAX_PATH]{};
+            const auto temp_path_length = GetTempPathA(ARRAYSIZE(temp_path), temp_path);
+            if (temp_path_length > 0 && temp_path_length < ARRAYSIZE(temp_path))
+            {
+                const std::string fallback_name = utils::string::va(
+                    "%sProject-Consolation-%s-%s.dmp", temp_path, kind, timestamp.data());
+                if (utils::io::write_file(fallback_name, dump, false))
+                {
+                    return fallback_name;
+                }
+            }
+
+            return {};
         }
+
+#ifdef DEBUG
+        void write_exit_minidump(const DWORD code, void* const address)
+        {
+            if (InterlockedExchange(&writing_exit_dump, 1) != 0 || handling_exception != 0)
+            {
+                return;
+            }
+
+            CONTEXT context{};
+            RtlCaptureContext(&context);
+
+            EXCEPTION_RECORD record{};
+            record.ExceptionCode = code;
+            record.ExceptionAddress = address;
+
+            EXCEPTION_POINTERS pointers{&record, &context};
+            const auto dump_name = write_minidump(&pointers, "exit");
+            const auto diagnostic = utils::string::va(
+                "[exception] explicit process exit code=0x%08X caller=%p dump=%s\n",
+                code, address, dump_name.empty() ? "<write failed>" : dump_name.c_str());
+            OutputDebugStringA(diagnostic);
+            std::printf("%s", diagnostic);
+            std::fflush(stdout);
+        }
+
+        DECLSPEC_NORETURN void WINAPI exit_process_stub(const UINT code)
+        {
+            write_exit_minidump(code, _ReturnAddress());
+            exit_process_original(code);
+        }
+
+        BOOL WINAPI terminate_process_stub(const HANDLE process, const UINT code)
+        {
+            if (GetProcessId(process) == GetCurrentProcessId())
+            {
+                write_exit_minidump(code, _ReturnAddress());
+            }
+
+            return terminate_process_original(process, code);
+        }
+#endif
 
         bool is_harmless_error(const LPEXCEPTION_POINTERS exceptioninfo)
         {
@@ -92,8 +156,10 @@ namespace exception
             }
 
             const auto dump_name = write_minidump(exceptioninfo);
-            const auto message = generate_crash_info(exceptioninfo) +
-                "\r\nA minidump was written to:\r\n" + dump_name +
+            const std::string dump_status = dump_name.empty()
+                ? "\r\nThe minidump could not be written."
+                : "\r\nA minidump was written to:\r\n" + dump_name;
+            const auto message = generate_crash_info(exceptioninfo) + dump_status +
                 "\r\n\r\nMake sure your graphics card drivers and operating system are up to date.";
 
             display_error_dialog(message, "Project: Consolation ERROR");
@@ -130,10 +196,36 @@ namespace exception
                 reinterpret_cast<void*>(SetUnhandledExceptionFilter),
                 set_unhandled_exception_filter_stub);
 
+#ifdef DEBUG
+            // QoS PC 1.1 imports used by engine-controlled shutdown paths.
+            const auto exit_process_iat = reinterpret_cast<decltype(&ExitProcess)*>(
+                game::game_offset(0x10476110));
+            const auto terminate_process_iat = reinterpret_cast<decltype(&TerminateProcess)*>(
+                game::game_offset(0x104761D8));
+            exit_process_original = *exit_process_iat;
+            terminate_process_original = *terminate_process_iat;
+            utils::hook::set(exit_process_iat, exit_process_stub);
+            utils::hook::set(terminate_process_iat, terminate_process_stub);
+#endif
+
             constexpr auto message = "[exception] unhandled exception filter installed\n";
             OutputDebugStringA(message);
             std::printf("%s", message);
             std::fflush(stdout);
+        }
+
+        void pre_destroy() override
+        {
+#ifdef DEBUG
+            if (exit_process_original)
+            {
+                utils::hook::set(game::game_offset(0x10476110), exit_process_original);
+            }
+            if (terminate_process_original)
+            {
+                utils::hook::set(game::game_offset(0x104761D8), terminate_process_original);
+            }
+#endif
         }
     };
 }

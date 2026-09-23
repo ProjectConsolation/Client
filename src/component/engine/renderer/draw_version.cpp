@@ -18,7 +18,8 @@ namespace draw_version
 		constexpr float shadow_offset_x = 1.0f;
 		constexpr float shadow_offset_y = 1.0f;
 		float shadow_color[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
-		float text_color[4] = { 0.20f, 0.58f, 1.0f, 0.85f };
+		float version_text_color[4] = { 0.86f, 0.82f, 0.72f, 0.60f };
+		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.65f };
 		const char* watermark_text = "Project: Consolation";
 		float resolve_layout_width(const game::ScreenPlacement& scr_place)
 		{
@@ -101,15 +102,16 @@ namespace draw_version
 			return "";
 		}
 
-		void draw_text_shadowed(const char* text, float x, float y, float scale, const game::Font_s* font)
+		void draw_text_shadowed(const char* text, float x, float y, float scale,
+			const game::Font_s* font, const float* color)
 		{
-			if (!text || !*text || !font)
+			if (!text || !*text || !font || !color)
 			{
 				return;
 			}
 
 			game::R_AddCmdDrawText(text, 0x7FFFFFFF, const_cast<game::Font_s*>(font), x + shadow_offset_x, y + shadow_offset_y, scale, scale, 0.0f, shadow_color, 0);
-			game::R_AddCmdDrawText(text, 0x7FFFFFFF, const_cast<game::Font_s*>(font), x, y, scale, scale, 0.0f, text_color, 0);
+			game::R_AddCmdDrawText(text, 0x7FFFFFFF, const_cast<game::Font_s*>(font), x, y, scale, scale, 0.0f, color, 0);
 		}
 
 		void draw_bottom_right_text(const char* text, float baseline_y, float scale, const game::Font_s* font)
@@ -122,7 +124,7 @@ namespace draw_version
 			const auto screen_width = get_layout_width();
 			const auto text_width = get_text_width(text, font, scale);
 			const auto x = std::max(1.0f, screen_width - text_width - watermark_margin_x);
-			draw_text_shadowed(text, x, baseline_y, scale, font);
+			draw_text_shadowed(text, x, baseline_y, scale, font, watermark_text_color);
 		}
 
 		void cg_draw_watermark()
@@ -157,6 +159,15 @@ namespace draw_version
 				return;
 			}
 
+			const auto scr_place = game::ScrPlace_GetViewPlacement();
+			const auto viewport_width = scr_place.realViewportSize[0] > 0.0f
+				? scr_place.realViewportSize[0]
+				: get_layout_width();
+			if (viewport_width <= 0.0f)
+			{
+				return;
+			}
+
 			const auto* const version_buffer_ptr = get_version_text();
 			if (!version_buffer_ptr || !*version_buffer_ptr)
 			{
@@ -166,17 +177,10 @@ namespace draw_version
 			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr, std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font)));
 			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
 			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 18.0f;
-			const auto placement = game::ScrPlace_GetViewPlacement();
-			const auto right = placement.virtualViewableMax[0] > placement.virtualViewableMin[0]
-				? placement.virtualViewableMax[0]
-				: get_layout_width();
-			const auto bottom = placement.virtualViewableMax[1] > placement.virtualViewableMin[1]
-				? placement.virtualViewableMax[1]
-				: get_layout_height();
-			const auto x = right - text_width - x_offset;
-			const auto y = bottom - y_offset;
+			const auto x = x_offset + viewport_width - text_width;
+			const auto y = y_offset + static_cast<float>(font->pixelHeight);
 
-			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font);
+			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font, version_text_color);
 		}
 
 	}
