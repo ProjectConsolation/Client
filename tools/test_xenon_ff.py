@@ -623,21 +623,29 @@ class FastfileTests(unittest.TestCase):
 
     def test_shared_clip_planes_use_gfx_world_allocation(self):
         header = bytearray(324)
-        struct.pack_into(">2I", header, 8, 14, 0x40001235)
-        planes = b"".join(
-            struct.pack(">4f4B", 1.0, 0.0, 0.0, float(index), 3, 5, 0, 0)
-            for index in range(14))
+        struct.pack_into(">2I", header, 8, 2, 0x40001235)
+        planes = b"".join((
+            struct.pack(">4f4B", 1.0, 0.0, 0.0, 32.0, 3, 5, 0, 0),
+            struct.pack(">4f4B", 0.0, 1.0, 0.0, 64.0, 1, 2, 0, 0),
+        ))
         clip_map = {
             "header": header.hex(),
-            "collision": {"planes": {"data": bytes(20 * 14).hex()}},
+            "collision": {"planes": {"data": bytes(40).hex()}},
         }
         gfx_world = {"geometry": {"planes": planes.hex()}}
 
         xenon_ff._bind_shared_clip_planes(clip_map, gfx_world)
 
         self.assertEqual(bytes.fromhex(
-            clip_map["collision"]["planes"]["data"]),
-            planes[:0x104] + planes[:-0x104])
+            clip_map["collision"]["planes"]["data"]), planes)
+        self.assertEqual(struct.unpack_from(">I", bytes.fromhex(
+            clip_map["header"]), 8)[0], 2)
+
+    def test_pc_clip_cursor_bias_matches_runtime_plane_relocation(self):
+        previous_planned_plane_base = 0xB54
+        additional_bias = xenon_ff.PC_CLIP_BLOCK2_CURSOR_BIAS - (-0x104)
+
+        self.assertEqual(previous_planned_plane_base + additional_bias, 0xB2C)
 
     def test_shared_clip_planes_reject_invalid_sign_mask(self):
         header = bytearray(324)

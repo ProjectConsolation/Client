@@ -41,6 +41,7 @@ PC_LAYOUTS = {
 }
 INLINE = 0xFFFFFFFF
 INSERT = 0xFFFFFFFE
+PC_CLIP_BLOCK2_CURSOR_BIAS = -0x12C
 MAX_BYTES = 256 * 1024 * 1024
 
 
@@ -1858,20 +1859,20 @@ def _bind_shared_clip_planes(asset, gfx_world):
         if planes[offset + 17] >= 8:
             raise FormatError("GfxWorld plane has an invalid sign mask")
 
-    # The PC loader addressed shared Xenon planes 13 records earlier than the
-    # captured GfxWorld array. Reproduce the runtime-proven array contents in
-    # place; inserting these bytes into the archive corrupts every later array.
-    prefix_size = 0x104
-    if len(planes) < prefix_size:
-        raise FormatError("shared clipMap plane array is smaller than plane prefix")
-    planes = planes[:prefix_size] + planes[:-prefix_size]
+    # Xenon clipMap points into the GfxWorld block-2 plane allocation. Copy the
+    # shared allocation without changing its count or fabricating sentinels;
+    # packed references are relocated separately by write_pc_clip_map.
     asset["collision"]["planes"]["data"] = planes.hex()
 
 
 def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
                       entity_name):
     collision = asset["collision"]
-    block2_cursor += 324
+    # Live QoS PC 1.1 evidence places the plane allocation at block-2 offset
+    # 0xB2C. The generated cursor inferred from the archive is 0x12C too high.
+    # Apply that measured logical-address correction without changing archive
+    # byte order or array lengths.
+    block2_cursor += PC_CLIP_BLOCK2_CURSOR_BIAS + 324
     destination_regions, collision_end = _plan_pc_collision_regions(
         collision, block2_cursor)
     source_regions = _source_collision_regions(collision)
