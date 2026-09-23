@@ -1436,13 +1436,18 @@ def _write_pc_gfx_aabb_nested(payload, tree):
         _write_pc_gfx_aabb_nested(payload, child)
 
 
-def _pc_gfx_cell_header(cell, include_static_models=False):
+def _pc_gfx_cell_header(cell, include_static_models=False,
+                        include_empty_tree=False):
     raw = bytes.fromhex(cell["raw"])
     converted = _little_endian_words(raw, 0, 24)
     cull_groups = bytes.fromhex(cell["cull_groups"])
-    reflection_probes = bytes.fromhex(cell["reflection_probes"])
+    # Cell probe bytes index the GfxWorld-wide reflection-probe origin array.
+    # That PC array is not serialized yet, so advertising source indices would
+    # make the renderer dereference a null GfxWorld+268 pointer.
+    reflection_probes = b""
     struct.pack_into("<5I", converted, 24,
-                     INLINE if include_static_models and cell["tree"] else 0,
+                     INLINE if ((include_static_models or include_empty_tree)
+                                and cell["tree"]) else 0,
                      len(cell["portals"]), INLINE if cell["portals"] else 0,
                      len(cull_groups) // 4, INLINE if cull_groups else 0)
     converted[44] = len(reflection_probes)
@@ -1451,10 +1456,13 @@ def _pc_gfx_cell_header(cell, include_static_models=False):
     return converted
 
 
-def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False):
+def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
+                              include_empty_tree=False):
     if include_static_models and cell["tree"]:
         payload.extend(_pc_gfx_aabb_header(cell["tree"]))
         _write_pc_gfx_aabb_nested(payload, cell["tree"])
+    elif include_empty_tree and cell["tree"]:
+        payload.extend(bytes(48))
 
     for portal in cell["portals"]:
         raw = bytes.fromhex(portal["raw"])
@@ -1466,12 +1474,15 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False):
         payload.extend(converted)
     for portal in cell["portals"]:
         if portal["cell"]:
-            payload.extend(_pc_gfx_cell_header(portal["cell"], include_static_models))
-            _write_pc_gfx_cell_nested(payload, portal["cell"], include_static_models)
+            payload.extend(_pc_gfx_cell_header(
+                portal["cell"], include_static_models, include_empty_tree))
+            _write_pc_gfx_cell_nested(
+                payload, portal["cell"], include_static_models,
+                include_empty_tree)
         payload.extend(_little_endian_words(bytes.fromhex(portal["vertices"])))
 
     payload.extend(_little_endian_words(bytes.fromhex(cell["cull_groups"])))
-    payload.extend(bytes.fromhex(cell["reflection_probes"]))
+    # Reflection-probe indices are omitted with their root allocation.
 
 
 def write_pc_gfx_world(payload, asset, primary_light_count):
@@ -1497,9 +1508,16 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     static_model_count = len(static_draws) // 40
     if len(static_draws) % 40 or len(static_instances) != static_model_count * 32:
         raise FormatError("invalid captured Xbox static-model arrays")
-    include_static_models = static_model_count > 0 and static_model_pointers is not None
-    if include_static_models and len(static_model_pointers) != static_model_count:
+    have_static_models = static_model_count > 0 and static_model_pointers is not None
+    if have_static_models and len(static_model_pointers) != static_model_count:
         raise FormatError("invalid relocated static-model pointer array")
+    # Static-model culling is one indivisible PC subsystem: worker jobs assume
+    # the cell tree, global index array, and mark buffers all exist whenever the
+    # world advertises a nonzero model count. The latter buffers are not mapped
+    # yet, so omit world static models while retaining standalone XModel assets.
+    include_static_models = False
+    include_cell_trees = False
+    include_empty_cell_trees = True
 
     pc_planes = bytearray(len(planes))
     for offset in range(0, len(planes), 20):
@@ -1582,9 +1600,11 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
             static_draws, static_model_pointers))
         payload.extend(convert_static_model_instances(static_instances))
     for cell in cells:
-        payload.extend(_pc_gfx_cell_header(cell, include_static_models))
+        payload.extend(_pc_gfx_cell_header(
+            cell, include_cell_trees, include_empty_cell_trees))
     for cell in cells:
-        _write_pc_gfx_cell_nested(payload, cell, include_static_models)
+        _write_pc_gfx_cell_nested(
+            payload, cell, include_cell_trees, include_empty_cell_trees)
     # PC GfxWorld brush models are 168 bytes (Xbox records are 60). The
     # reduced probe has no brush collision, so retain the count with empty
     # PC-sized records instead of shifting every subsequent asset in the zone.

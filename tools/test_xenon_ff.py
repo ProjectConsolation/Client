@@ -262,6 +262,9 @@ class FastfileTests(unittest.TestCase):
                 "indices": struct.pack(">H", 37).hex(),
                 "surfaces": surface.hex(),
                 "brush_models": struct.pack(">15I", *range(39, 54)).hex(),
+                "static_model_draws": bytes(40).hex(),
+                "static_model_insts": bytes(32).hex(),
+                "pc_static_model_pointers": [0x4000088D],
                 "cells": [{
                     "raw": cell_raw.hex(),
                     "tree": {"raw": tree_raw.hex(),
@@ -281,8 +284,8 @@ class FastfileTests(unittest.TestCase):
         header = payload[:728]
         self.assertEqual([struct.unpack_from("<I", header, offset)[0]
                           for offset in (8, 16, 24, 32, 60, 80, 92, 252,
-                                         288, 292, 352)],
-                         [1, 1, 1, 1, 1, 1, 2, 3, 1, 1, 1])
+                                         276, 280, 284, 288, 292, 352)],
+                         [1, 1, 1, 1, 1, 1, 2, 3, 0, 0, 0, 1, 1, 1])
         self.assertIn(struct.pack("<4f4B", 1.0, 2.0, 3.0, 4.0,
                                   5, 6, 7, 8), payload)
         self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
@@ -293,6 +296,15 @@ class FastfileTests(unittest.TestCase):
         pc_cell = xenon_ff._pc_gfx_cell_header(
             asset["geometry"]["cells"][0], False)
         self.assertEqual(struct.unpack_from("<I", pc_cell, 24)[0], 0)
+        empty_tree_cell = xenon_ff._pc_gfx_cell_header(
+            asset["geometry"]["cells"][0], False, True)
+        self.assertEqual(struct.unpack_from("<I", empty_tree_cell, 24)[0],
+                         xenon_ff.INLINE)
+        self.assertEqual(empty_tree_cell[44], 0)
+        self.assertEqual(struct.unpack_from("<I", empty_tree_cell, 48)[0], 0)
+        self.assertIn(empty_tree_cell, payload)
+        self.assertNotIn(xenon_ff._pc_gfx_aabb_header(
+            asset["geometry"]["cells"][0]["tree"]), payload)
         self.assertIn(b",white\0", payload)
 
     def test_rawfile_byte_content_is_not_swapped(self):

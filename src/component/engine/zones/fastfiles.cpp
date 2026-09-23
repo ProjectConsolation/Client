@@ -30,11 +30,13 @@ namespace fastfiles
 		utils::hook::detour cm_load_map_hook;
 		utils::hook::detour cm_world_init_hook;
 		utils::hook::detour sv_game_init_hook;
+		utils::hook::detour reflection_probe_nearest_hook;
 		void* db_create_default_asset_original = nullptr;
 		void* cm_load_map_original = nullptr;
 		void* db_load_xasset_original = nullptr;
 		void* db_load_cmodel_original = nullptr;
 		void* db_load_map_ents_original = nullptr;
+		void* reflection_probe_nearest_original = nullptr;
 		std::uintptr_t renderer_surface_list_continue = 0;
 		std::uintptr_t renderer_surface_list_return = 0;
 
@@ -89,6 +91,32 @@ namespace fastfiles
 
 			no_list:
 				jmp dword ptr[renderer_surface_list_return]
+			}
+		}
+
+		__declspec(naked) void reflection_probe_nearest_stub()
+		{
+			__asm
+			{
+				// QoS PC 1.1 passes the position in EDI, followed by GfxWorld and
+				// GfxCell on the stack. Reduced Xenon worlds intentionally omit the
+				// PC reflection-probe origin array, so an indexed cell must degrade to
+				// the default probe instead of dereferencing GfxWorld::reflectionProbes.
+				mov eax, dword ptr[esp + 8]
+				test eax, eax
+				jz no_probe
+				cmp byte ptr[eax + 2Ch], 0
+				jz no_probe
+				mov eax, dword ptr[esp + 4]
+				test eax, eax
+				jz no_probe
+				cmp dword ptr[eax + 10Ch], 0
+				jz no_probe
+				jmp dword ptr[reflection_probe_nearest_original]
+
+			no_probe:
+				xor eax, eax
+				ret
 			}
 		}
 
@@ -886,6 +914,11 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
+			// sub_103A4840 assumes every cell probe index has a matching world
+			// origin array. Generated reduced worlds do not serialize that PC-only
+			// array yet, so preserve native lookup only when the array exists.
+			reflection_probe_nearest_hook.create(game::game_offset(0x103A4840), reflection_probe_nearest_stub);
+			reflection_probe_nearest_original = reflection_probe_nearest_hook.get_original();
 			// Runtime crash evidence: 0x1036E769 read [0x00000B5A] with a null
 			// TLS surface-list base at the end of mp_canals. Preserve native work
 			// when the list exists and skip only the stale-list iteration.

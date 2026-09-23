@@ -1,6 +1,7 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 #include <utils/io.hpp>
+#include <utils/hook.hpp>
 #include <utils/string.hpp>
 #include <utils/thread.hpp>
 
@@ -11,6 +12,7 @@ namespace exception
     namespace
     {
         volatile LONG handling_exception = 0;
+        utils::hook::detour set_unhandled_exception_filter_hook;
 
         void show_mouse_cursor()
         {
@@ -100,6 +102,22 @@ namespace exception
             return EXCEPTION_CONTINUE_SEARCH;
         }
 
+        LPTOP_LEVEL_EXCEPTION_FILTER WINAPI set_unhandled_exception_filter_stub(
+            const LPTOP_LEVEL_EXCEPTION_FILTER filter)
+        {
+            // The QoS PC 1.1 CRT clears the process filter before forwarding
+            // abort, Watson, and /GS failures to UnhandledExceptionFilter.
+            // Preserve Consolation's dump handler for those fatal paths.
+            if (!filter)
+            {
+                return exception_filter;
+            }
+
+            const auto original = reinterpret_cast<decltype(&SetUnhandledExceptionFilter)>(
+                set_unhandled_exception_filter_hook.get_original());
+            return original(filter);
+        }
+
     }
 
     class component final : public component_interface
@@ -108,6 +126,9 @@ namespace exception
         void post_load() override
         {
             SetUnhandledExceptionFilter(exception_filter);
+            set_unhandled_exception_filter_hook.create(
+                reinterpret_cast<void*>(SetUnhandledExceptionFilter),
+                set_unhandled_exception_filter_stub);
 
             constexpr auto message = "[exception] unhandled exception filter installed\n";
             OutputDebugStringA(message);
