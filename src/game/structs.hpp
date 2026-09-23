@@ -1154,7 +1154,8 @@ namespace game
 		int             pm_time;            // +0x0010 [INFERRED]
 		std::uint8_t    _pad_0014[0x0C];
 		float           origin[3];          // +0x0020 [CONFIRMED] world position
-		std::uint8_t    _pad_002C[0x30];
+		float           velocity[3];        // +0x002C [CONFIRMED] world velocity
+		std::uint8_t    _pad_0038[0x24];
 		int             gravity;            // +0x005C [CONFIRMED] used in jump velocity calc
 		//  (Jump_Start: calculatedGravity = gravity * jumpHeight * 2)
 		std::uint8_t    _pad_0060[0x60];
@@ -1172,6 +1173,8 @@ namespace game
 		int             serverTime_copy;    // +0x33AC [OBSERVED] copy of sv.time on ClientEnterWorld
 		// ... struct continues but remaining fields not yet reversed
 	};
+	static_assert(offsetof(playerState_t, origin) == 0x20, "playerState_t origin offset mismatch");
+	static_assert(offsetof(playerState_t, velocity) == 0x2C, "playerState_t velocity offset mismatch");
 
 	// ── entity_t ──────────────────────────────────────────────────────────────
 	// stride = 0x290 (656 bytes). Static array at g_entities (game_offset 0x11961F80).

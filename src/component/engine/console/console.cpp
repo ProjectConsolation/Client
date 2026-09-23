@@ -232,12 +232,12 @@ namespace console
 		std::string build_input_prompt()
 		{
 			std::string revision = VERSION_BUILD;
-			if (revision.size() < 4)
+			while (revision.size() > 1 && revision.front() == '0')
 			{
-				revision.insert(0, 4 - revision.size(), '0');
+				revision.erase(revision.begin());
 			}
 
-			return "CSL (r" + revision + ") >";
+			return "CSL (r" + revision + ") > ";
 		}
 
 		void set_input_cursor_pos()

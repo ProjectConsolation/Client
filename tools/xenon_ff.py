@@ -974,14 +974,17 @@ def fx(reader, pointer):
 
 
 def _col_brush(reader, header):
+    result = {"header": header.hex()}
     if u32(header, 32) == INLINE:
         shape = reader.take(12)
+        result["inline_side"] = shape.hex()
         if u32(shape) == INLINE:
-            reader.take(20)
+            result["inline_plane"] = reader.take(20).hex()
     if u32(header, 48) == INLINE:
-        reader.take(1)
+        result["inline_base_adjacent_side"] = reader.take(1).hex()
     if u32(header, 76) == INLINE:
-        reader.take(12)
+        result["inline_verts"] = reader.take(12).hex()
+    return result
 
 
 def _col_dyn_entity(reader, header, index):
@@ -1001,59 +1004,125 @@ def col_map_mp(reader, pointer):
     header = reader.take(324)
     name = reader.string(u32(header))
 
-    _inline_bytes(reader, u32(header, 12), u32(header, 8) * 20,
-                  "col_map planes")
+    collision = {}
+
+    def capture_array(key, count_offset, pointer_offset, stride, shared=False):
+        pointer = u32(header, pointer_offset)
+        if not pointer:
+            collision[key] = {"offset": None, "data": ""}
+            return b""
+        size = u32(header, count_offset) * stride
+        if shared and pointer != INLINE:
+            encoded = pointer - 1
+            if encoded >> 29 != 2:
+                raise FormatError(f"col_map {key} reference is not in block 2")
+            start = encoded & 0x1FFFFFFF
+            if size > len(reader.data) - start:
+                raise FormatError(f"col_map {key} packed reference is truncated")
+            data = reader.data[start:start + size]
+        else:
+            start = reader.pos
+            data = reader.take(size)
+        collision[key] = {"offset": hex(start), "data": data.hex()}
+        return data
+
+    capture_array("planes", 8, 12, 20, shared=True)
     if u32(header, 20):
+        start = reader.pos
         records = reader.take(u32(header, 16) * 80)
+        collision["static_models"] = {"offset": hex(start), "data": records.hex()}
         for offset in range(0, len(records), 80):
             if u32(records, offset + 4) in (INLINE, INSERT):
                 xmodel(reader)
-    if u32(header, 28):
-        reader.take(u32(header, 24) * 72)
+    else:
+        collision["static_models"] = {"offset": None, "data": ""}
+    capture_array("materials", 24, 28, 72)
     if u32(header, 36):
+        start = reader.pos
         shapes = reader.take(u32(header, 32) * 12)
+        inline_planes = []
         for offset in range(0, len(shapes), 12):
             if u32(shapes, offset) == INLINE:
-                reader.take(20)
-    if u32(header, 44):
-        reader.take(u32(header, 40))
+                inline_planes.append(reader.take(20).hex())
+        collision["brush_sides"] = {
+            "offset": hex(start), "data": shapes.hex(),
+            "inline_planes": inline_planes,
+        }
+    else:
+        collision["brush_sides"] = {"offset": None, "data": "", "inline_planes": []}
+    capture_array("brush_edges", 40, 44, 1)
     if u32(header, 52):
+        start = reader.pos
         records = reader.take(u32(header, 48) * 8)
+        inline_planes = []
         for offset in range(0, len(records), 8):
             if u32(records, offset) == INLINE:
-                reader.take(20)
-    if u32(header, 60):
-        reader.take(u32(header, 56) * 44)
-    if u32(header, 76):
-        reader.take(u32(header, 72) * 2)
+                inline_planes.append(reader.take(20).hex())
+        collision["nodes"] = {
+            "offset": hex(start), "data": records.hex(),
+            "inline_planes": inline_planes,
+        }
+    else:
+        collision["nodes"] = {"offset": None, "data": "", "inline_planes": []}
+    capture_array("leaves", 56, 60, 44)
+    capture_array("leaf_brushes", 72, 76, 2)
     if u32(header, 68):
+        start = reader.pos
         records = reader.take(u32(header, 64) * 20)
+        inline_brushes = []
         for offset in range(0, len(records), 20):
             count = struct.unpack_from(">h", records, offset + 2)[0]
             if count > 0 and u32(records, offset + 8) == INLINE:
-                reader.take(count * 2)
+                inline_brushes.append(reader.take(count * 2).hex())
+        collision["leaf_brush_nodes"] = {
+            "offset": hex(start), "data": records.hex(),
+            "inline_brushes": inline_brushes,
+        }
+    else:
+        collision["leaf_brush_nodes"] = {
+            "offset": None, "data": "", "inline_brushes": [],
+        }
     for count_offset, pointer_offset, stride in ((80, 84, 4), (88, 92, 12),
                                                   (96, 100, 12), (104, 108, 2),
                                                   (112, 116, 6)):
-        if u32(header, pointer_offset):
-            reader.take(u32(header, count_offset) * stride)
+        key = {
+            80: "leaf_surfaces", 88: "verts", 96: "brush_verts",
+            104: "uinds", 112: "tri_indices",
+        }[count_offset]
+        capture_array(key, count_offset, pointer_offset, stride)
     if u32(header, 120):
-        reader.take(((3 * u32(header, 112) + 31) >> 3) & 0xFFFFFFFC)
-    if u32(header, 128):
-        reader.take(u32(header, 124) * 28)
+        start = reader.pos
+        data = reader.take(((3 * u32(header, 112) + 31) >> 3) & 0xFFFFFFFC)
+        collision["tri_edge_walkable"] = {"offset": hex(start), "data": data.hex()}
+    else:
+        collision["tri_edge_walkable"] = {"offset": None, "data": ""}
+    capture_array("borders", 124, 128, 28)
     if u32(header, 136):
+        start = reader.pos
         records = reader.take(u32(header, 132) * 20)
+        inline_borders = []
         for offset in range(0, len(records), 20):
             if u32(records, offset + 16) == INLINE:
-                reader.take(28)
-    if u32(header, 144):
-        reader.take(u32(header, 140) * 32)
-    if u32(header, 152):
-        reader.take(u32(header, 148) * 72)
+                inline_borders.append(reader.take(28).hex())
+        collision["partitions"] = {
+            "offset": hex(start), "data": records.hex(),
+            "inline_borders": inline_borders,
+        }
+    else:
+        collision["partitions"] = {"offset": None, "data": "", "inline_borders": []}
+    capture_array("aabb_trees", 140, 144, 32)
+    capture_array("cmodels", 148, 152, 72)
     if u32(header, 160):
+        start = reader.pos
         brushes = reader.take(u16(header, 156) * 80)
+        nested = []
         for offset in range(0, len(brushes), 80):
-            _col_brush(reader, brushes[offset:offset + 80])
+            nested.append(_col_brush(reader, brushes[offset:offset + 80]))
+        collision["brushes"] = {
+            "offset": hex(start), "data": brushes.hex(), "nested": nested,
+        }
+    else:
+        collision["brushes"] = {"offset": None, "data": "", "nested": []}
     visibility = b""
     if u32(header, 172):
         visibility = reader.take(u32(header, 164) * u32(header, 168))
@@ -1070,8 +1139,9 @@ def col_map_mp(reader, pointer):
             "entity_string": entity_string.decode("latin-1"),
             "entity_bytes": len(entity_string),
         }
+    box_brush = None
     if u32(header, 184) == INLINE:
-        _col_brush(reader, reader.take(80))
+        box_brush = _col_brush(reader, reader.take(80))
 
     entity_counts = (u16(header, 262), u16(header, 264))
     for pointer_offset, count in ((272, entity_counts[0]), (276, entity_counts[1])):
@@ -1094,6 +1164,7 @@ def col_map_mp(reader, pointer):
 
     return {
         "name": name,
+        "header": header.hex(),
         "plane_count": u32(header, 8),
         "brush_count": u16(header, 156),
         "dynamic_entity_counts": list(entity_counts),
@@ -1102,6 +1173,8 @@ def col_map_mp(reader, pointer):
         "visibility": visibility.hex(),
         "zero_fill_bytes": zero_fill_bytes,
         "map_ents": map_ents,
+        "box_brush": box_brush,
+        "collision": collision,
     }
 
 
@@ -1521,6 +1594,351 @@ def write_pc_gfx_world(payload, asset, primary_light_count):
     payload.extend(bytes(primary_light_count * 12))
 
 
+def _swap_record_fields(raw, stride, words=(), halves=()):
+    if len(raw) % stride:
+        raise FormatError(f"record array is not a multiple of {stride} bytes")
+    converted = bytearray(raw)
+    for base in range(0, len(raw), stride):
+        for offset in words:
+            struct.pack_into("<I", converted, base + offset,
+                             u32(raw, base + offset))
+        for offset in halves:
+            struct.pack_into("<H", converted, base + offset,
+                             u16(raw, base + offset))
+    return converted
+
+
+def _convert_clip_array(kind, raw):
+    schemas = {
+        "planes": (20, (0, 4, 8, 12), ()),
+        "materials": (72, (64, 68), ()),
+        "brush_sides": (12, (0, 4), (8,)),
+        "nodes": (8, (0,), (4, 6)),
+        "leaves": (44, (4, 8, 12, 16, 20, 24, 28, 32, 36),
+                   (0, 2, 40)),
+        "leaf_brush_nodes": (20, (4, 8, 12), (2, 16, 18)),
+        "leaf_surfaces": (4, (0,), ()),
+        "verts": (12, (0, 4, 8), ()),
+        "brush_verts": (12, (0, 4, 8), ()),
+        "borders": (28, (0, 4, 8, 12, 16, 20, 24), ()),
+        "partitions": (20, (4, 8, 12, 16), ()),
+        "aabb_trees": (32, (0, 4, 8, 16, 20, 24, 28), (12, 14)),
+        "cmodels": (72, tuple(range(0, 28, 4))
+                    + tuple(range(32, 68, 4)), (28, 30, 68)),
+        "brushes": (80, tuple(range(0, 36, 4)) + (48, 72, 76),
+                    tuple(range(36, 48, 2)) + tuple(range(52, 64, 2))),
+    }
+    if kind in ("brush_edges", "tri_edge_walkable"):
+        return bytearray(raw)
+    if kind in ("leaf_brushes", "uinds", "tri_indices"):
+        return bytearray(_little_endian_u16_array(raw))
+    stride, words, halves = schemas[kind]
+    return _swap_record_fields(raw, stride, words, halves)
+
+
+def _packed_block2_offset(pointer):
+    if pointer in (0, INLINE, INSERT):
+        return None
+    encoded = pointer - 1
+    if encoded >> 29 != 2:
+        raise FormatError(f"collision pointer is not in block 2: {pointer:#x}")
+    return encoded & 0x1FFFFFFF
+
+
+def _clip_pointer_values(raw, stride, pointer_offsets):
+    values = []
+    for base in range(0, len(raw), stride):
+        for offset in pointer_offsets:
+            pointer = u32(raw, base + offset)
+            packed = _packed_block2_offset(pointer)
+            if packed is not None:
+                values.append(packed)
+    return values
+
+
+def _source_collision_regions(collision):
+    regions = {}
+    planes = collision["planes"]
+    if planes["data"] and planes["offset"] is not None:
+        regions["planes"] = (int(planes["offset"], 16),
+                              len(bytes.fromhex(planes["data"])))
+
+    brushes = bytes.fromhex(collision["brushes"]["data"])
+    if not brushes and not collision["brush_sides"]["data"]:
+        return regions
+    side_references = _clip_pointer_values(brushes, 80, (32,))
+    edge_references = _clip_pointer_values(brushes, 80, (48,))
+    if not side_references or not edge_references:
+        raise FormatError("cannot establish Xenon collision allocation base")
+
+    side_base = min(side_references)
+    side_bytes = len(bytes.fromhex(collision["brush_sides"]["data"]))
+    inline_side_bytes = sum(len(bytes.fromhex(value))
+                            for value in collision["brush_sides"]["inline_planes"])
+    if min(edge_references) != side_base + side_bytes + inline_side_bytes:
+        raise FormatError("Xenon brush-side allocation base is ambiguous")
+
+    alignments = {
+        "brush_sides": 4, "brush_edges": 1, "nodes": 4, "leaves": 4,
+        "leaf_brushes": 2, "leaf_brush_nodes": 4,
+        "leaf_surfaces": 4, "verts": 4, "brush_verts": 4,
+        "uinds": 2, "tri_indices": 2, "tri_edge_walkable": 1,
+        "borders": 4, "partitions": 4, "aabb_trees": 4,
+        "cmodels": 4, "brushes": 16,
+    }
+    nested_sizes = {
+        "brush_sides": inline_side_bytes,
+        "nodes": sum(len(bytes.fromhex(value))
+                     for value in collision["nodes"]["inline_planes"]),
+        "leaf_brush_nodes": sum(len(bytes.fromhex(value))
+                                for value in collision["leaf_brush_nodes"]["inline_brushes"]),
+        "partitions": sum(len(bytes.fromhex(value))
+                          for value in collision["partitions"]["inline_borders"]),
+    }
+    cursor = side_base
+    for kind, alignment in alignments.items():
+        data = bytes.fromhex(collision[kind]["data"])
+        if not data:
+            continue
+        cursor = _align_block2(cursor, alignment)
+        regions[kind] = (cursor, len(data))
+        cursor += len(data) + nested_sizes.get(kind, 0)
+
+    leaf_nodes = bytes.fromhex(collision["leaf_brush_nodes"]["data"])
+    leaf_references = []
+    for offset in range(0, len(leaf_nodes), 20):
+        if struct.unpack_from(">h", leaf_nodes, offset + 2)[0] > 0:
+            pointer = _packed_block2_offset(u32(leaf_nodes, offset + 8))
+            if pointer is not None:
+                leaf_references.append(pointer)
+    partitions = bytes.fromhex(collision["partitions"]["data"])
+    border_references = []
+    for offset in range(0, len(partitions), 20):
+        if partitions[offset + 1] > 0:
+            pointer = _packed_block2_offset(u32(partitions, offset + 16))
+            if pointer is not None:
+                border_references.append(pointer)
+
+    references = {
+        "planes": (_clip_pointer_values(
+            bytes.fromhex(collision["brush_sides"]["data"]), 12, (0,))
+            + _clip_pointer_values(bytes.fromhex(collision["nodes"]["data"]),
+                                   8, (0,)), 20),
+        "brush_sides": (side_references, 12),
+        "brush_edges": (edge_references, 1),
+        "brush_verts": (_clip_pointer_values(brushes, 80, (76,)), 12),
+        "leaf_brushes": (leaf_references, 2),
+        "borders": (border_references, 28),
+    }
+    for kind, (pointers, stride) in references.items():
+        if not pointers:
+            continue
+        if kind not in regions:
+            raise FormatError(f"{kind} has references but no captured array")
+        base, size = regions[kind]
+        if any(pointer < base or pointer >= base + size
+               or (pointer - base) % stride for pointer in pointers):
+            raise FormatError(f"{kind} packed references do not match its allocation")
+    return regions
+
+
+def _align_block2(cursor, alignment):
+    return (cursor + alignment - 1) & -alignment
+
+
+def _plan_pc_collision_regions(collision, cursor):
+    alignments = {
+        "planes": 4, "materials": 4, "brush_sides": 4,
+        "brush_edges": 1, "nodes": 4, "leaves": 4,
+        "leaf_brushes": 2, "leaf_brush_nodes": 4,
+        "leaf_surfaces": 4, "verts": 4, "brush_verts": 4,
+        "uinds": 2, "tri_indices": 2, "tri_edge_walkable": 1,
+        "borders": 4, "partitions": 4, "aabb_trees": 4,
+        "cmodels": 4, "brushes": 16,
+    }
+    nested_sizes = {
+        "brush_sides": sum(len(bytes.fromhex(value))
+                           for value in collision["brush_sides"]["inline_planes"]),
+        "nodes": sum(len(bytes.fromhex(value))
+                     for value in collision["nodes"]["inline_planes"]),
+        "leaf_brush_nodes": sum(len(bytes.fromhex(value))
+                                for value in collision["leaf_brush_nodes"]["inline_brushes"]),
+        "partitions": sum(len(bytes.fromhex(value))
+                          for value in collision["partitions"]["inline_borders"]),
+        "brushes": sum(
+            len(bytes.fromhex(value))
+            for nested in collision["brushes"]["nested"]
+            for key, value in nested.items() if key != "header"),
+    }
+    order = (
+        "planes", "materials", "brush_sides", "brush_edges", "nodes",
+        "leaves", "leaf_brushes", "leaf_brush_nodes", "leaf_surfaces",
+        "verts", "brush_verts", "uinds", "tri_indices",
+        "tri_edge_walkable", "borders", "partitions", "aabb_trees",
+        "cmodels", "brushes",
+    )
+    regions = {}
+    for kind in order:
+        size = len(bytes.fromhex(collision[kind]["data"]))
+        if not size:
+            continue
+        cursor = _align_block2(cursor, alignments[kind])
+        regions[kind] = (cursor, size)
+        cursor += size + nested_sizes.get(kind, 0)
+    return regions, cursor
+
+
+def _relocate_collision_pointer(pointer, source_regions, destination_regions):
+    source_offset = _packed_block2_offset(pointer)
+    if source_offset is None:
+        return pointer
+    for kind, (source_base, size) in source_regions.items():
+        if source_base <= source_offset < source_base + size:
+            if kind not in destination_regions:
+                raise FormatError(f"collision pointer targets omitted {kind}")
+            destination_base, _ = destination_regions[kind]
+            return 0x40000001 + destination_base + source_offset - source_base
+    raise FormatError(f"unresolved collision block-2 pointer {pointer:#x}")
+
+
+def _patch_collision_pointers(kind, converted, source, source_regions,
+                              destination_regions):
+    pointer_fields = {
+        "brush_sides": (12, (0,)),
+        "nodes": (8, (0,)),
+        "leaf_brush_nodes": (20, (8,)),
+        "partitions": (20, (16,)),
+        "brushes": (80, (32, 48, 76)),
+    }
+    if kind not in pointer_fields:
+        return
+    stride, offsets = pointer_fields[kind]
+    for base in range(0, len(source), stride):
+        for offset in offsets:
+            if (kind == "leaf_brush_nodes" and offset == 8
+                    and struct.unpack_from(">h", source, base + 2)[0] <= 0):
+                continue
+            if kind == "partitions" and offset == 16 and source[base + 1] == 0:
+                continue
+            pointer = u32(source, base + offset)
+            relocated = _relocate_collision_pointer(
+                pointer, source_regions, destination_regions)
+            struct.pack_into("<I", converted, base + offset, relocated)
+
+
+def _convert_clip_header(asset):
+    source = bytes.fromhex(asset["header"])
+    converted = bytearray(324)
+    for offset in range(4, 188, 4):
+        struct.pack_into("<I", converted, offset, u32(source, offset))
+    struct.pack_into("<2H", converted, 156, u16(source, 156),
+                     u16(source, 158))
+    converted[188:260] = _convert_clip_array("cmodels", source[188:260])
+    converted[260:262] = source[260:262]
+    for offset in range(262, 270, 2):
+        struct.pack_into("<H", converted, offset, u16(source, offset))
+    converted[270:272] = source[270:272]
+    for offset in range(272, 324, 4):
+        struct.pack_into("<I", converted, offset, u32(source, offset))
+    return converted
+
+
+def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
+                      entity_name):
+    collision = asset["collision"]
+    block2_cursor += 324
+    destination_regions, collision_end = _plan_pc_collision_regions(
+        collision, block2_cursor)
+    source_regions = _source_collision_regions(collision)
+
+    header = _convert_clip_header(asset)
+    struct.pack_into("<I", header, 0, INLINE)
+    root_arrays = {
+        12: "planes", 20: "static_models", 28: "materials",
+        36: "brush_sides", 44: "brush_edges", 52: "nodes",
+        60: "leaves", 68: "leaf_brush_nodes", 76: "leaf_brushes",
+        84: "leaf_surfaces", 92: "verts", 100: "brush_verts",
+        108: "uinds", 116: "tri_indices", 120: "tri_edge_walkable",
+        128: "borders", 136: "partitions", 144: "aabb_trees",
+        152: "cmodels", 160: "brushes",
+    }
+    for offset, kind in root_arrays.items():
+        struct.pack_into("<I", header, offset,
+                         INLINE if kind in destination_regions else 0)
+    struct.pack_into("<2I", header, 16, 0, 0)  # Omit static XModels for now.
+    visibility = bytes.fromhex(asset.get("visibility", ""))
+    struct.pack_into("<I", header, 172, INLINE if visibility else 0)
+    struct.pack_into("<I", header, 180, INLINE)
+    struct.pack_into("<I", header, 184, INLINE)
+    header[262:270] = bytes(8)
+    header[272:320] = bytes(48)
+
+    payload.extend(header)
+    payload.extend(clip_name.encode() + b"\0")
+
+    nested_fields = {
+        "brush_sides": "inline_planes",
+        "nodes": "inline_planes",
+        "leaf_brush_nodes": "inline_brushes",
+        "partitions": "inline_borders",
+    }
+    for kind in (
+            "planes", "materials", "brush_sides", "brush_edges", "nodes",
+            "leaves", "leaf_brushes", "leaf_brush_nodes", "leaf_surfaces",
+            "verts", "brush_verts", "uinds", "tri_indices",
+            "tri_edge_walkable", "borders", "partitions", "aabb_trees",
+            "cmodels", "brushes"):
+        source = bytes.fromhex(collision[kind]["data"])
+        if not source:
+            continue
+        converted = _convert_clip_array(kind, source)
+        _patch_collision_pointers(kind, converted, source, source_regions,
+                                  destination_regions)
+        payload.extend(converted)
+        if kind in nested_fields:
+            for raw in collision[kind][nested_fields[kind]]:
+                nested = bytes.fromhex(raw)
+                payload.extend(_little_endian_u16_array(nested)
+                               if kind == "leaf_brush_nodes"
+                               else _convert_clip_array(
+                                   "planes" if kind in ("brush_sides", "nodes")
+                                   else "borders", nested))
+        elif kind == "brushes":
+            for nested in collision[kind]["nested"]:
+                if "inline_side" in nested:
+                    side = bytes.fromhex(nested["inline_side"])
+                    converted_side = _convert_clip_array("brush_sides", side)
+                    _patch_collision_pointers(
+                        "brush_sides", converted_side, side, source_regions,
+                        destination_regions)
+                    payload.extend(converted_side)
+                if "inline_plane" in nested:
+                    payload.extend(_convert_clip_array(
+                        "planes", bytes.fromhex(nested["inline_plane"])))
+                if "inline_base_adjacent_side" in nested:
+                    payload.extend(bytes.fromhex(
+                        nested["inline_base_adjacent_side"]))
+                if "inline_verts" in nested:
+                    payload.extend(_convert_clip_array(
+                        "brush_verts", bytes.fromhex(nested["inline_verts"])))
+
+    payload.extend(visibility)
+    payload.extend(struct.pack("<3I", INLINE, INLINE, len(entity_string)))
+    payload.extend(entity_name.encode() + b"\0")
+    payload.extend(entity_string)
+
+    box_brush = asset.get("box_brush")
+    if box_brush:
+        source = bytes.fromhex(box_brush["header"])
+        converted = _convert_clip_array("brushes", source)
+        _patch_collision_pointers("brushes", converted, source,
+                                  source_regions, destination_regions)
+        payload.extend(converted)
+    else:
+        payload.extend(bytes(80))
+    return collision_end
+
+
 def build_pc_map_probe(path):
     """Build a reduced PC zone for testing map and world deserialization.
 
@@ -1567,8 +1985,6 @@ def build_pc_map_probe(path):
     entities = re.findall(r"\{.*?\}\s*", text, re.DOTALL)
     if not entities or "".join(entities).rstrip() != text.rstrip():
         raise FormatError("map probe cannot safely split the entity string")
-    entities = [entity for entity in entities
-                if '"classname" "worldspawn"' in entity or '"model" "*' not in entity]
     entity_string = "".join(entities).encode("latin-1") + (b"\0" if trailing_nul else b"")
     gfx_world["world_name"] = com_world["name"]
 
@@ -1587,8 +2003,9 @@ def build_pc_map_probe(path):
         and isinstance(asset.get("name"), str)
         and "data" in asset
     ]
-    assets = ([(5, model) for model in models]
-              + [(13, "com"), (17, "gfx"), (15, "game"), (12, "clip")]
+    assets = ([(12, "clip")]
+              + [(5, model) for model in models]
+              + [(13, "com"), (17, "gfx"), (15, "game")]
               + [(32, rawfile) for rawfile in rawfiles])
     script_strings = report["script_strings"]
     payload = bytearray(struct.pack(
@@ -1602,20 +2019,26 @@ def build_pc_map_probe(path):
                             for kind, _ in assets))
 
     source_table_base = gfx_world["geometry"].get("asset_table_block2_offset")
-    asset_table_base = int(source_table_base, 16) if source_table_base else None
-    if models and asset_table_base is None:
-        raise FormatError("map has no resolved block-2 asset table")
-    if models and asset_table_offset != asset_table_base + 11:
+    # Packed block-2 offsets are relative to the XFile stream after its
+    # 11-byte runtime prefix, while report offsets start at the payload root.
+    inferred_table_base = asset_table_offset - 11
+    asset_table_base = (int(source_table_base, 16)
+                        if source_table_base else inferred_table_base)
+    if source_table_base and asset_table_base != inferred_table_base:
         raise FormatError(
             "generated script-string layout changed the verified block-2 table base")
     destination_indices = {
-        source_index: destination_index
+        source_index: destination_index + 1
         for destination_index, source_index in enumerate(used_model_indices)
     }
     gfx_world["geometry"]["pc_static_model_pointers"] = [
         0x40000001 + asset_table_base + destination_indices[source_index] * 8
         for source_index in gfx_world["geometry"]["static_model_asset_indices"]
     ] if models else []
+
+    block2_cursor = asset_table_base + len(assets) * 8
+    clip_block2_end = write_pc_clip_map(
+        payload, clip_map, block2_cursor, clip_name, entity_string, entity_name)
 
     for model in models:
         write_pc_xmodel(payload, model)
@@ -1626,32 +2049,6 @@ def build_pc_map_probe(path):
 
     payload.extend(struct.pack("<I", INLINE))
     payload.extend(game_name.encode() + b"\0")
-
-    clip_header = bytearray(324)
-    struct.pack_into("<2I", clip_header, 0, INLINE, 1)
-    struct.pack_into("<2I", clip_header, 8, 1, INLINE)
-    struct.pack_into("<2I", clip_header, 48, 1, INLINE)
-    struct.pack_into("<2I", clip_header, 56, 1, INLINE)
-    struct.pack_into("<2I", clip_header, 148, 1, INLINE)
-    struct.pack_into("<3I", clip_header, 164, visibility_count,
-                     visibility_stride, INLINE if visibility else 0)
-    struct.pack_into("<I", clip_header, 180, INLINE)
-    struct.pack_into("<I", clip_header, 184, INLINE)
-    payload.extend(clip_header)
-    payload.extend(clip_name.encode() + b"\0")
-    # The PC server queries BSP node zero during game initialization. Route
-    # both sides of one inert split plane to a single empty leaf.
-    payload.extend(struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0))
-    payload.extend(struct.pack("<Ihh", INLINE, -1, -1))
-    payload.extend(struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0))
-    payload.extend(bytes(44))
-    payload.extend(bytes(72))  # world cmodel; brush-model entities were removed above
-    payload.extend(visibility)
-    payload.extend(struct.pack("<3I", INLINE, INLINE, len(entity_string)))
-    payload.extend(entity_name.encode() + b"\0")
-    payload.extend(entity_string)
-    # CM_GetQueryContext copies the inline 80-byte box brush unconditionally.
-    payload.extend(bytes(80))
 
     for rawfile in rawfiles:
         data = bytes.fromhex(rawfile["data"])
@@ -1664,7 +2061,7 @@ def build_pc_map_probe(path):
     # Native PC zones use distinct allocation sizes for five XFile blocks. The
     # probe has no physical/runtime payload, while its small temporary and
     # virtual streams safely fit in this conservative bound.
-    allocation = len(payload) + 65536
+    allocation = max(len(payload), clip_block2_end) + 65536
     runtime_allocation = 65536
     result = bytearray(struct.pack("<7I", 470, len(payload), allocation,
                                    runtime_allocation, allocation, 0, 0))

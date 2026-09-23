@@ -47,6 +47,7 @@ namespace dvars
 	game::dvar_s* cg_drawVersion = nullptr;
 	game::dvar_s* cg_drawVersionX = nullptr;
 	game::dvar_s* cg_drawVersionY = nullptr;
+	game::dvar_s* cg_drawOrigin = nullptr;
 	game::dvar_s* r_aspectRatioCustomEnable = nullptr;
 	game::dvar_s* r_aspectRatioCustom = nullptr;
 	game::dvar_s* r_ultrawideCustomMode = nullptr;
@@ -584,9 +585,10 @@ namespace dvars
 					gpad_menu_scroll_accel_time = dvars::Dvar_RegisterInt("gpad_menu_scroll_accel_time", "Time in milliseconds for accelerated gamepad menu repeat to reach full speed.", 1500, 0, 5000, game::dvar_flags::saved);
 					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
 					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
-			cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
-			cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
-			cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Y offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
+					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "X offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Y offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawOrigin = dvars::Dvar_RegisterBool("cg_drawOrigin", 0, "Draw player origin and velocity.", game::dvar_flags::none);
 					replace_dvar(make_int("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
@@ -625,6 +627,7 @@ namespace dvars
 					cg_drawVersion = nullptr;
 					cg_drawVersionX = nullptr;
 					cg_drawVersionY = nullptr;
+					cg_drawOrigin = nullptr;
 					r_aspectRatioCustomEnable = nullptr;
 					r_aspectRatioCustom = nullptr;
 					r_ultrawideCustomMode = nullptr;

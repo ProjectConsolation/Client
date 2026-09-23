@@ -464,6 +464,23 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(col_map["brush_count"], 0)
         self.assertEqual(report["unconsumed_payload_bytes"], 0)
 
+    def test_col_map_captures_collision_arrays(self):
+        header = bytearray(324)
+        struct.pack_into(">I", header, 0, xenon_ff.INLINE)
+        struct.pack_into(">2I", header, 8, 1, xenon_ff.INLINE)
+        struct.pack_into(">2I", header, 24, 1, xenon_ff.INLINE)
+        plane = struct.pack(">4f4B", 1.0, 0.0, 0.0, 32.0, 0, 0, 0, 0)
+        material = b"concrete\0".ljust(64, b"\0") + struct.pack(">2I", 4, 8)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 13, xenon_ff.INLINE)
+        payload += header + b"maps/mp/test.d3dbsp\0" + plane + material
+
+        report = self.inspect_blob(self.zone(payload), True)
+        collision = report["assets"][0]["collision"]
+        self.assertEqual(bytes.fromhex(collision["planes"]["data"]), plane)
+        self.assertEqual(bytes.fromhex(collision["materials"]["data"]), material)
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
     def test_pc_gfx_world_brush_models_use_pc_stride(self):
         asset = {
             "world_name": "maps/mp/test.d3dbsp",
@@ -554,43 +571,57 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<4I", pc_payload),
                          (0, 0, 5, xenon_ff.INLINE))
         self.assertEqual([entry[0] for entry in struct.iter_unpack(
-            "<2I", pc_payload[16:56])], [13, 17, 15, 12, 32])
+            "<2I", pc_payload[16:56])], [12, 13, 17, 15, 32])
         self.assertIn(b'"classname" "worldspawn"', pc_payload)
-        self.assertNotIn(b'"model" "*1"', pc_payload)
+        self.assertIn(b'"model" "*1"', pc_payload)
         self.assertIn(b"maps/mp/test.d3dbsp\0mp_test\0", pc_payload)
         self.assertIn(b"maps/mp/mp_test.gsc\0" + rawfile_data, pc_payload)
-        first_game_name = pc_payload.index(b"mp_test\0")
-        game_name = pc_payload.index(b"mp_test\0", first_game_name + 1)
-        clip_start = game_name + len(b"mp_test\0")
+        clip_start = 56
         self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 8),
-                         (1, xenon_ff.INLINE))
+                         (0, 0))
         self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 48),
-                         (1, xenon_ff.INLINE))
+                         (0, 0))
         self.assertEqual(struct.unpack_from("<2I", pc_payload, clip_start + 56),
-                         (1, xenon_ff.INLINE))
+                         (0, 0))
         self.assertEqual(struct.unpack_from("<I", pc_payload, clip_start + 184),
                          (xenon_ff.INLINE,))
         self.assertEqual(struct.unpack_from("<3I", pc_payload, clip_start + 164),
                          (1, len(visibility), xenon_ff.INLINE))
-        tree_start = clip_start + 324 + len(b"maps/mp/test.d3dbsp\0")
-        plane = struct.pack("<4fI", 1.0, 0.0, 0.0, 0.0, 0)
-        self.assertEqual(pc_payload[tree_start:tree_start + 20], plane)
-        self.assertEqual(pc_payload[tree_start + 20:tree_start + 28],
-                         struct.pack("<Ihh", xenon_ff.INLINE, -1, -1))
-        self.assertEqual(pc_payload[tree_start + 28:tree_start + 48], plane)
-        self.assertEqual(pc_payload[tree_start + 48:tree_start + 92], bytes(44))
-        visibility_start = tree_start + 92 + 72
+        visibility_start = clip_start + 324 + len(b"maps/mp/test.d3dbsp\0")
         self.assertEqual(pc_payload[visibility_start:visibility_start + len(visibility)],
                          visibility)
         map_ents_start = visibility_start + len(visibility)
         box_brush_start = (map_ents_start + 12
                            + len(b"maps/mp/test.d3dbsp\0")
-                           + len(b'{\n"classname" "worldspawn"\n}\n\0'))
+                           + len(entities))
         self.assertEqual(pc_payload[box_brush_start:box_brush_start + 80],
                          bytes(80))
-        self.assertEqual(pc_payload[box_brush_start + 80:box_brush_start + 92],
-                         struct.pack("<3I", xenon_ff.INLINE,
-                                     len(rawfile_data) - 1, xenon_ff.INLINE))
+
+    def test_collision_pointer_relocation(self):
+        source = {
+            "planes": (0x1000, 40),
+            "brush_sides": (0x2000, 24),
+        }
+        destination = {
+            "planes": (0x3000, 40),
+            "brush_sides": (0x4000, 24),
+        }
+        self.assertEqual(xenon_ff._relocate_collision_pointer(
+            0x40000001 + 0x1014, source, destination),
+            0x40000001 + 0x3014)
+        self.assertEqual(xenon_ff._relocate_collision_pointer(
+            xenon_ff.INLINE, source, destination), xenon_ff.INLINE)
+        with self.assertRaisesRegex(xenon_ff.FormatError,
+                                    "unresolved collision"):
+            xenon_ff._relocate_collision_pointer(
+                0x40000001 + 0x5000, source, destination)
+
+    def test_clip_header_keeps_brush_count_in_first_halfword(self):
+        header = bytearray(324)
+        struct.pack_into(">2H", header, 156, 8878, 3)
+        converted = xenon_ff._convert_clip_header({"header": header.hex()})
+        self.assertEqual(struct.unpack_from("<2H", converted, 156),
+                         (8878, 3))
 
     def test_sound_with_minimal_alias(self):
         sound_header = struct.pack(">3I", xenon_ff.INLINE,
