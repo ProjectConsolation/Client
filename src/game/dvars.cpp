@@ -584,7 +584,7 @@ namespace dvars
 					gpad_menu_scroll_delay_min = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_min", "Minimum accelerated menu repeat delay for gamepad input in milliseconds.", 50, 0, 1000, game::dvar_flags::saved);
 					gpad_menu_scroll_accel_time = dvars::Dvar_RegisterInt("gpad_menu_scroll_accel_time", "Time in milliseconds for accelerated gamepad menu repeat to reach full speed.", 1500, 0, 5000, game::dvar_flags::saved);
 					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
-					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
+					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the top-left corner.", game::dvar_flags::saved);
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
 					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Horizontal offset for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Vertical offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);

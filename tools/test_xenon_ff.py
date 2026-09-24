@@ -102,6 +102,35 @@ class FastfileTests(unittest.TestCase):
             (0, 0, 8, 4, 1, b"DXT1", 16))
         self.assertEqual(payload[load_offset + 16:], bytes(range(16)))
 
+    def test_pc_image_serialization_transcodes_xbox_dxn(self):
+        image = {
+            "name": "normal", "width": 4, "height": 4, "depth": 1,
+            "pc_base_level": {
+                "format": "DXN", "bytes": 16,
+                "sha256": "unused", "data": bytes(16).hex(),
+            },
+        }
+        payload = bytearray()
+
+        xenon_ff.write_pc_image(payload, image)
+
+        load_offset = 36 + len("normal") + 1
+        self.assertEqual(
+            struct.unpack_from("<2B3H4sI", payload, load_offset)[5], b"DXT5")
+        self.assertEqual(len(payload[load_offset + 16:]), 16)
+
+    def test_dxn_to_dxt5_preserves_x_block_and_encodes_green(self):
+        x_block = bytes((240, 16, 0, 0, 0, 0, 0, 0))
+        y_block = bytes((220, 20, 0, 0, 0, 0, 0, 0))
+
+        converted = xenon_ff.transcode_dxn_to_dxt5(x_block + y_block)
+
+        self.assertEqual(converted[:8], x_block)
+        color0, color1 = struct.unpack_from("<2H", converted, 8)
+        self.assertGreater(color0, color1)
+        self.assertEqual(color0 & 0xF81F, 0)
+        self.assertEqual(color1 & 0xF81F, 0)
+
     def test_pc_material_serialization_uses_manifest_aliases(self):
         source = bytearray(96)
         source[4:8] = b"\x01\x02\x03\x04"
@@ -805,6 +834,18 @@ class FastfileTests(unittest.TestCase):
         converted = xenon_ff._convert_clip_header({"header": header.hex()})
         self.assertEqual(struct.unpack_from("<2H", converted, 156),
                          (8878, 3))
+
+    def test_collision_aabb_tree_swaps_child_fields_independently(self):
+        source = struct.pack(
+            ">6f2HI", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+            0x1234, 7, 0x89ABCDEF)
+
+        converted = xenon_ff._convert_clip_array("aabb_trees", source)
+
+        self.assertEqual(
+            struct.unpack("<6f2HI", converted),
+            (1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+             0x1234, 7, 0x89ABCDEF))
 
     def test_sound_with_minimal_alias(self):
         sound_header = struct.pack(">3I", xenon_ff.INLINE,

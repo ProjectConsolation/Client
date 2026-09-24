@@ -11,14 +11,14 @@ namespace draw_version
 {
 	namespace
 	{
-		constexpr float watermark_font_scale = 0.25f;
+		constexpr float watermark_font_scale = 0.5f;
 		constexpr float version_font_scale = 1.0f;
-		constexpr float watermark_margin_x = 8.0f;
-		constexpr float watermark_margin_y = 6.0f;
+		constexpr float watermark_margin_x = 12.0f;
+		constexpr float watermark_margin_y = 10.0f;
 		constexpr float shadow_offset_x = 1.0f;
 		constexpr float shadow_offset_y = 1.0f;
 		float shadow_color[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
-		float version_text_color[4] = { 0.86f, 0.82f, 0.72f, 0.60f };
+		float version_text_color[4] = { 0.20f, 0.58f, 1.0f, 0.85f };
 		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.65f };
 		const char* watermark_text = "Project: Consolation";
 		float resolve_layout_width(const game::ScreenPlacement& scr_place)
@@ -71,16 +71,6 @@ namespace draw_version
 			return resolve_layout_height(game::ScrPlace_GetViewPlacement());
 		}
 
-		float get_text_width(const char* text, const game::Font_s* font, float scale)
-		{
-			if (!text || !*text || !font)
-			{
-				return 0.0f;
-			}
-
-			return static_cast<float>(game::R_TextWidth(text, 0x7FFFFFFF, const_cast<game::Font_s*>(font))) * scale;
-		}
-
 		float get_line_height(const game::Font_s* font, float scale)
 		{
 			if (!font)
@@ -114,19 +104,6 @@ namespace draw_version
 			game::R_AddCmdDrawText(text, 0x7FFFFFFF, const_cast<game::Font_s*>(font), x, y, scale, scale, 0.0f, color, 0);
 		}
 
-		void draw_bottom_right_text(const char* text, float baseline_y, float scale, const game::Font_s* font)
-		{
-			if (!text || !*text || !font)
-			{
-				return;
-			}
-
-			const auto screen_width = get_layout_width();
-			const auto text_width = get_text_width(text, font, scale);
-			const auto x = std::max(1.0f, screen_width - text_width - watermark_margin_x);
-			draw_text_shadowed(text, x, baseline_y, scale, font, watermark_text_color);
-		}
-
 		void cg_draw_watermark()
 		{
 			if (!dvars::cg_drawWatermark || !dvars::cg_drawWatermark->current.enabled)
@@ -134,16 +111,16 @@ namespace draw_version
 				return;
 			}
 
-			const auto* const font = game::R_RegisterFont("fonts/objectivefont");
+			const auto* const font = game::R_RegisterFont("fonts/boldfont");
 			if (!font)
 			{
 				return;
 			}
 
-			const auto screen_height = get_layout_height();
 			const auto line_height = get_line_height(font, watermark_font_scale);
-			const auto y = std::max(line_height, screen_height - watermark_margin_y);
-			draw_bottom_right_text(watermark_text, y, watermark_font_scale, font);
+			const auto y = watermark_margin_y + line_height;
+			draw_text_shadowed(watermark_text, watermark_margin_x, y,
+				watermark_font_scale, font, watermark_text_color);
 		}
 
 		void cg_draw_version()
@@ -153,17 +130,8 @@ namespace draw_version
 				return;
 			}
 
-			const auto* const font = game::R_RegisterFont("fonts/consolefont");
+			const auto* const font = game::R_RegisterFont("fonts/normalfont");
 			if (!font)
-			{
-				return;
-			}
-
-			const auto scr_place = game::ScrPlace_GetViewPlacement();
-			const auto viewport_width = scr_place.realViewportSize[0] > 0.0f
-				? scr_place.realViewportSize[0]
-				: get_layout_width();
-			if (viewport_width <= 0.0f)
 			{
 				return;
 			}
@@ -177,8 +145,15 @@ namespace draw_version
 			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr, std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font)));
 			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
 			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 18.0f;
-			const auto x = x_offset + viewport_width - text_width;
-			const auto y = y_offset + static_cast<float>(font->pixelHeight);
+			const auto placement = game::ScrPlace_GetViewPlacement();
+			const auto right = placement.virtualViewableMax[0] > placement.virtualViewableMin[0]
+				? placement.virtualViewableMax[0]
+				: get_layout_width();
+			const auto bottom = placement.virtualViewableMax[1] > placement.virtualViewableMin[1]
+				? placement.virtualViewableMax[1]
+				: get_layout_height();
+			const auto x = right - text_width - x_offset;
+			const auto y = bottom - y_offset;
 
 			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font, version_text_color);
 		}

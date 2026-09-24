@@ -56,7 +56,7 @@ PC_TEXTURE_FOURCC = {
     "DXT1": b"DXT1",
     "DXT2_3": b"DXT3",
     "DXT4_5": b"DXT5",
-    "DXN": b"ATI2",
+    "DXN": b"DXT5",
 }
 PC_COMMON_TECHSETS = (
     ",wc_l_sm_b0c0n0s0p0",
@@ -223,6 +223,51 @@ def select_pc_techset(source_name, candidates=PC_COMMON_TECHSETS):
                  + 3 * len(missing_features) + len(extra_features))
         scored.append((score, len(candidate_features), candidate))
     return min(scored)[2] if scored else None
+
+
+def _decode_bc4_block(block):
+    if len(block) != 8:
+        raise FormatError("BC4 block must be eight bytes")
+    endpoint0, endpoint1 = block[0], block[1]
+    if endpoint0 > endpoint1:
+        palette = [endpoint0, endpoint1]
+        palette.extend(((7 - index) * endpoint0 + index * endpoint1) // 7
+                       for index in range(1, 7))
+    else:
+        palette = [endpoint0, endpoint1]
+        palette.extend(((5 - index) * endpoint0 + index * endpoint1) // 5
+                       for index in range(1, 5))
+        palette.extend((0, 255))
+    indices = int.from_bytes(block[2:8], "little")
+    return [palette[(indices >> (pixel * 3)) & 7] for pixel in range(16)]
+
+
+def transcode_dxn_to_dxt5(data):
+    """Map BC5/DXN normals to DXT5nm (X in alpha, Y in green)."""
+    if len(data) % 16:
+        raise FormatError("DXN data is not block-aligned")
+    result = bytearray()
+    for offset in range(0, len(data), 16):
+        x_block = data[offset:offset + 8]
+        green_values = _decode_bc4_block(data[offset + 8:offset + 16])
+        green0 = max(green_values) * 63 // 255
+        green1 = min(green_values) * 63 // 255
+        if green0 == green1:
+            if green0 < 63:
+                green0 += 1
+            else:
+                green1 -= 1
+        palette = (green0, green1, (2 * green0 + green1) // 3,
+                   (green0 + 2 * green1) // 3)
+        color_indices = 0
+        for pixel, value in enumerate(green_values):
+            quantized = value * 63 // 255
+            index = min(range(4), key=lambda item: abs(palette[item] - quantized))
+            color_indices |= index << (pixel * 2)
+        result.extend(x_block)
+        result.extend(struct.pack("<HHI", green0 << 5, green1 << 5,
+                                  color_indices))
+    return bytes(result)
 
 
 def _copy_xenos_texture_blocks(width, height, gpu_format, source,
@@ -1692,12 +1737,15 @@ def write_pc_image(payload, image_value):
     if len(data) != base["bytes"]:
         raise FormatError(f"image {name!r} decoded byte count changed")
 
+    if base["format"] == "DXN":
+        data = transcode_dxn_to_dxt5(data)
+
     width = image_value["width"]
     height = image_value["height"]
     depth = max(1, image_value["depth"])
     header = bytearray(36)
     struct.pack_into("<2I", header, 0, 3, INSERT)
-    header[11] = 2  # TS_COLOR_MAP; material bindings may override semantics later.
+    header[11] = image_value.get("pc_semantic", 2)
     struct.pack_into("<2I", header, 16, len(data), len(data))
     struct.pack_into("<3H", header, 24, width, height, depth)
     header[30] = 3  # IMG_CATEGORY_LOAD_FROM_FILE
@@ -1944,7 +1992,10 @@ def _convert_clip_array(kind, raw):
         "brush_verts": (12, (0, 4, 8), ()),
         "borders": (28, (0, 4, 8, 12, 16, 20, 24), ()),
         "partitions": (20, (4, 8, 12, 16), ()),
-        "aabb_trees": (32, (0, 4, 8, 16, 20, 24, 28), (12, 14)),
+        # CollisionAabbTree stores Bounds (six floats), followed by two
+        # halfwords and a child/partition index. PC sub_103E6780 reads the
+        # child count at +26 and recursively indexes through the dword at +28.
+        "aabb_trees": (32, (0, 4, 8, 12, 16, 20, 28), (24, 26)),
         "cmodels": (72, tuple(range(0, 28, 4))
                     + tuple(range(32, 68, 4)), (28, 30, 68)),
         "brushes": (80, tuple(range(0, 36, 4)) + (48, 72, 76),
@@ -2360,7 +2411,13 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
         for material_value in gfx_world["geometry"]["surface_materials"]:
             for image_value in material_value.get("textures", []):
                 if "pc_base_level" in image_value:
-                    images_by_name.setdefault(image_value["name"], image_value)
+                    base = image_value["pc_base_level"]
+                    if base["format"] in PC_TEXTURE_FOURCC:
+                        definition = image_value.get("definition")
+                        if definition:
+                            image_value.setdefault(
+                                "pc_semantic", bytes.fromhex(definition)[7])
+                        images_by_name.setdefault(image_value["name"], image_value)
     images = list(images_by_name.values())
     convertible_materials = []
     techsets_by_name = {}

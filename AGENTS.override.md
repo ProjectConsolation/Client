@@ -101,3 +101,6 @@ When a relevant mandatory reference cannot be checked, state that verification i
 - Do not overwrite or revert unrelated controller and gamepad work.
 - Never build the project for the user.
 - Never commit changes.
+- When a game process is paused under Visual Studio and debugging is complete,
+  close that game process when necessary to release files before installing an
+  updated test zone. Do not launch the game for the user afterward.
