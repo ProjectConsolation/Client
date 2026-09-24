@@ -58,6 +58,15 @@ PC_TEXTURE_FOURCC = {
     "DXT4_5": b"DXT5",
     "DXN": b"ATI2",
 }
+PC_COMMON_TECHSETS = (
+    ",wc_l_sm_b0c0n0s0p0",
+    "wc_l_sm_b0c0",
+    "wc_l_sm_b0c0n0p0",
+    "wc_l_sm_b0c0n0s0p0",
+    "wc_l_sm_b0c0p0",
+    "wc_l_sm_b0c0s0",
+    "wc_l_sm_b0c0s0p0",
+)
 
 
 class FormatError(ValueError):
@@ -184,6 +193,36 @@ def apply_xenos_gpu_endian(data, endian):
             result[offset:offset + 4] = (result[offset + 2:offset + 4]
                                          + result[offset:offset + 2])
     return bytes(result)
+
+
+def select_pc_techset(source_name, candidates=PC_COMMON_TECHSETS):
+    """Choose a loaded PC world technique with the nearest channel signature."""
+    if source_name in candidates:
+        return source_name
+    if not source_name.startswith(("wc_l_sm_", ",wc_l_sm_")):
+        return None
+
+    def signature(name):
+        body = name.lstrip(",")
+        base_match = re.search(r"(?:^|_)([brt]\d+c\d+)", body)
+        features = frozenset(re.findall(r"[dnsp]\d+", body))
+        return (name.startswith(","),
+                base_match.group(1)[0] if base_match else None,
+                features)
+
+    source_comma, source_base, source_features = signature(source_name)
+    scored = []
+    for candidate in candidates:
+        candidate_comma, candidate_base, candidate_features = signature(candidate)
+        if candidate_base is None:
+            continue
+        missing_features = source_features - candidate_features
+        extra_features = candidate_features - source_features
+        score = (8 * (candidate_comma != source_comma)
+                 + 6 * (candidate_base != source_base)
+                 + 3 * len(missing_features) + len(extra_features))
+        scored.append((score, len(candidate_features), candidate))
+    return min(scored)[2] if scored else None
 
 
 def _copy_xenos_texture_blocks(width, height, gpu_format, source,
@@ -2327,14 +2366,16 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
     techsets_by_name = {}
     if include_materials:
         for material_value in gfx_world["geometry"]["surface_materials"]:
+            pc_techset_name = select_pc_techset(
+                material_value.get("techset_name", ""))
             convertible = ("header" in material_value
-                           and isinstance(material_value.get("techset_name"), str)
+                           and pc_techset_name is not None
                            and all(image_value.get("name") in images_by_name
                                    for image_value in material_value.get("textures", [])))
             convertible_materials.append(material_value if convertible else None)
             if convertible:
-                techsets_by_name.setdefault(
-                    material_value["techset_name"], material_value)
+                material_value["pc_techset_name"] = pc_techset_name
+                techsets_by_name.setdefault(pc_techset_name, material_value)
     techset_names = list(techsets_by_name)
     assets = ([(12, "clip")]
               + [(5, model) for model in models]
@@ -2398,7 +2439,7 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
         }
         converted_material_bindings = [
             ((material_value,
-              techset_pointers[material_value["techset_name"]],
+              techset_pointers[material_value["pc_techset_name"]],
               [image_pointers[image_value["name"]]
                for image_value in material_value["textures"]])
              if material_value else None)

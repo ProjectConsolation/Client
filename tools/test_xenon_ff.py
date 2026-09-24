@@ -133,6 +133,18 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", payload, nested + 8)[0],
                          0x40000201)
 
+    def test_pc_techset_selection_prefers_exact_and_similar_channels(self):
+        self.assertEqual(
+            xenon_ff.select_pc_techset(",wc_l_sm_b0c0n0s0p0"),
+            ",wc_l_sm_b0c0n0s0p0")
+        self.assertEqual(
+            xenon_ff.select_pc_techset("wc_l_sm_b0c0d0n0s0p0"),
+            "wc_l_sm_b0c0n0s0p0")
+        self.assertEqual(
+            xenon_ff.select_pc_techset("wc_l_sm_r0c0d0n0s0"),
+            "wc_l_sm_b0c0n0s0p0")
+        self.assertIsNone(xenon_ff.select_pc_techset("wc_water"))
+
     def test_xsurface_vertex_stream_conversion(self):
         primary = struct.pack(">4f", 1.0, 2.0, 3.0, -1.0)
         attributes = (struct.pack(">2I", 0x11223344, 0x55667788)
