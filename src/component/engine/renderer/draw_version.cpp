@@ -86,28 +86,6 @@ namespace draw_version
 			return 480.0f;
 		}
 
-		float safe_area_fraction(const game::dvar_s* base, const game::dvar_s* adjusted)
-		{
-			const auto value = base ? base->current.value : (adjusted ? adjusted->current.value : 1.0f);
-			return std::clamp(value, 0.0f, 1.0f);
-		}
-
-		float get_safe_right()
-		{
-			const auto width = get_client_width();
-			const auto fraction = safe_area_fraction(
-				dvars::safeArea_horizontal, dvars::safeArea_adjusted_horizontal);
-			return width - width * (1.0f - fraction) * 0.5f;
-		}
-
-		float get_safe_top()
-		{
-			const auto height = get_client_height();
-			const auto fraction = safe_area_fraction(
-				dvars::safeArea_vertical, dvars::safeArea_adjusted_vertical);
-			return height * (1.0f - fraction) * 0.5f;
-		}
-
 		const char* get_version_text()
 		{
 			const auto* const version = game::Dvar_FindVar("version");
@@ -178,10 +156,10 @@ namespace draw_version
 			// clamped against the misread 480-pixel viewport field.
 			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr,
 				std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font))) * version_font_scale;
-			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : -50.0f;
+			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 6.0f;
 			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 950.0f;
-			const auto x = std::max(1.0f, get_safe_right() - text_width - x_offset);
-			const auto y = get_safe_top() + watermark_margin_y
+			const auto x = std::max(1.0f, get_client_width() - text_width - x_offset);
+			const auto y = watermark_margin_y
 				+ get_line_height(font, watermark_font_scale)
 				+ y_offset + get_line_height(font, version_font_scale);
 

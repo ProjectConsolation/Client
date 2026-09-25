@@ -51,12 +51,56 @@ namespace dvars
 	game::dvar_s* cg_drawMemInfo = nullptr;
 	game::dvar_s* safeArea_horizontal = nullptr;
 	game::dvar_s* safeArea_vertical = nullptr;
-	game::dvar_s* safeArea_adjusted_horizontal = nullptr;
-	game::dvar_s* safeArea_adjusted_vertical = nullptr;
 	game::dvar_s* r_aspectRatioCustomEnable = nullptr;
 	game::dvar_s* r_aspectRatioCustom = nullptr;
 	game::dvar_s* r_ultrawideCustomMode = nullptr;
 	std::atomic_bool runtime_dvar_sync_enabled{false};
+
+	namespace
+	{
+		void apply_safe_area_to_hud()
+		{
+			if (!safeArea_horizontal || !safeArea_vertical)
+			{
+				return;
+			}
+
+			auto* const placement = game::scrPlaceView.get();
+			if (!placement)
+			{
+				return;
+			}
+
+			const auto width = placement->realViewportSize[0];
+			const auto height = placement->realViewportSize[1];
+			const auto scale_x = placement->scaleRealToVirtual[0];
+			const auto scale_y = placement->scaleRealToVirtual[1];
+			if (!std::isfinite(width) || !std::isfinite(height)
+				|| !std::isfinite(scale_x) || !std::isfinite(scale_y)
+				|| width <= 0.0f || height <= 0.0f || scale_x <= 0.0f || scale_y <= 0.0f)
+			{
+				return;
+			}
+
+			const auto horizontal_value = safeArea_horizontal->current.value;
+			const auto vertical_value = safeArea_vertical->current.value;
+			const auto horizontal = std::isfinite(horizontal_value)
+				? std::clamp(horizontal_value, 0.0f, 1.0f) : 1.0f;
+			const auto vertical = std::isfinite(vertical_value)
+				? std::clamp(vertical_value, 0.0f, 1.0f) : 1.0f;
+			const auto inset_x = width * (1.0f - horizontal) * 0.5f;
+			const auto inset_y = height * (1.0f - vertical) * 0.5f;
+
+			placement->realViewableMin[0] = inset_x;
+			placement->realViewableMin[1] = inset_y;
+			placement->realViewableMax[0] = width - inset_x;
+			placement->realViewableMax[1] = height - inset_y;
+			placement->virtualViewableMin[0] = inset_x * scale_x;
+			placement->virtualViewableMin[1] = inset_y * scale_y;
+			placement->virtualViewableMax[0] = (width - inset_x) * scale_x;
+			placement->virtualViewableMax[1] = (height - inset_y) * scale_y;
+		}
+	}
 
 	void disable_native_memory_overlay()
 	{
@@ -576,6 +620,13 @@ namespace dvars
 		{
 			runtime_dvar_sync_enabled.store(true, std::memory_order_release);
 			dvars::overrides::register_bool("monkeytoy", false, game::dvar_flags::none);
+			scheduler::loop([]
+				{
+					if (runtime_dvar_sync_enabled.load(std::memory_order_acquire))
+					{
+						apply_safe_area_to_hud();
+					}
+				}, scheduler::main, 16ms);
 
 			scheduler::once([]
 				{
@@ -608,15 +659,13 @@ namespace dvars
 					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
 					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the top-right corner.", game::dvar_flags::saved);
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
-					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Right-edge margin for the version string.", -50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Inset from the right edge for the version string.", 6.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Vertical offset for the version string.", 950.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawOrigin = dvars::Dvar_RegisterBool("cg_drawOrigin", 0, "Draw player origin and velocity.", game::dvar_flags::none);
 					cg_drawMemInfo = dvars::Dvar_RegisterInt("cg_drawMemInfo", "Draw live memory information (1 = process summary, 2 = native meminfo, 3 = native meminfo in bytes).", 0, 0, 3, game::dvar_flags::saved);
 					disable_native_memory_overlay();
-					safeArea_horizontal = dvars::Dvar_RegisterFloat("safeArea_horizontal", "Horizontal safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
-					safeArea_vertical = dvars::Dvar_RegisterFloat("safeArea_vertical", "Vertical safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
-					safeArea_adjusted_horizontal = dvars::Dvar_RegisterFloat("safeArea_adjusted_horizontal", "Adjusted horizontal safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
-					safeArea_adjusted_vertical = dvars::Dvar_RegisterFloat("safeArea_adjusted_vertical", "Adjusted vertical safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
+					safeArea_horizontal = dvars::Dvar_RegisterFloat("safeArea_horizontal", "Horizontal safe-area fraction for HUD placement.", 0.85f, 0.0f, 1.0f, game::dvar_flags::saved);
+					safeArea_vertical = dvars::Dvar_RegisterFloat("safeArea_vertical", "Vertical safe-area fraction for HUD placement.", 0.85f, 0.0f, 1.0f, game::dvar_flags::saved);
 					replace_dvar(make_int("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
@@ -677,8 +726,6 @@ namespace dvars
 			cg_drawMemInfo = nullptr;
 			safeArea_horizontal = nullptr;
 			safeArea_vertical = nullptr;
-			safeArea_adjusted_horizontal = nullptr;
-			safeArea_adjusted_vertical = nullptr;
 		}
 	};
 }

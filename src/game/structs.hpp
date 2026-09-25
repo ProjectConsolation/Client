@@ -710,11 +710,20 @@ namespace game
 		float scaleRealToVirtual[2];
 		float virtualViewableMin[2];
 		float virtualViewableMax[2];
+		// QoS PC's placement routines keep one additional scalar at this offset.
+		float unknown_28;
 		float realViewportSize[2];
 		float realViewableMin[2];
 		float realViewableMax[2];
 		float subScreen[2];
 	};
+	static_assert(offsetof(ScreenPlacement, virtualViewableMin) == 0x18);
+	static_assert(offsetof(ScreenPlacement, unknown_28) == 0x28);
+	static_assert(offsetof(ScreenPlacement, realViewportSize) == 0x2C);
+	static_assert(offsetof(ScreenPlacement, realViewableMin) == 0x34);
+	static_assert(offsetof(ScreenPlacement, realViewableMax) == 0x3C);
+	static_assert(offsetof(ScreenPlacement, subScreen) == 0x44);
+	static_assert(sizeof(ScreenPlacement) == 0x4C);
 
 	enum DvarType : uint8_t
 	{
