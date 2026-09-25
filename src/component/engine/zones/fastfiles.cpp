@@ -738,6 +738,102 @@ namespace fastfiles
 			return zones[zone_index].flags;
 		}
 
+		void log_canals_world_materials(const game::XAssetEntry* entry)
+		{
+			// Temporary QoS PC 1.1 diagnostic for the generated Xenon map probe.
+			// The offsets and 48-byte surface stride come from the native PC
+			// GfxWorld loader at 0x103D8960 and its surface loader.
+			if (!entry || !entry->asset.header.data)
+			{
+				return;
+			}
+
+			const auto* const world = static_cast<const unsigned char*>(entry->asset.header.data);
+			const auto surface_count = *reinterpret_cast<const unsigned int*>(world + 32);
+			const auto* const surfaces = *reinterpret_cast<const unsigned char* const*>(world + 36);
+			if (!surfaces || surface_count > 100000)
+			{
+				game::Com_Printf(16, "^1[canals-materials] invalid surface table count=%u surfaces=%p\n",
+					surface_count, surfaces);
+				return;
+			}
+
+			unsigned int null_materials = 0;
+			unsigned int white_materials = 0;
+			unsigned int textured_materials = 0;
+			std::unordered_set<std::string> samples;
+			for (unsigned int index = 0; index < surface_count; ++index)
+			{
+				const auto* const material = *reinterpret_cast<game::Material* const*>(
+					surfaces + index * 48 + 16);
+				if (!material || !material->name)
+				{
+					++null_materials;
+					continue;
+				}
+
+				if (!_stricmp(material->name, "white") || !_stricmp(material->name, ",white"))
+				{
+					++white_materials;
+				}
+				else
+				{
+					++textured_materials;
+				}
+
+				if (samples.size() < 12 && samples.emplace(material->name).second)
+				{
+					const auto* const technique_name = material->techniqueSet && material->techniqueSet->name
+						? material->techniqueSet->name : "<null>";
+					const char* image_name = "<none>";
+					if (material->textureCount > 0 && material->textureTable && material->textureTable[0].image)
+					{
+						const auto* const image = static_cast<const unsigned char*>(material->textureTable[0].image);
+						const auto* const loaded_name = *reinterpret_cast<const char* const*>(image + 32);
+						if (loaded_name)
+						{
+							image_name = loaded_name;
+						}
+					}
+
+					game::Com_Printf(16,
+						"^5[canals-materials] sample=%s techset=%s textures=%u image0=%s\n",
+						material->name, technique_name,
+						static_cast<unsigned int>(static_cast<unsigned char>(material->textureCount)),
+						image_name);
+
+					if (samples.size() <= 4 && material->textureTable)
+					{
+						const auto texture_count = static_cast<unsigned int>(
+							static_cast<unsigned char>(material->textureCount));
+						for (unsigned int texture_index = 0; texture_index < texture_count; ++texture_index)
+						{
+							const auto& texture = material->textureTable[texture_index];
+							const auto* const image = static_cast<const unsigned char*>(texture.image);
+							const auto* const texture_image_name = image
+								? *reinterpret_cast<const char* const*>(image + 32) : nullptr;
+							const auto gpu_texture = image
+								? *reinterpret_cast<void* const*>(image + 4) : nullptr;
+							const auto width = image
+								? *reinterpret_cast<const unsigned short*>(image + 24) : 0;
+							const auto height = image
+								? *reinterpret_cast<const unsigned short*>(image + 26) : 0;
+							game::Com_Printf(16,
+								"^5[canals-materials] texture material=%s slot=%u hash=0x%08X semantic=%u image=%s gpu=%p size=%ux%u\n",
+								material->name, texture_index, texture.typeHash,
+								static_cast<unsigned int>(static_cast<unsigned char>(texture.semantic)),
+								texture_image_name ? texture_image_name : "<null>", gpu_texture,
+								static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+						}
+					}
+				}
+			}
+
+			game::Com_Printf(16,
+				"^5[canals-materials] surfaces=%u textured=%u white=%u null=%u unique-samples=%zu\n",
+				surface_count, textured_materials, white_materials, null_materials, samples.size());
+		}
+
 		game::XAssetEntry* db_link_xasset_entry_stub(game::XAssetEntry* entry, const int allow_override)
 		{
 			normalize_rawfile_name(entry);
@@ -773,6 +869,10 @@ namespace fastfiles
 			{
 				game::Com_Printf(16, "^5[map-stage] link returned type=%d name=%s linked=%p\n",
 					type, incoming_name, linked_entry);
+				if (type == game::ASSET_TYPE_GFXWORLD && std::strstr(incoming_name, "mp_canals") != nullptr)
+				{
+					log_canals_world_materials(linked_entry ? linked_entry : entry);
+				}
 			}
 			auto* const log_entry = linked_entry ? linked_entry : entry;
 			if (log_entry)

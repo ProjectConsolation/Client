@@ -11,76 +11,19 @@ namespace draw_version
 {
 	namespace
 	{
-		constexpr float watermark_font_scale = 0.25f;
-		constexpr float version_font_scale = 1.0f;
+		// normalFont has a denser 19-pixel atlas than objectiveFont. Scaling it
+		// to 0.75 retains the old 14-pixel watermark height without the blur.
+		constexpr float watermark_font_scale = 0.75f;
+		constexpr float version_font_scale = 0.85f;
 		constexpr float watermark_margin_x = 8.0f;
 		constexpr float watermark_margin_y = 6.0f;
 		constexpr float shadow_offset_x = 1.0f;
 		constexpr float shadow_offset_y = 1.0f;
 		float shadow_color[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
-		float version_text_color[4] = { 0.86f, 0.82f, 0.72f, 0.60f };
-		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.65f };
+		float version_text_color[4] = { 0.20f, 0.55f, 1.0f, 0.85f };
+		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.80f };
 		const char* watermark_text = "Project: Consolation";
-		float resolve_layout_width(const game::ScreenPlacement& scr_place)
-		{
-			const auto real_a = scr_place.realViewportSize[0];
-			const auto real_b = scr_place.realViewportSize[1];
-			const auto virtual_a = scr_place.virtualViewableMax[0];
-			const auto virtual_b = scr_place.virtualViewableMax[1];
-
-			if (real_a > 0.0f && real_b > 0.0f)
-			{
-				return std::max(real_a, real_b);
-			}
-
-			if (virtual_a > 0.0f && virtual_b > 0.0f)
-			{
-				return std::max(virtual_a, virtual_b);
-			}
-
-			return 640.0f;
-		}
-
-		float resolve_layout_height(const game::ScreenPlacement& scr_place)
-		{
-			const auto real_a = scr_place.realViewportSize[0];
-			const auto real_b = scr_place.realViewportSize[1];
-			const auto virtual_a = scr_place.virtualViewableMax[0];
-			const auto virtual_b = scr_place.virtualViewableMax[1];
-
-			if (real_a > 0.0f && real_b > 0.0f)
-			{
-				return std::min(real_a, real_b);
-			}
-
-			if (virtual_a > 0.0f && virtual_b > 0.0f)
-			{
-				return std::min(virtual_a, virtual_b);
-			}
-
-			return 480.0f;
-		}
-
-		float get_layout_width()
-		{
-			return resolve_layout_width(game::ScrPlace_GetViewPlacement());
-		}
-
-		float get_layout_height()
-		{
-			return resolve_layout_height(game::ScrPlace_GetViewPlacement());
-		}
-
-		float get_text_width(const char* text, const game::Font_s* font, float scale)
-		{
-			if (!text || !*text || !font)
-			{
-				return 0.0f;
-			}
-
-			return static_cast<float>(game::R_TextWidth(text, 0x7FFFFFFF, const_cast<game::Font_s*>(font))) * scale;
-		}
-
+		std::atomic_bool overlay_enabled{false};
 		float get_line_height(const game::Font_s* font, float scale)
 		{
 			if (!font)
@@ -89,6 +32,52 @@ namespace draw_version
 			}
 
 			return static_cast<float>(font->pixelHeight) * scale;
+		}
+
+		float get_client_width()
+		{
+			RECT client_rect{};
+			const auto window = *game::main_window;
+			if (window && GetClientRect(window, &client_rect) && client_rect.right > client_rect.left)
+			{
+				return static_cast<float>(client_rect.right - client_rect.left);
+			}
+
+			return 640.0f;
+		}
+
+		float get_client_height()
+		{
+			RECT client_rect{};
+			const auto window = *game::main_window;
+			if (window && GetClientRect(window, &client_rect) && client_rect.bottom > client_rect.top)
+			{
+				return static_cast<float>(client_rect.bottom - client_rect.top);
+			}
+
+			return 480.0f;
+		}
+
+		float safe_area_fraction(const game::dvar_s* base, const game::dvar_s* adjusted)
+		{
+			const auto value = base ? base->current.value : (adjusted ? adjusted->current.value : 1.0f);
+			return std::clamp(value, 0.0f, 1.0f);
+		}
+
+		float get_safe_right()
+		{
+			const auto width = get_client_width();
+			const auto fraction = safe_area_fraction(
+				dvars::safeArea_horizontal, dvars::safeArea_adjusted_horizontal);
+			return width - width * (1.0f - fraction) * 0.5f;
+		}
+
+		float get_safe_top()
+		{
+			const auto height = get_client_height();
+			const auto fraction = safe_area_fraction(
+				dvars::safeArea_vertical, dvars::safeArea_adjusted_vertical);
+			return height * (1.0f - fraction) * 0.5f;
 		}
 
 		const char* get_version_text()
@@ -114,19 +103,6 @@ namespace draw_version
 			game::R_AddCmdDrawText(text, 0x7FFFFFFF, const_cast<game::Font_s*>(font), x, y, scale, scale, 0.0f, color, 0);
 		}
 
-		void draw_bottom_right_text(const char* text, float baseline_y, float scale, const game::Font_s* font)
-		{
-			if (!text || !*text || !font)
-			{
-				return;
-			}
-
-			const auto screen_width = get_layout_width();
-			const auto text_width = get_text_width(text, font, scale);
-			const auto x = std::max(1.0f, screen_width - text_width - watermark_margin_x);
-			draw_text_shadowed(text, x, baseline_y, scale, font, watermark_text_color);
-		}
-
 		void cg_draw_watermark()
 		{
 			if (!dvars::cg_drawWatermark || !dvars::cg_drawWatermark->current.enabled)
@@ -134,16 +110,20 @@ namespace draw_version
 				return;
 			}
 
-			const auto* const font = game::R_RegisterFont("fonts/objectivefont");
+			const auto* const font = game::R_RegisterFont("fonts/normalFont");
 			if (!font)
 			{
 				return;
 			}
 
-			const auto screen_height = get_layout_height();
 			const auto line_height = get_line_height(font, watermark_font_scale);
-			const auto y = std::max(line_height, screen_height - watermark_margin_y);
-			draw_bottom_right_text(watermark_text, y, watermark_font_scale, font);
+			const auto text_width = static_cast<float>(game::R_TextWidth(watermark_text,
+				0x7FFFFFFF, const_cast<game::Font_s*>(font))) * watermark_font_scale;
+			const auto x = std::max(1.0f, get_safe_right() - text_width - watermark_margin_x);
+			const auto y = get_safe_top() + watermark_margin_y + line_height;
+			game::R_AddCmdDrawText(watermark_text, 0x7FFFFFFF,
+				const_cast<game::Font_s*>(font), x, y, watermark_font_scale,
+				watermark_font_scale, 0.0f, watermark_text_color, 0);
 		}
 
 		void cg_draw_version()
@@ -153,17 +133,8 @@ namespace draw_version
 				return;
 			}
 
-			const auto* const font = game::R_RegisterFont("fonts/consolefont");
+			const auto* const font = game::R_RegisterFont("fonts/normalFont");
 			if (!font)
-			{
-				return;
-			}
-
-			const auto scr_place = game::ScrPlace_GetViewPlacement();
-			const auto viewport_width = scr_place.realViewportSize[0] > 0.0f
-				? scr_place.realViewportSize[0]
-				: get_layout_width();
-			if (viewport_width <= 0.0f)
 			{
 				return;
 			}
@@ -174,11 +145,17 @@ namespace draw_version
 				return;
 			}
 
-			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr, std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font)));
+			// The local ScreenPlacement declaration does not match this QoS build.
+			// Use the actual client area so the saved right-edge margin cannot be
+			// clamped against the misread 480-pixel viewport field.
+			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr,
+				std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font))) * version_font_scale;
 			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
 			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 18.0f;
-			const auto x = std::max(1.0f, viewport_width - text_width - x_offset);
-			const auto y = y_offset + static_cast<float>(font->pixelHeight);
+			const auto x = std::max(1.0f, get_safe_right() - text_width - x_offset);
+			const auto y = get_safe_top() + watermark_margin_y
+				+ get_line_height(font, watermark_font_scale)
+				+ y_offset + get_line_height(font, version_font_scale);
 
 			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font, version_text_color);
 		}
@@ -190,11 +167,22 @@ namespace draw_version
 	public:
 		void post_load() override
 		{
+			overlay_enabled.store(true, std::memory_order_release);
 			scheduler::loop([]()
 				{
+					if (!overlay_enabled.load(std::memory_order_acquire))
+					{
+						return;
+					}
+
 					cg_draw_watermark();
 					cg_draw_version();
 				}, scheduler::pipeline::renderer);
+		}
+
+		void pre_destroy() override
+		{
+			overlay_enabled.store(false, std::memory_order_release);
 		}
 	};
 }

@@ -48,9 +48,15 @@ namespace dvars
 	game::dvar_s* cg_drawVersionX = nullptr;
 	game::dvar_s* cg_drawVersionY = nullptr;
 	game::dvar_s* cg_drawOrigin = nullptr;
+	game::dvar_s* cg_drawMemInfo = nullptr;
+	game::dvar_s* safeArea_horizontal = nullptr;
+	game::dvar_s* safeArea_vertical = nullptr;
+	game::dvar_s* safeArea_adjusted_horizontal = nullptr;
+	game::dvar_s* safeArea_adjusted_vertical = nullptr;
 	game::dvar_s* r_aspectRatioCustomEnable = nullptr;
 	game::dvar_s* r_aspectRatioCustom = nullptr;
 	game::dvar_s* r_ultrawideCustomMode = nullptr;
+	std::atomic_bool runtime_dvar_sync_enabled{false};
 
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain)
 	{
@@ -553,6 +559,7 @@ namespace dvars
 	public:
 		void post_load() override
 		{
+			runtime_dvar_sync_enabled.store(true, std::memory_order_release);
 			dvars::overrides::register_bool("monkeytoy", false, game::dvar_flags::none);
 
 			scheduler::once([]
@@ -584,11 +591,16 @@ namespace dvars
 					gpad_menu_scroll_delay_min = dvars::Dvar_RegisterInt("gpad_menu_scroll_delay_min", "Minimum accelerated menu repeat delay for gamepad input in milliseconds.", 50, 0, 1000, game::dvar_flags::saved);
 					gpad_menu_scroll_accel_time = dvars::Dvar_RegisterInt("gpad_menu_scroll_accel_time", "Time in milliseconds for accelerated gamepad menu repeat to reach full speed.", 1500, 0, 5000, game::dvar_flags::saved);
 					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
-					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the bottom-right corner.", game::dvar_flags::saved);
+					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the top-right corner.", game::dvar_flags::saved);
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
 					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Right-edge margin for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Vertical offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawOrigin = dvars::Dvar_RegisterBool("cg_drawOrigin", 0, "Draw player origin and velocity.", game::dvar_flags::none);
+					cg_drawMemInfo = dvars::Dvar_RegisterBool("cg_drawMemInfo", 0, "Draw live memory information with the native debug overlay.", game::dvar_flags::saved);
+					safeArea_horizontal = dvars::Dvar_RegisterFloat("safeArea_horizontal", "Horizontal safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
+					safeArea_vertical = dvars::Dvar_RegisterFloat("safeArea_vertical", "Vertical safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
+					safeArea_adjusted_horizontal = dvars::Dvar_RegisterFloat("safeArea_adjusted_horizontal", "Adjusted horizontal safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
+					safeArea_adjusted_vertical = dvars::Dvar_RegisterFloat("safeArea_adjusted_vertical", "Adjusted vertical safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
 					replace_dvar(make_int("g_speed", "Player movement speed", 210, 0, 1000, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
@@ -598,6 +610,20 @@ namespace dvars
 
 			scheduler::loop([]
 				{
+					if (!runtime_dvar_sync_enabled.load(std::memory_order_acquire))
+					{
+						return;
+					}
+
+					if (cg_drawMemInfo)
+					{
+						if (auto* const native_mem_info = game::Dvar_FindVar("cg_drawMemOnScreen");
+							native_mem_info && native_mem_info->type == game::DVAR_TYPE_BOOL)
+						{
+							native_mem_info->current.enabled = cg_drawMemInfo->current.enabled;
+							native_mem_info->latched.enabled = cg_drawMemInfo->current.enabled;
+						}
+					}
 					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
@@ -623,15 +649,28 @@ namespace dvars
 					gpad_menu_scroll_delay_min = nullptr;
 					gpad_menu_scroll_accel_time = nullptr;
 					input_invertPitch = nullptr;
-					cg_drawWatermark = nullptr;
-					cg_drawVersion = nullptr;
-					cg_drawVersionX = nullptr;
-					cg_drawVersionY = nullptr;
-					cg_drawOrigin = nullptr;
+					// Renderer dvars are process-global. G_ShutdownGame also runs during
+					// map transitions, so clearing these cached pointers here permanently
+					// disables the overlays after devmap/map.
 					r_aspectRatioCustomEnable = nullptr;
 					r_aspectRatioCustom = nullptr;
 					r_ultrawideCustomMode = nullptr;
 				});
+		}
+
+		void pre_destroy() override
+		{
+			runtime_dvar_sync_enabled.store(false, std::memory_order_release);
+			cg_drawWatermark = nullptr;
+			cg_drawVersion = nullptr;
+			cg_drawVersionX = nullptr;
+			cg_drawVersionY = nullptr;
+			cg_drawOrigin = nullptr;
+			cg_drawMemInfo = nullptr;
+			safeArea_horizontal = nullptr;
+			safeArea_vertical = nullptr;
+			safeArea_adjusted_horizontal = nullptr;
+			safeArea_adjusted_vertical = nullptr;
 		}
 	};
 }
