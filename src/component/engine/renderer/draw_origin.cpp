@@ -164,8 +164,10 @@ namespace draw_origin
 					const auto region_end = region_start + region.RegionSize;
 					if (region.State == MEM_FREE)
 					{
-						const auto clipped_start = std::max(region_start, minimum_application_address);
-						const auto clipped_end = std::min(region_end, maximum_application_address);
+						const auto clipped_start = (std::max<std::uintptr_t>)(
+							region_start, minimum_application_address);
+						const auto clipped_end = (std::min<std::uintptr_t>)(
+							static_cast<std::uintptr_t>(region_end), maximum_application_address);
 						if (clipped_end > clipped_start)
 						{
 							free_bytes += clipped_end - clipped_start;

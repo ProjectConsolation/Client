@@ -12,6 +12,7 @@
 #include <utils/hook.hpp>
 #include <utils/flags.hpp>
 #include <utils/nt.hpp>
+#include <utils/string.hpp>
 
 #include <unordered_set>
 #include <cstring>

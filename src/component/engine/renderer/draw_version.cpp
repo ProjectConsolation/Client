@@ -151,17 +151,10 @@ namespace draw_version
 				return;
 			}
 
-			// The local ScreenPlacement declaration does not match this QoS build.
-			// Use the actual client area so the saved right-edge margin cannot be
-			// clamped against the misread 480-pixel viewport field.
-			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr,
-				std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font))) * version_font_scale;
-			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 6.0f;
-			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 950.0f;
-			const auto x = std::max(1.0f, get_client_width() - text_width - x_offset);
-			const auto y = watermark_margin_y
-				+ get_line_height(font, watermark_font_scale)
-				+ y_offset + get_line_height(font, version_font_scale);
+			// Position this in the upper-left, opposite the full-screen console's
+			// bottom-right build string. X/Y are pixel offsets from that corner.
+			const auto x = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
+			const auto y = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 50.0f;
 
 			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font, version_text_color);
 		}
