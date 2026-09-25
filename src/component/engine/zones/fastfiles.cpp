@@ -37,8 +37,12 @@ namespace fastfiles
 		void* db_load_cmodel_original = nullptr;
 		void* db_load_map_ents_original = nullptr;
 		void* reflection_probe_nearest_original = nullptr;
+		std::uintptr_t renderer_surface_visibility_continue = 0;
+		std::uintptr_t renderer_surface_remap_continue = 0;
 		std::uintptr_t renderer_surface_list_continue = 0;
 		std::uintptr_t renderer_surface_list_return = 0;
+		std::uintptr_t gfx_world_pointer_address = 0;
+		std::uintptr_t cg_initialized_address = 0;
 
 		bool common_fastfiles_seen = false;
 		bool patch_consolation_loaded = false;
@@ -83,10 +87,28 @@ namespace fastfiles
 			{
 				// QoS PC 1.1 sub_1036E6F0 can retain a non-zero surface count
 				// after its TLS list has been released during a Xenon map teardown.
+				// During an active converted map, use the serialized GfxWorld DPVS
+				// remap table when the PC-only TLS alias was never initialized.
 				mov edx, dword ptr[edi + 1Ch]
 				mov eax, dword ptr[eax + 20h]
 				test eax, eax
+				jnz have_list
+				mov eax, dword ptr[cg_initialized_address]
+				test eax, eax
 				jz no_list
+				cmp dword ptr[eax], 0
+				jz no_list
+				mov eax, dword ptr[gfx_world_pointer_address]
+				test eax, eax
+				jz no_list
+				mov eax, dword ptr[eax]
+				test eax, eax
+				jz no_list
+				mov eax, dword ptr[eax + 2B8h]
+				test eax, eax
+				jz no_list
+
+			have_list:
 				jmp dword ptr[renderer_surface_list_continue]
 
 			no_list:
@@ -738,6 +760,50 @@ namespace fastfiles
 			return zones[zone_index].flags;
 		}
 
+		__declspec(naked) void renderer_surface_visibility_stub()
+		{
+			__asm
+			{
+				// QoS PC 1.1 normally remaps the GfxAabbTree's contiguous surface
+				// range through a PC-only uint16 list in TLS. Reduced Xenon worlds
+				// do not serialize that list. A low address here is the null base plus
+				// firstSurface * 2, so use the already-validated contiguous index.
+				cmp edx, 10000h
+				jb use_contiguous_index
+				movzx eax, word ptr[edx + ecx * 2]
+				jmp load_tls
+
+			use_contiguous_index:
+				mov eax, dword ptr[ebx + 1Ch]
+				add eax, ecx
+
+			load_tls:
+				mov edi, fs:[2Ch]
+				mov edi, dword ptr[edi + esi * 4]
+				jmp dword ptr[renderer_surface_visibility_continue]
+			}
+		}
+
+		__declspec(naked) void renderer_surface_remap_stub()
+		{
+			__asm
+			{
+				// A converted Xenon GfxWorld may omit the PC surface-remap table.
+				// This loop already has (firstSurface + index) * 2 in EBP; when the
+				// optional remap pointer is absent, use that contiguous surface index.
+				mov eax, dword ptr[edx + 2B8h]
+				test eax, eax
+				jz use_contiguous_index
+				movzx esi, word ptr[eax + ebp]
+				jmp dword ptr[renderer_surface_remap_continue]
+
+			use_contiguous_index:
+				mov esi, ebp
+				shr esi, 1
+				jmp dword ptr[renderer_surface_remap_continue]
+			}
+		}
+
 		void log_canals_world_materials(const game::XAssetEntry* entry)
 		{
 			// Temporary QoS PC 1.1 diagnostic for the generated Xenon map probe.
@@ -801,6 +867,44 @@ namespace fastfiles
 						material->name, technique_name,
 						static_cast<unsigned int>(static_cast<unsigned char>(material->textureCount)),
 						image_name);
+
+					if (samples.size() <= 4)
+					{
+						unsigned int technique_count = 0;
+						std::string techniques;
+						if (material->techniqueSet)
+						{
+							for (unsigned int technique_index = 0; technique_index < 43; ++technique_index)
+							{
+								const auto* const technique = material->techniqueSet->techniques[technique_index];
+								if (!technique)
+								{
+									continue;
+								}
+
+								++technique_count;
+								if (techniques.size() < 220)
+								{
+									if (!techniques.empty())
+									{
+										techniques += ",";
+									}
+
+									techniques += utils::string::va("%s:%u",
+										technique->name ? technique->name : "<unnamed>",
+										static_cast<unsigned int>(technique->numPasses));
+								}
+							}
+						}
+
+						game::Com_Printf(16,
+							"^5[canals-materials] technique-set=%s ptr=%p worldFormat=%u techniques=%u {%s}\n",
+							technique_name, material->techniqueSet,
+							material->techniqueSet
+								? static_cast<unsigned int>(static_cast<unsigned char>(material->techniqueSet->worldVertFormat))
+								: 0,
+							technique_count, techniques.c_str());
+					}
 
 					if (samples.size() <= 4 && material->textureTable)
 					{
@@ -1014,11 +1118,24 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
+			gfx_world_pointer_address = game::game_offset(0x10C4A354);
+			cg_initialized_address = game::game_offset(0x129FE8E4);
 			// sub_103A4840 assumes every cell probe index has a matching world
 			// origin array. Generated reduced worlds do not serialize that PC-only
 			// array yet, so preserve native lookup only when the array exists.
 			reflection_probe_nearest_hook.create(game::game_offset(0x103A4840), reflection_probe_nearest_stub);
 			reflection_probe_nearest_original = reflection_probe_nearest_hook.get_original();
+			// Exit-time dump: 0x103678C9 read 0x13BC through a missing Xenon-world
+			// surface-remap table. Reuse the tree's contiguous firstSurface index.
+			renderer_surface_remap_continue = game::game_offset(0x103678CD);
+			utils::hook::nop(game::game_offset(0x103678C3), 10);
+			utils::hook::jump(game::game_offset(0x103678C3), renderer_surface_remap_stub);
+			// Runtime crash evidence: 0x1036E67D read 0x00000E80 while traversing
+			// a valid converted cell tree. Fall back to its contiguous surface range
+			// only when the optional PC remap-list base is absent.
+			renderer_surface_visibility_continue = game::game_offset(0x1036E68B);
+			utils::hook::nop(game::game_offset(0x1036E67D), 14);
+			utils::hook::jump(game::game_offset(0x1036E67D), renderer_surface_visibility_stub);
 			// Runtime crash evidence: 0x1036E769 read [0x00000B5A] with a null
 			// TLS surface-list base at the end of mp_canals. Preserve native work
 			// when the list exists and skip only the stale-list iteration.

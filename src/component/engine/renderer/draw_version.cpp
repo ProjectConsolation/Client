@@ -11,19 +11,47 @@ namespace draw_version
 {
 	namespace
 	{
-		// normalFont has a denser 19-pixel atlas than objectiveFont. Scaling it
-		// to 0.75 retains the old 14-pixel watermark height without the blur.
-		constexpr float watermark_font_scale = 0.75f;
-		constexpr float version_font_scale = 0.85f;
-		constexpr float watermark_margin_x = 8.0f;
+		constexpr float watermark_font_scale = 0.95f;
+		constexpr float version_font_scale = 1.0f;
+		constexpr float watermark_margin_x = 6.0f;
 		constexpr float watermark_margin_y = 6.0f;
 		constexpr float shadow_offset_x = 1.0f;
 		constexpr float shadow_offset_y = 1.0f;
 		float shadow_color[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
 		float version_text_color[4] = { 0.20f, 0.55f, 1.0f, 0.85f };
-		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.80f };
+		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.35f };
 		const char* watermark_text = "Project: Consolation";
 		std::atomic_bool overlay_enabled{false};
+
+		struct watermark_font
+		{
+			game::Font_s* font{};
+			float scale{watermark_font_scale};
+		};
+
+		watermark_font get_watermark_font()
+		{
+			auto* const normal_font = game::R_RegisterFont("fonts/normalFont");
+			if (!normal_font || normal_font->pixelHeight <= 0)
+			{
+				return {};
+			}
+
+			const auto target_height = static_cast<float>(normal_font->pixelHeight)
+				* watermark_font_scale;
+			for (const auto* const name : {"fonts/extrabigfont", "fonts/bigfont"})
+			{
+				auto* const font = game::R_RegisterFont(name);
+				if (font && font->fontName && !_stricmp(font->fontName, name)
+					&& font->pixelHeight > normal_font->pixelHeight)
+				{
+					return {font, target_height / static_cast<float>(font->pixelHeight)};
+				}
+			}
+
+			return {normal_font, watermark_font_scale};
+		}
+
 		float get_line_height(const game::Font_s* font, float scale)
 		{
 			if (!font)
@@ -110,20 +138,20 @@ namespace draw_version
 				return;
 			}
 
-			const auto* const font = game::R_RegisterFont("fonts/normalFont");
-			if (!font)
+			const auto selected_font = get_watermark_font();
+			if (!selected_font.font)
 			{
 				return;
 			}
 
-			const auto line_height = get_line_height(font, watermark_font_scale);
+			const auto line_height = get_line_height(selected_font.font, selected_font.scale);
 			const auto text_width = static_cast<float>(game::R_TextWidth(watermark_text,
-				0x7FFFFFFF, const_cast<game::Font_s*>(font))) * watermark_font_scale;
-			const auto x = std::max(1.0f, get_safe_right() - text_width - watermark_margin_x);
-			const auto y = get_safe_top() + watermark_margin_y + line_height;
+				0x7FFFFFFF, selected_font.font)) * selected_font.scale;
+			const auto x = std::max(1.0f, get_client_width() - text_width - watermark_margin_x);
+			const auto y = watermark_margin_y + line_height;
 			game::R_AddCmdDrawText(watermark_text, 0x7FFFFFFF,
-				const_cast<game::Font_s*>(font), x, y, watermark_font_scale,
-				watermark_font_scale, 0.0f, watermark_text_color, 0);
+				selected_font.font, x, y, selected_font.scale,
+				selected_font.scale, 0.0f, watermark_text_color, 0);
 		}
 
 		void cg_draw_version()
@@ -133,7 +161,7 @@ namespace draw_version
 				return;
 			}
 
-			const auto* const font = game::R_RegisterFont("fonts/normalFont");
+			const auto* const font = game::R_RegisterFont("fonts/consolefont");
 			if (!font)
 			{
 				return;
@@ -150,8 +178,8 @@ namespace draw_version
 			// clamped against the misread 480-pixel viewport field.
 			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr,
 				std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font))) * version_font_scale;
-			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
-			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 18.0f;
+			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : -50.0f;
+			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 950.0f;
 			const auto x = std::max(1.0f, get_safe_right() - text_width - x_offset);
 			const auto y = get_safe_top() + watermark_margin_y
 				+ get_line_height(font, watermark_font_scale)

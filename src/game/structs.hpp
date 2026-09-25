@@ -266,7 +266,7 @@ namespace game
 		GfxDrawSurf drawSurf; // 8
 		unsigned int surfaceTypeBits; // 16
 		unsigned __int16 hashIndex; // 20
-		char __pad0[8]; // 24 (rest of MaterialInfo?)
+		char __pad0[10]; // 22 (rest of MaterialInfo)
 		char stateBitsEntry[35]; // 32
 		char textureCount; // 67
 		char constantCount; // 68
@@ -278,7 +278,11 @@ namespace game
 		MaterialTextureDef* textureTable; // 88
 		MaterialConstantDef* constantTable; // 92
 		GfxStateBits* stateBitTable; // 96
-	}; static_assert(sizeof(Material) == 104);
+	};
+	static_assert(offsetof(Material, stateBitsEntry) == 32);
+	static_assert(offsetof(Material, textureCount) == 67);
+	static_assert(offsetof(Material, techniqueSet) == 84);
+	static_assert(sizeof(Material) == 104);
 
 #pragma pack(push, 2)
 #pragma warning(push)

@@ -58,6 +58,21 @@ namespace dvars
 	game::dvar_s* r_ultrawideCustomMode = nullptr;
 	std::atomic_bool runtime_dvar_sync_enabled{false};
 
+	void disable_native_memory_overlay()
+	{
+		// cg_drawMemOnScreen enters an incomplete stock PC memory-debug path and
+		// can corrupt memory while copying its report. Keep it disabled even if a
+		// previous configuration saved it as enabled; cg_drawMemInfo is rendered
+		// independently by the client.
+		if (auto* const native = game::Dvar_FindVar("cg_drawMemOnScreen");
+			native && native->type == game::dvar_type::boolean)
+		{
+			native->current.enabled = false;
+			native->latched.enabled = false;
+			native->reset.enabled = false;
+		}
+	}
+
 	std::string dvar_get_vector_domain(const int components, const game::DvarLimits& domain)
 	{
 		if (domain.vector.min == -FLT_MAX)
@@ -593,10 +608,11 @@ namespace dvars
 					input_invertPitch = dvars::Dvar_RegisterBool("input_invertPitch", 0, "Invert native gamepad pitch.", game::dvar_flags::saved);
 					cg_drawWatermark = dvars::Dvar_RegisterBool("cg_drawWatermark", 1, "Draw the Consolation watermark in the top-right corner.", game::dvar_flags::saved);
 					cg_drawVersion = dvars::Dvar_RegisterBool("cg_drawVersion", 1, "Draw the game version.", game::dvar_flags::saved);
-					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Right-edge margin for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
-					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Vertical offset for the version string.", 18.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Right-edge margin for the version string.", -50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
+					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Vertical offset for the version string.", 950.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawOrigin = dvars::Dvar_RegisterBool("cg_drawOrigin", 0, "Draw player origin and velocity.", game::dvar_flags::none);
-					cg_drawMemInfo = dvars::Dvar_RegisterBool("cg_drawMemInfo", 0, "Draw live memory information with the native debug overlay.", game::dvar_flags::saved);
+					cg_drawMemInfo = dvars::Dvar_RegisterInt("cg_drawMemInfo", "Draw live memory information (1 = process summary, 2 = native meminfo, 3 = native meminfo in bytes).", 0, 0, 3, game::dvar_flags::saved);
+					disable_native_memory_overlay();
 					safeArea_horizontal = dvars::Dvar_RegisterFloat("safeArea_horizontal", "Horizontal safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
 					safeArea_vertical = dvars::Dvar_RegisterFloat("safeArea_vertical", "Vertical safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
 					safeArea_adjusted_horizontal = dvars::Dvar_RegisterFloat("safeArea_adjusted_horizontal", "Adjusted horizontal safe-area fraction.", 0.9f, 0.0f, 1.0f, game::dvar_flags::saved);
@@ -615,15 +631,7 @@ namespace dvars
 						return;
 					}
 
-					if (cg_drawMemInfo)
-					{
-						if (auto* const native_mem_info = game::Dvar_FindVar("cg_drawMemOnScreen");
-							native_mem_info && native_mem_info->type == game::DVAR_TYPE_BOOL)
-						{
-							native_mem_info->current.enabled = cg_drawMemInfo->current.enabled;
-							native_mem_info->latched.enabled = cg_drawMemInfo->current.enabled;
-						}
-					}
+					disable_native_memory_overlay();
 					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
 					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
