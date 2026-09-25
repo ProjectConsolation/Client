@@ -177,7 +177,7 @@ namespace draw_version
 			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr, std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font)));
 			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
 			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 18.0f;
-			const auto x = x_offset + viewport_width - text_width;
+			const auto x = std::max(1.0f, viewport_width - text_width - x_offset);
 			const auto y = y_offset + static_cast<float>(font->pixelHeight);
 
 			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font, version_text_color);

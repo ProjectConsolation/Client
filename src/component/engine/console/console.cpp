@@ -1,4 +1,6 @@
 #include <std_include.hpp>
+
+#include "component/utils/resources.hpp"
 #include "loader/component_loader.hpp"
 
 #include "console.hpp"
@@ -765,6 +767,7 @@ namespace console
 				+ "] - Console";
 
 			SetConsoleTitleA(title.c_str());
+			resources::apply_window_icon(GetConsoleWindow());
 
 			con.kill_event = CreateEvent(NULL, TRUE, FALSE, NULL);
 

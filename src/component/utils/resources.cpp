@@ -3,6 +3,8 @@
 #include <utils/hook.hpp>
 #include <utils/nt.hpp>
 
+#include "resources.hpp"
+
 namespace resources
 {
 	namespace
@@ -94,6 +96,17 @@ namespace resources
 			const auto original = reinterpret_cast<load_icon_a_fn>(load_icon_a_hook.get_original());
 			return original(handle, name);
 		}
+	}
+
+	void apply_window_icon(const HWND window)
+	{
+		if (!window || !icon)
+		{
+			return;
+		}
+
+		SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+		SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
 	}
 
 	class component final : public component_interface
