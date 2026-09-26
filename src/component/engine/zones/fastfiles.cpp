@@ -56,32 +56,52 @@ namespace fastfiles
 		std::mutex external_asset_log_mutex;
 		std::unordered_set<std::string> logged_external_assets;
 
-		constexpr auto stock_material_pool_size = 0x65Au;
-		constexpr auto extended_material_pool_size = 4096u;
-
-		void extend_material_asset_pool()
+		struct asset_pool_extension
 		{
-			// Adapted from iAmThatMichael/T4M PatchT4MemoryLimits.cpp and its
-			// DB_ReallocXAssetPool pattern, but bound to the
-			// verified QoS PC 1.1 tables. DB_InitXAssetPools (0x103DFA90) walks
-			// 38 entries and initializes each pool from these pointer/size arrays.
-			// The material entry is index 6: 0x1055EA78 / 0x1055E818.
+			game::XAssetType type;
+			unsigned int stock_size;
+			unsigned int extended_size;
+			std::size_t element_size;
+			std::uintptr_t stock_pool_address;
+			std::uintptr_t initializer_address;
+		};
+
+		constexpr asset_pool_extension asset_pool_extensions[]
+		{
+			{game::ASSET_TYPE_XMODEL, 640, 1500, 0xF0, 0x108A5BB0, 0x103DECD0},
+			{game::ASSET_TYPE_MATERIAL, 1626, 4096, 0x68, 0x10933798, 0x103DEC90},
+			{game::ASSET_TYPE_IMAGE, 2800, 4096, 0x24, 0x1091ADD0, 0x103DEC00},
+			{game::ASSET_TYPE_WEAPON, 256, 320, 0xACC, 0x1098D360, 0x103DE960},
+			{game::ASSET_TYPE_FX, 340, 600, 0x20, 0x1095CD30, 0x103DE920},
+			{game::ASSET_TYPE_STRINGTABLE, 5, 80, 0x10, 0x1098CC88, 0x103DE870},
+		};
+
+		void extend_asset_pools()
+		{
+			// Pool targets are adapted from iAmThatMichael/T4M's
+			// PatchT4MemoryLimits.cpp, but every address, stock count, and element
+			// stride below is verified against QoS PC 1.1. DB_InitXAssetPools
+			// (0x103DFA90) walks 38 entries and invokes the corresponding initializer
+			// from 0x1055E898 with the pool pointer and count.
 			static_assert(sizeof(game::Material) == 104);
 			auto** const asset_pools = reinterpret_cast<void**>(game::game_offset(0x1055EA60));
 			auto* const pool_sizes = reinterpret_cast<unsigned int*>(game::game_offset(0x1055E800));
-			constexpr auto material_type = static_cast<unsigned int>(game::ASSET_TYPE_MATERIAL);
-			auto* const expected_stock_pool = reinterpret_cast<void*>(game::game_offset(0x10933798));
+			auto** const pool_initializers = reinterpret_cast<void**>(game::game_offset(0x1055E898));
 
-			if (pool_sizes[material_type] != stock_material_pool_size
-				|| asset_pools[material_type] != expected_stock_pool)
+			for (const auto& extension : asset_pool_extensions)
 			{
-				throw std::runtime_error("QoS material asset-pool layout did not match PC 1.1");
-			}
+				const auto type = static_cast<unsigned int>(extension.type);
+				if (pool_sizes[type] != extension.stock_size
+					|| asset_pools[type] != reinterpret_cast<void*>(game::game_offset(extension.stock_pool_address))
+					|| pool_initializers[type] != reinterpret_cast<void*>(game::game_offset(extension.initializer_address)))
+				{
+					throw std::runtime_error("QoS asset-pool layout did not match PC 1.1");
+				}
 
-			auto* const replacement = utils::memory::get_allocator()
-				->allocate_array<game::Material>(extended_material_pool_size);
-			asset_pools[material_type] = replacement;
-			pool_sizes[material_type] = extended_material_pool_size;
+				asset_pools[type] = utils::memory::get_allocator()->allocate(
+					extension.element_size * extension.extended_size);
+				pool_sizes[type] = extension.extended_size;
+			}
 		}
 
 		bool debug_xasset()
@@ -1148,7 +1168,7 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
-			extend_material_asset_pool();
+			extend_asset_pools();
 			gfx_world_pointer_address = game::game_offset(0x10C4A354);
 			cg_initialized_address = game::game_offset(0x129FE8E4);
 			// sub_103A4840 assumes every cell probe index has a matching world
