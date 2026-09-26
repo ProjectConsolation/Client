@@ -102,6 +102,35 @@ class FastfileTests(unittest.TestCase):
             (0, 0, 8, 4, 1, b"DXT1", 16))
         self.assertEqual(payload[load_offset + 16:], bytes(range(16)))
 
+    def test_pc_image_serialization_transcodes_xbox_dxn(self):
+        image = {
+            "name": "normal", "width": 4, "height": 4, "depth": 1,
+            "pc_base_level": {
+                "format": "DXN", "bytes": 16,
+                "sha256": "unused", "data": bytes(16).hex(),
+            },
+        }
+        payload = bytearray()
+
+        xenon_ff.write_pc_image(payload, image)
+
+        load_offset = 36 + len("normal") + 1
+        self.assertEqual(
+            struct.unpack_from("<2B3H4sI", payload, load_offset)[5], b"DXT5")
+        self.assertEqual(len(payload[load_offset + 16:]), 16)
+
+    def test_dxn_to_dxt5_preserves_x_block_and_encodes_green(self):
+        x_block = bytes((240, 16, 0, 0, 0, 0, 0, 0))
+        y_block = bytes((220, 20, 0, 0, 0, 0, 0, 0))
+
+        converted = xenon_ff.transcode_dxn_to_dxt5(x_block + y_block)
+
+        self.assertEqual(converted[:8], x_block)
+        color0, color1 = struct.unpack_from("<2H", converted, 8)
+        self.assertGreater(color0, color1)
+        self.assertEqual(color0 & 0xF81F, 0)
+        self.assertEqual(color1 & 0xF81F, 0)
+
     def test_pc_material_serialization_uses_manifest_aliases(self):
         source = bytearray(96)
         source[4:8] = b"\x01\x02\x03\x04"
@@ -132,6 +161,81 @@ class FastfileTests(unittest.TestCase):
                          0x12345678)
         self.assertEqual(struct.unpack_from("<I", payload, nested + 8)[0],
                          0x40000201)
+
+    def test_pc_material_serialization_uses_filtered_texture_count(self):
+        source = bytearray(96)
+        source[60] = 4
+        material = {
+            "header": source.hex(), "name": "filtered",
+            "techset_name": "test_techset", "textures": [],
+        }
+        payload = bytearray()
+
+        xenon_ff.write_pc_material(payload, material, 0x40000101, [])
+
+        self.assertEqual(payload[67], 0)
+
+    def test_pc_techset_selection_prefers_exact_and_similar_channels(self):
+        self.assertEqual(
+            xenon_ff.select_pc_techset(",wc_l_sm_b0c0n0s0p0"),
+            ",wc_l_sm_b0c0n0s0p0")
+        self.assertEqual(
+            xenon_ff.select_pc_techset("wc_l_sm_b0c0d0n0s0p0"),
+            "wc_l_sm_b0c0n0s0p0")
+        self.assertEqual(
+            xenon_ff.select_pc_techset("wc_l_sm_r0c0d0n0s0"),
+            "wc_l_sm_b0c0n0s0p0")
+        self.assertIsNone(xenon_ff.select_pc_techset("wc_water"))
+
+    def test_gfx_surface_material_references_target_earlier_slots(self):
+        surfaces = bytes(4 * 72)
+        base = 0x12340
+        first = {"name": "first"}
+        second = {"name": "second"}
+        materials = [
+            first,
+            {"reference": hex(0x40000001 + base + 40)},
+            second,
+            {"reference": hex(0x40000001 + base + 2 * 72 + 40)},
+        ]
+
+        resolved, resolved_base = xenon_ff.resolve_gfx_surface_materials(
+            surfaces, materials)
+
+        self.assertEqual(resolved_base, base)
+        self.assertIs(resolved[1], first)
+        self.assertIs(resolved[3], second)
+
+    def test_material_image_references_reuse_decoded_predecessor(self):
+        definition = bytes.fromhex("59d30d0f6e700b05ffffffff")
+        decoded = {
+            "name": "wall_n", "definition": definition.hex(),
+            "pc_base_level": {"format": "DXN"},
+        }
+        materials = [
+            {"textures": [decoded]},
+            {"textures": [{
+                "definition": definition.hex(), "reference": "0x40500001",
+            }]},
+        ]
+
+        report = xenon_ff.resolve_material_image_references(materials)
+
+        resolved = materials[1]["textures"][0]
+        self.assertEqual(resolved["name"], "wall_n")
+        self.assertEqual(resolved["resolved_reference"], "0x40500001")
+        self.assertEqual(report["resolved_image_references"], 1)
+
+    def test_material_image_first_external_reference_stays_external(self):
+        definition = bytes.fromhex("34ecccb373700b08ffffffff")
+        materials = [{"textures": [{
+            "definition": definition.hex(), "reference": "0x4008184d",
+        }]}]
+
+        report = xenon_ff.resolve_material_image_references(materials)
+
+        self.assertNotIn("name", materials[0]["textures"][0])
+        self.assertEqual(report["external_image_references"], ["0x4008184d"])
 
     def test_xsurface_vertex_stream_conversion(self):
         primary = struct.pack(">4f", 1.0, 2.0, 3.0, -1.0)

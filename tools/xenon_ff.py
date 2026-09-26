@@ -56,8 +56,17 @@ PC_TEXTURE_FOURCC = {
     "DXT1": b"DXT1",
     "DXT2_3": b"DXT3",
     "DXT4_5": b"DXT5",
-    "DXN": b"ATI2",
+    "DXN": b"DXT5",
 }
+PC_COMMON_TECHSETS = (
+    ",wc_l_sm_b0c0n0s0p0",
+    "wc_l_sm_b0c0",
+    "wc_l_sm_b0c0n0p0",
+    "wc_l_sm_b0c0n0s0p0",
+    "wc_l_sm_b0c0p0",
+    "wc_l_sm_b0c0s0",
+    "wc_l_sm_b0c0s0p0",
+)
 
 
 class FormatError(ValueError):
@@ -183,6 +192,81 @@ def apply_xenos_gpu_endian(data, endian):
         elif endian == 3:
             result[offset:offset + 4] = (result[offset + 2:offset + 4]
                                          + result[offset:offset + 2])
+    return bytes(result)
+
+
+def select_pc_techset(source_name, candidates=PC_COMMON_TECHSETS):
+    """Choose a loaded PC world technique with the nearest channel signature."""
+    if source_name in candidates:
+        return source_name
+    if not source_name.startswith(("wc_l_sm_", ",wc_l_sm_")):
+        return None
+
+    def signature(name):
+        body = name.lstrip(",")
+        base_match = re.search(r"(?:^|_)([brt]\d+c\d+)", body)
+        features = frozenset(re.findall(r"[dnsp]\d+", body))
+        return (name.startswith(","),
+                base_match.group(1)[0] if base_match else None,
+                features)
+
+    source_comma, source_base, source_features = signature(source_name)
+    scored = []
+    for candidate in candidates:
+        candidate_comma, candidate_base, candidate_features = signature(candidate)
+        if candidate_base is None:
+            continue
+        missing_features = source_features - candidate_features
+        extra_features = candidate_features - source_features
+        score = (8 * (candidate_comma != source_comma)
+                 + 6 * (candidate_base != source_base)
+                 + 3 * len(missing_features) + len(extra_features))
+        scored.append((score, len(candidate_features), candidate))
+    return min(scored)[2] if scored else None
+
+
+def _decode_bc4_block(block):
+    if len(block) != 8:
+        raise FormatError("BC4 block must be eight bytes")
+    endpoint0, endpoint1 = block[0], block[1]
+    if endpoint0 > endpoint1:
+        palette = [endpoint0, endpoint1]
+        palette.extend(((7 - index) * endpoint0 + index * endpoint1) // 7
+                       for index in range(1, 7))
+    else:
+        palette = [endpoint0, endpoint1]
+        palette.extend(((5 - index) * endpoint0 + index * endpoint1) // 5
+                       for index in range(1, 5))
+        palette.extend((0, 255))
+    indices = int.from_bytes(block[2:8], "little")
+    return [palette[(indices >> (pixel * 3)) & 7] for pixel in range(16)]
+
+
+def transcode_dxn_to_dxt5(data):
+    """Map BC5/DXN normals to DXT5nm (X in alpha, Y in green)."""
+    if len(data) % 16:
+        raise FormatError("DXN data is not block-aligned")
+    result = bytearray()
+    for offset in range(0, len(data), 16):
+        x_block = data[offset:offset + 8]
+        green_values = _decode_bc4_block(data[offset + 8:offset + 16])
+        green0 = max(green_values) * 63 // 255
+        green1 = min(green_values) * 63 // 255
+        if green0 == green1:
+            if green0 < 63:
+                green0 += 1
+            else:
+                green1 -= 1
+        palette = (green0, green1, (2 * green0 + green1) // 3,
+                   (green0 + 2 * green1) // 3)
+        color_indices = 0
+        for pixel, value in enumerate(green_values):
+            quantized = value * 63 // 255
+            index = min(range(4), key=lambda item: abs(palette[item] - quantized))
+            color_indices |= index << (pixel * 2)
+        result.extend(x_block)
+        result.extend(struct.pack("<HHI", green0 << 5, green1 << 5,
+                                  color_indices))
     return bytes(result)
 
 
@@ -826,6 +910,57 @@ def _gfx_dpvs_planes(reader, header):
         reader.take(u32(header, 44) * 168)
 
 
+def resolve_gfx_surface_materials(surfaces, materials):
+    """Resolve Xenon packed material pointers through earlier surface slots.
+
+    QoS serializes a repeated GfxSurface material as a block-2 pointer to the
+    first surface's 32-bit material field, not as another Material payload.
+    Derive the surface-array runtime base from all backward references and
+    require one unique base before replacing any reference.
+    """
+    if len(surfaces) != len(materials) * 72:
+        raise FormatError("GfxSurface material list does not match its array")
+    references = [
+        (index, _packed_block2_offset(int(value["reference"], 16)))
+        for index, value in enumerate(materials) if "reference" in value
+    ]
+    if not references:
+        return materials, None
+
+    first_index, first_offset = references[0]
+    inline_targets = [index for index in range(first_index)
+                      if "reference" not in materials[index]]
+    candidates = {
+        first_offset - (target * 72 + 40) for target in inline_targets
+        if first_offset >= target * 72 + 40
+    }
+    valid = []
+    for base in candidates:
+        targets = []
+        for source, offset in references:
+            delta = offset - base - 40
+            if delta < 0 or delta % 72:
+                break
+            target = delta // 72
+            if target >= source or target >= len(materials):
+                break
+            if "reference" in materials[target]:
+                break
+            targets.append(target)
+        else:
+            valid.append((base, targets))
+    if len(valid) != 1:
+        raise FormatError(
+            f"could not uniquely resolve GfxSurface material slots: "
+            f"{[hex(base) for base, _ in valid]}")
+
+    base, targets = valid[0]
+    result = list(materials)
+    for (source, _), target in zip(references, targets):
+        result[source] = materials[target]
+    return result, base
+
+
 def gfx_map(reader, pointer, capture=False):
     if pointer not in (INLINE, INSERT):
         return {"reference": hex(pointer)}
@@ -935,6 +1070,11 @@ def gfx_map(reader, pointer, capture=False):
     if u32(header, 824) in (INLINE, INSERT):
         material(reader, capture)
 
+    material_slot_base = None
+    if capture and surface_materials:
+        surface_materials, material_slot_base = resolve_gfx_surface_materials(
+            surfaces, surface_materials)
+
     result = {
         "name": names[1] or names[0],
         "names": names,
@@ -952,6 +1092,8 @@ def gfx_map(reader, pointer, capture=False):
             "indices": indices.hex(),
             "surfaces": surfaces.hex(),
             "surface_materials": surface_materials,
+            "surface_material_slot_base": (
+                hex(material_slot_base) if material_slot_base is not None else None),
             "brush_models": draw_surfaces.hex(),
             "static_model_draws": static_model_draws.hex(),
             "static_model_insts": static_model_insts.hex(),
@@ -1616,7 +1758,8 @@ def write_pc_material(payload, material_value, techset_pointer,
     struct.pack_into("<H", converted, 20, u16(source, 20))
     converted[24:67] = b"\xFF" * 43
     converted[24:64] = source[20:60]
-    converted[67:70] = source[60:63]
+    converted[67] = len(image_pointers)
+    converted[68:70] = source[61:63]
     converted[70:83] = source[63:76]
     struct.pack_into("<4I", converted, 84, techset_pointer,
                      INLINE if image_pointers else 0,
@@ -1653,12 +1796,15 @@ def write_pc_image(payload, image_value):
     if len(data) != base["bytes"]:
         raise FormatError(f"image {name!r} decoded byte count changed")
 
+    if base["format"] == "DXN":
+        data = transcode_dxn_to_dxt5(data)
+
     width = image_value["width"]
     height = image_value["height"]
     depth = max(1, image_value["depth"])
     header = bytearray(36)
     struct.pack_into("<2I", header, 0, 3, INSERT)
-    header[11] = 2  # TS_COLOR_MAP; material bindings may override semantics later.
+    header[11] = image_value.get("pc_semantic", 2)
     struct.pack_into("<2I", header, 16, len(data), len(data))
     struct.pack_into("<3H", header, 24, width, height, depth)
     header[30] = 3  # IMG_CATEGORY_LOAD_FROM_FILE
@@ -1905,7 +2051,10 @@ def _convert_clip_array(kind, raw):
         "brush_verts": (12, (0, 4, 8), ()),
         "borders": (28, (0, 4, 8, 12, 16, 20, 24), ()),
         "partitions": (20, (4, 8, 12, 16), ()),
-        "aabb_trees": (32, (0, 4, 8, 16, 20, 24, 28), (12, 14)),
+        # CollisionAabbTree stores Bounds (six floats), followed by two
+        # halfwords and a child/partition index. PC sub_103E6780 reads the
+        # child count at +26 and recursively indexes through the dword at +28.
+        "aabb_trees": (32, (0, 4, 8, 12, 16, 20, 28), (24, 26)),
         "cmodels": (72, tuple(range(0, 28, 4))
                     + tuple(range(32, 68, 4)), (28, 30, 68)),
         "brushes": (80, tuple(range(0, 36, 4)) + (48, 72, 76),
@@ -2247,6 +2396,60 @@ def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
     return collision_end
 
 
+def resolve_material_image_references(materials):
+    """Resolve repeated Xenon image slots to previously decoded image content.
+
+    Packed image values address an earlier 12-byte MaterialTextureDef image
+    field. The definition prefix identifies the matching semantic/sampler slot;
+    references are resolved only backward, and a reference whose first use has
+    no decoded predecessor is kept external (normally an image from common_mp).
+    """
+    decoded_slots = []
+    resolved = {}
+    external = set()
+    visited = set()
+    resolved_count = 0
+
+    for material_value in materials:
+        identity = id(material_value)
+        if identity in visited:
+            continue
+        visited.add(identity)
+        textures = material_value.get("textures", [])
+        updated = []
+        for texture in textures:
+            definition = texture.get("definition")
+            prefix = bytes.fromhex(definition)[:8] if definition else None
+            image_value = texture
+            reference = texture.get("reference")
+            if reference is not None:
+                target = resolved.get(reference)
+                if target is None and reference not in external and prefix is not None:
+                    match = next((candidate for candidate_prefix, candidate
+                                  in reversed(decoded_slots)
+                                  if candidate_prefix == prefix), None)
+                    if match is None:
+                        external.add(reference)
+                    else:
+                        resolved[reference] = match
+                        target = match
+                if target is not None:
+                    image_value = dict(target)
+                    image_value["definition"] = definition
+                    image_value["resolved_reference"] = reference
+                    resolved_count += 1
+            updated.append(image_value)
+            if image_value.get("name") is not None and prefix is not None:
+                decoded_slots.append((prefix, image_value))
+        material_value["textures"] = updated
+
+    return {
+        "resolved_texture_slots": resolved_count,
+        "resolved_image_references": len(resolved),
+        "external_image_references": sorted(external),
+    }
+
+
 def build_pc_map_probe(path, include_images=False, include_materials=False):
     """Build a reduced PC zone for testing map and world deserialization.
 
@@ -2316,25 +2519,42 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
         and "data" in asset
     ]
     include_images = include_images or include_materials
+    material_image_report = resolve_material_image_references(
+        gfx_world["geometry"]["surface_materials"])
     images_by_name = {}
     if include_images:
         for material_value in gfx_world["geometry"]["surface_materials"]:
             for image_value in material_value.get("textures", []):
                 if "pc_base_level" in image_value:
-                    images_by_name.setdefault(image_value["name"], image_value)
+                    base = image_value["pc_base_level"]
+                    if base["format"] in PC_TEXTURE_FOURCC:
+                        definition = image_value.get("definition")
+                        if definition:
+                            image_value.setdefault(
+                                "pc_semantic", bytes.fromhex(definition)[7])
+                        images_by_name.setdefault(image_value["name"], image_value)
     images = list(images_by_name.values())
     convertible_materials = []
     techsets_by_name = {}
     if include_materials:
         for material_value in gfx_world["geometry"]["surface_materials"]:
+            pc_techset_name = select_pc_techset(
+                material_value.get("techset_name", ""))
+            textures = [
+                image_value for image_value in material_value.get("textures", [])
+                if image_value.get("name") in images_by_name
+            ]
             convertible = ("header" in material_value
-                           and isinstance(material_value.get("techset_name"), str)
-                           and all(image_value.get("name") in images_by_name
-                                   for image_value in material_value.get("textures", [])))
-            convertible_materials.append(material_value if convertible else None)
+                           and pc_techset_name is not None
+                           and bool(textures))
+            converted = None
             if convertible:
-                techsets_by_name.setdefault(
-                    material_value["techset_name"], material_value)
+                converted = dict(material_value)
+                converted["textures"] = textures
+                converted["pc_techset_name"] = pc_techset_name
+                techsets_by_name.setdefault(pc_techset_name, converted)
+            convertible_materials.append(converted)
+    gfx_world["geometry"]["material_image_resolution"] = material_image_report
     techset_names = list(techsets_by_name)
     assets = ([(12, "clip")]
               + [(5, model) for model in models]
@@ -2398,7 +2618,7 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
         }
         converted_material_bindings = [
             ((material_value,
-              techset_pointers[material_value["techset_name"]],
+              techset_pointers[material_value["pc_techset_name"]],
               [image_pointers[image_value["name"]]
                for image_value in material_value["textures"]])
              if material_value else None)
