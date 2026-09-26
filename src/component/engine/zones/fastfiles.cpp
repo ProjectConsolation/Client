@@ -11,6 +11,7 @@
 
 #include <utils/hook.hpp>
 #include <utils/flags.hpp>
+#include <utils/memory.hpp>
 #include <utils/nt.hpp>
 #include <utils/string.hpp>
 
@@ -54,6 +55,34 @@ namespace fastfiles
 		unsigned int normalized_rawfile_name_index = 0;
 		std::mutex external_asset_log_mutex;
 		std::unordered_set<std::string> logged_external_assets;
+
+		constexpr auto stock_material_pool_size = 0x65Au;
+		constexpr auto extended_material_pool_size = 4096u;
+
+		void extend_material_asset_pool()
+		{
+			// Adapted from iAmThatMichael/T4M PatchT4MemoryLimits.cpp and its
+			// DB_ReallocXAssetPool pattern, but bound to the
+			// verified QoS PC 1.1 tables. DB_InitXAssetPools (0x103DFA90) walks
+			// 38 entries and initializes each pool from these pointer/size arrays.
+			// The material entry is index 6: 0x1055EA78 / 0x1055E818.
+			static_assert(sizeof(game::Material) == 104);
+			auto** const asset_pools = reinterpret_cast<void**>(game::game_offset(0x1055EA60));
+			auto* const pool_sizes = reinterpret_cast<unsigned int*>(game::game_offset(0x1055E800));
+			constexpr auto material_type = static_cast<unsigned int>(game::ASSET_TYPE_MATERIAL);
+			auto* const expected_stock_pool = reinterpret_cast<void*>(game::game_offset(0x10933798));
+
+			if (pool_sizes[material_type] != stock_material_pool_size
+				|| asset_pools[material_type] != expected_stock_pool)
+			{
+				throw std::runtime_error("QoS material asset-pool layout did not match PC 1.1");
+			}
+
+			auto* const replacement = utils::memory::get_allocator()
+				->allocate_array<game::Material>(extended_material_pool_size);
+			asset_pools[material_type] = replacement;
+			pool_sizes[material_type] = extended_material_pool_size;
+		}
 
 		bool debug_xasset()
 		{
@@ -1119,6 +1148,7 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
+			extend_material_asset_pool();
 			gfx_world_pointer_address = game::game_offset(0x10C4A354);
 			cg_initialized_address = game::game_offset(0x129FE8E4);
 			// sub_103A4840 assumes every cell probe index has a matching world

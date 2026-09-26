@@ -526,6 +526,17 @@ class FastfileTests(unittest.TestCase):
             asset["geometry"]["cells"][0]["tree"]), payload)
         self.assertIn(b",white\0", payload)
 
+        shared_payload = bytearray()
+        xenon_ff.write_pc_gfx_world(
+            shared_payload, asset, 3, [0x40001235])
+        surface_offset = shared_payload.find(
+            struct.pack("<IIHHI", 9, 10, 11, 12, 13))
+        self.assertNotEqual(surface_offset, -1)
+        self.assertEqual(
+            struct.unpack_from("<I", shared_payload, surface_offset + 16)[0],
+            0x40001235)
+        self.assertNotIn(b",white\0", shared_payload)
+
     def test_rawfile_byte_content_is_not_swapped(self):
         payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
         payload += struct.pack(">2I", 33, xenon_ff.INLINE)

@@ -24,9 +24,9 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 | `ui_extraBigFont` | Saved float dvar. Adjusts the extra-large UI font scale. | Range: `0` to `1` |
 | `cg_overheadNamesSize` | Saved float dvar. Adjusts the size of overhead player names. | Default: `0.5`, Range: `0` to `1` |
 | `cg_drawWatermark` | Saved boolean dvar added by Project: Consolation. Draws the unshadowed Project: Consolation watermark at the top-right edge. | Default: `1` |
-| `cg_drawVersion` | Saved boolean dvar added by Project: Consolation. Draws the blue build-version string at the top-left, opposite the full-screen console's bottom-right version string. | Default: `1` |
+| `cg_drawVersion` | Saved boolean dvar added by Project: Consolation. Draws the blue build-version string on the bottom status line. | Default: `1` |
 | `cg_drawVersionX` | Saved horizontal position from the left edge for the version string. | Default: `50`, Range: `-1024` to `1024` |
-| `cg_drawVersionY` | Saved vertical position from the top edge for the version string. | Default: `50`, Range: `-1024` to `1024` |
+| `cg_drawVersionY` | Saved inset from the bottom edge for the version string. | Default: `17`, Range: `-1024` to `1024` |
 | `cg_drawOrigin` | Draws live player origin and velocity below the active `cg_drawFPS` block. | Boolean |
 | `cg_drawFPS` | Saved debug overlay mode. `1` draws FPS only; values `2` and higher draw the standard three-line FPS, frame-time, and triangle block. | `0` to `7` |
 | `cg_drawMemInfo` | Saved live memory overlay, centered at the right edge. Mode `1` shows working, private, peak, then a blank line and free process address space in MB. Mode `2` reproduces the native `meminfo` hunk, physical-memory, and high/low zone breakdown; mode `3` shows those same quantities in bytes. Memory pressure is colored yellow/red. | Default: `0`, Range: `0` to `3` |

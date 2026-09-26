@@ -1887,7 +1887,7 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
 
 
 def write_pc_gfx_world(payload, asset, primary_light_count,
-                       converted_materials=None):
+                       material_pointers=None):
     geometry = asset["geometry"]
     planes = bytes.fromhex(geometry["planes"])
     nodes = bytes.fromhex(geometry["nodes"])
@@ -1933,7 +1933,9 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
         struct.pack_into("<IIHHI", pc_surfaces, target,
                          u32(source, 0), u32(source, 4), u16(source, 8),
                          u16(source, 10), u32(source, 12))
-        struct.pack_into("<I", pc_surfaces, target + 16, INLINE)
+        material_pointer = (material_pointers[index]
+                            if material_pointers is not None else INLINE)
+        struct.pack_into("<I", pc_surfaces, target + 16, material_pointer)
         pc_surfaces[target + 20:target + 24] = source[44:48]
         pc_surfaces[target + 24:target + 48] = _little_endian_words(source, 48, 72)[48:72]
 
@@ -1993,14 +1995,11 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     payload.extend(_little_endian_u16_array(nodes))
     payload.extend(_little_endian_u16_array(indices))
     payload.extend(pc_surfaces)
-    if converted_materials is not None and len(converted_materials) != surface_count:
-        raise FormatError("converted material count does not match world surfaces")
-    for index in range(surface_count):
-        material_value = converted_materials[index] if converted_materials else None
-        if material_value is None:
+    if material_pointers is not None and len(material_pointers) != surface_count:
+        raise FormatError("material pointer count does not match world surfaces")
+    if material_pointers is None:
+        for _ in range(surface_count):
             payload.extend(_pc_external_material())
-        else:
-            write_pc_material(payload, *material_value)
     payload.extend(_little_endian_words(sky_start_surfs))
     payload.extend(bytes(68))
     if include_static_models:
@@ -2535,30 +2534,40 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
                         images_by_name.setdefault(image_value["name"], image_value)
     images = list(images_by_name.values())
     convertible_materials = []
+    unique_materials = []
+    converted_by_source = {}
     techsets_by_name = {}
     if include_materials:
         for material_value in gfx_world["geometry"]["surface_materials"]:
-            pc_techset_name = select_pc_techset(
-                material_value.get("techset_name", ""))
-            textures = [
-                image_value for image_value in material_value.get("textures", [])
-                if image_value.get("name") in images_by_name
-            ]
-            convertible = ("header" in material_value
-                           and pc_techset_name is not None
-                           and bool(textures))
-            converted = None
-            if convertible:
-                converted = dict(material_value)
-                converted["textures"] = textures
-                converted["pc_techset_name"] = pc_techset_name
-                techsets_by_name.setdefault(pc_techset_name, converted)
+            source_identity = id(material_value)
+            if source_identity not in converted_by_source:
+                pc_techset_name = select_pc_techset(
+                    material_value.get("techset_name", ""))
+                textures = [
+                    image_value for image_value in material_value.get("textures", [])
+                    if image_value.get("name") in images_by_name
+                ]
+                convertible = ("header" in material_value
+                               and pc_techset_name is not None
+                               and bool(textures))
+                converted = None
+                if convertible:
+                    converted = dict(material_value)
+                    converted["textures"] = textures
+                    converted["pc_techset_name"] = pc_techset_name
+                    unique_materials.append(converted)
+                    techsets_by_name.setdefault(pc_techset_name, converted)
+                converted_by_source[source_identity] = converted
+            converted = converted_by_source[source_identity]
             convertible_materials.append(converted)
     gfx_world["geometry"]["material_image_resolution"] = material_image_report
     techset_names = list(techsets_by_name)
     assets = ([(12, "clip")]
               + [(5, model) for model in models]
               + [(7, name) for name in techset_names]
+              + ([(6, None)] + [(6, material_value)
+                                for material_value in unique_materials]
+                 if include_materials else [])
               + [(13, "com"), (17, "gfx"), (15, "game")]
               + [(8, image_value) for image_value in images]
               + [(32, rawfile) for rawfile in rawfiles])
@@ -2601,31 +2610,46 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
     for name in techset_names:
         payload.extend(_pc_external_techset(name))
 
-    write_pc_com_world(payload, com_world)
-
-    converted_material_bindings = None
+    surface_material_pointers = None
     if include_materials:
-        techset_start = 1 + len(models)
+        def manifest_pointer(index):
+            return 0x40000001 + asset_table_base + index * 8
+
         techset_pointers = {
-            name: 0x40000001 + asset_table_base + (techset_start + index) * 8
-            for index, name in enumerate(techset_names)
+            value: manifest_pointer(index)
+            for index, (kind, value) in enumerate(assets) if kind == 7
         }
-        image_start = techset_start + len(techset_names) + 3
         image_pointers = {
-            image_value["name"]: 0x40000001 + asset_table_base
-            + (image_start + index) * 8
-            for index, image_value in enumerate(images)
+            value["name"]: manifest_pointer(index)
+            for index, (kind, value) in enumerate(assets) if kind == 8
         }
-        converted_material_bindings = [
-            ((material_value,
-              techset_pointers[material_value["pc_techset_name"]],
-              [image_pointers[image_value["name"]]
-               for image_value in material_value["textures"]])
-             if material_value else None)
+        material_entries = [
+            (index, value) for index, (kind, value) in enumerate(assets)
+            if kind == 6
+        ]
+        fallback_material_pointer = manifest_pointer(material_entries[0][0])
+        material_pointers = {
+            id(value): manifest_pointer(index)
+            for index, value in material_entries[1:]
+        }
+
+        payload.extend(_pc_external_material())
+        for material_value in unique_materials:
+            write_pc_material(
+                payload, material_value,
+                techset_pointers[material_value["pc_techset_name"]],
+                [image_pointers[image_value["name"]]
+                 for image_value in material_value["textures"]])
+        surface_material_pointers = [
+            (material_pointers[id(material_value)]
+             if material_value is not None else fallback_material_pointer)
             for material_value in convertible_materials
         ]
+
+    write_pc_com_world(payload, com_world)
+
     write_pc_gfx_world(payload, gfx_world, len(com_world["primary_lights"]),
-                       converted_material_bindings)
+                       surface_material_pointers)
 
     payload.extend(struct.pack("<I", INLINE))
     payload.extend(game_name.encode() + b"\0")

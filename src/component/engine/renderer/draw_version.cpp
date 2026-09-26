@@ -151,10 +151,11 @@ namespace draw_version
 				return;
 			}
 
-			// Position this in the upper-left, opposite the full-screen console's
-			// bottom-right build string. X/Y are pixel offsets from that corner.
+			// Match the full-screen console footer's bottom-line anchor. X is an
+			// inset from the left; Y is an inset from the bottom.
 			const auto x = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
-			const auto y = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 50.0f;
+			const auto bottom_inset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 17.0f;
+			const auto y = get_client_height() - bottom_inset;
 
 			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font, version_text_color);
 		}
