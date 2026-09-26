@@ -1,6 +1,7 @@
 import struct
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 import zlib
 
@@ -43,6 +44,21 @@ class FastfileTests(unittest.TestCase):
             width, height, 0x12 | (1 << 6), tiled)
 
         self.assertEqual(restored, linear)
+
+    def test_xenos_mip_chain_converts_independently_tiled_levels(self):
+        levels = []
+        tiled = bytearray()
+        for level, (width, height) in enumerate(((64, 64), (32, 32))):
+            size = xenon_ff._xenos_texture_layout(width, height, 0x12)[5]
+            linear = bytes(((index * 13) + level) & 0xFF for index in range(size))
+            levels.append(linear)
+            tiled.extend(xenon_ff.tile_xenos_texture(width, height, 0x12, linear))
+
+        restored, decoded_levels = xenon_ff.untile_xenos_texture_levels(
+            64, 64, 0x12, bytes(tiled), 2)
+
+        self.assertEqual(decoded_levels, 2)
+        self.assertEqual(restored, b"".join(levels))
 
     def test_xenos_texture_rejects_unknown_format(self):
         with self.assertRaisesRegex(xenon_ff.FormatError, "unsupported Xenos"):
@@ -156,6 +172,7 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<4I", header, 84),
                          (0x40000101, xenon_ff.INLINE,
                           xenon_ff.INLINE, xenon_ff.INLINE))
+        self.assertEqual(header[20:60], bytes(range(40)))
         nested = 104 + len("test_material") + 1
         self.assertEqual(struct.unpack_from("<I", payload, nested)[0],
                          0x12345678)
@@ -174,6 +191,64 @@ class FastfileTests(unittest.TestCase):
         xenon_ff.write_pc_material(payload, material, 0x40000101, [])
 
         self.assertEqual(payload[67], 0)
+
+    def test_pc_load_zone_preserves_2d_materials_images_and_rawfile(self):
+        source = bytearray(96)
+        source[16:20] = bytes.fromhex("002b0101")
+        source[60] = 1
+        definition = struct.pack(">I4B", 0, 0, 0, 0, 2) + struct.pack(">I", 1)
+        image = {
+            "name": "loadscreen_mp_test",
+            "width": 4, "height": 4, "depth": 1,
+            "load_definition": {"levels": 1},
+            "pc_base_level": {
+                "width": 4, "height": 4, "depth": 1,
+                "format": "DXT1", "bytes": 8, "data": bytes(8).hex(),
+            },
+        }
+        report = {
+            "script_strings": [],
+            "assets": [
+                {"type": "techset", "name": ",2d"},
+                {
+                    "type": "material", "header": source.hex(),
+                    "name": "$levelbriefing",
+                    "textures": [{**image, "definition": definition.hex()}],
+                },
+                {
+                    "type": "rawfile", "name": "mp_test_load",
+                    "data": b"\0".hex(),
+                },
+            ],
+        }
+
+        with mock.patch.object(xenon_ff, "inspect", return_value=report):
+            converted = xenon_ff.build_pc_load_zone("unused.ff")
+
+        version, payload_size = struct.unpack_from("<2I", converted)
+        decoder = zlib.decompressobj()
+        payload = decoder.decompress(converted[28:])
+        self.assertEqual(version, 470)
+        self.assertEqual(payload_size, len(payload))
+        self.assertTrue(decoder.eof)
+        self.assertEqual(len(converted) % 32, 0)
+        self.assertEqual(struct.unpack_from("<4I", payload),
+                         (0, 0, 4, xenon_ff.INLINE))
+        self.assertEqual([entry[0] for entry in struct.iter_unpack(
+            "<2I", payload[16:48])], [7, 7, 6, 32])
+        material_offset = 48 + 184 + len(",sm2/2d") + 1 + 184 + len(",2d") + 1
+        self.assertEqual(payload[material_offset + 16:material_offset + 20],
+                         bytes.fromhex("002b0101"))
+        self.assertEqual(struct.unpack_from("<I", payload, material_offset + 84),
+                         (0x4000000D,))
+        image_offset = material_offset + 104 + len("$levelbriefing") + 1 + 12
+        self.assertEqual(payload[image_offset + 10:image_offset + 12], b"\x01\x00")
+        load_offset = image_offset + 36 + len("loadscreen_mp_test") + 1
+        self.assertEqual(payload[load_offset:load_offset + 2], b"\x01\x02")
+        self.assertIn(b",2d\0", payload)
+        self.assertIn(b"$levelbriefing\0", payload)
+        self.assertIn(b"loadscreen_mp_test\0", payload)
+        self.assertIn(b"mp_test_load\0\0", payload)
 
     def test_material_constant_conversion_preserves_ascii_name(self):
         source = (struct.pack(">I", 0x12345678)

@@ -317,6 +317,37 @@ def untile_xenos_texture(width, height, format_word, tiled, base_pitch=0):
         width, height, gpu_format, native_tiled, base_pitch, False)
 
 
+def untile_xenos_texture_levels(width, height, format_word, tiled, levels):
+    """Convert the independently tiled portion of a Xenon mip chain.
+
+    Small Xenos mips share a packed mip tail. The QoS PC loader nevertheless
+    expects the full linear chain size, so preserve every independently tiled
+    level and reserve zeroed blocks for tail levels until that packing is
+    decoded. The base level, which controls the visible load screen, is always
+    required and converted exactly.
+    """
+    if levels < 1:
+        raise FormatError("Xenos texture has no mip levels")
+    gpu_format = format_word & 0x3F
+    result = bytearray()
+    cursor = 0
+    decoded_levels = 0
+    for level in range(levels):
+        level_width = max(1, width >> level)
+        level_height = max(1, height >> level)
+        layout = _xenos_texture_layout(level_width, level_height, gpu_format)
+        linear_size, tiled_size = layout[5], layout[6]
+        if cursor + tiled_size <= len(tiled):
+            result.extend(untile_xenos_texture(
+                level_width, level_height, format_word,
+                tiled[cursor:cursor + tiled_size]))
+            cursor += tiled_size
+            decoded_levels += 1
+        else:
+            result.extend(bytes(linear_size))
+    return bytes(result), decoded_levels
+
+
 class Reader:
     def __init__(self, data):
         self.data = data
@@ -419,10 +450,22 @@ def image(reader, pointer, capture=False):
             result["texture_resource_words"] = struct.unpack(">13I", reader.take(52))
         if capture and pixels:
             try:
-                linear = untile_xenos_texture(
-                    result["width"], result["height"], format_word, pixels)
+                levels = max(1, load[0])
+                linear, decoded_levels = untile_xenos_texture_levels(
+                    result["width"], result["height"], format_word,
+                    pixels, levels)
+                base_size = _xenos_texture_layout(
+                    result["width"], result["height"],
+                    format_word & 0x3F)[5]
                 result["pc_base_level"] = {
                     "format": XENOS_TEXTURE_FORMATS[format_word & 0x3F][3],
+                    "bytes": base_size,
+                    "sha256": hashlib.sha256(linear[:base_size]).hexdigest(),
+                    "data": linear[:base_size].hex(),
+                }
+                result["pc_mip_chain"] = {
+                    "format": XENOS_TEXTURE_FORMATS[format_word & 0x3F][3],
+                    "levels": levels, "decoded_levels": decoded_levels,
                     "bytes": len(linear),
                     "sha256": hashlib.sha256(linear).hexdigest(),
                     "data": linear.hex(),
@@ -1013,11 +1056,19 @@ def gfx_map(reader, pointer, capture=False):
         sun = reader.take(68)
         if u32(sun, 64):
             lightdef(reader, u32(sun, 64))
+    reflection_probes = []
     if u32(header, 368):
         records = reader.take(u32(header, 364) * 16)
         for offset in range(0, len(records), 16):
-            if u32(records, offset + 12) in (INLINE, INSERT):
-                image(reader, u32(records, offset + 12), capture)
+            record = records[offset:offset + 16]
+            image_value = None
+            if u32(record, 12) in (INLINE, INSERT):
+                image_value = image(reader, u32(record, 12), capture)
+            elif u32(record, 12):
+                image_value = {"reference": hex(u32(record, 12))}
+            if capture:
+                reflection_probes.append({"raw": record.hex(),
+                                          "image": image_value})
     if u32(header, 372):
         reader.take(u32(header, 360) * 32)
     static_model_draws = b""
@@ -1114,6 +1165,7 @@ def gfx_map(reader, pointer, capture=False):
             "static_model_draws": static_model_draws.hex(),
             "static_model_insts": static_model_insts.hex(),
             "cells": parsed_cells,
+            "reflection_probes": reflection_probes,
             "sky_start_surfs": sky_start_surfs.hex(),
             "vertices": vertices.hex(),
             "vertex_layers": vertex_layers.hex(),
@@ -1758,7 +1810,7 @@ def _pc_external_techset(name):
 
 
 def write_pc_material(payload, material_value, techset_pointer,
-                      image_pointers):
+                      image_pointers, inline_images=False):
     source = bytes.fromhex(material_value["header"])
     if len(source) != 96 or len(image_pointers) != len(material_value["textures"]):
         raise FormatError("invalid captured Xbox material")
@@ -1767,16 +1819,15 @@ def write_pc_material(payload, material_value, techset_pointer,
         raise FormatError("material is missing a PC-resolvable name or technique set")
 
     converted = bytearray(104)
+    # QoS serializes MaterialInfo + the 28 native state-bit slots byte-for-byte
+    # through +59 on both platforms. PC adds seven state-bit slots before the
+    # count/flag fields and stores the two following scalar words little-endian.
+    converted[:60] = source[:60]
     struct.pack_into("<I", converted, 0, INLINE)
-    converted[4:8] = source[4:8]
-    struct.pack_into("<3I", converted, 8, u32(source, 8), u32(source, 12),
-                     u32(source, 16))
-    struct.pack_into("<H", converted, 20, u16(source, 20))
-    converted[24:67] = b"\xFF" * 43
-    converted[24:64] = source[20:60]
+    converted[60:67] = b"\xFF" * 7
     converted[67] = len(image_pointers)
-    converted[68:70] = source[61:63]
-    converted[70:83] = source[63:76]
+    converted[68:75] = source[61:68]
+    struct.pack_into("<2I", converted, 76, u32(source, 68), u32(source, 72))
     struct.pack_into("<4I", converted, 84, techset_pointer,
                      INLINE if image_pointers else 0,
                      INLINE if material_value.get("constants") else 0,
@@ -1791,6 +1842,9 @@ def write_pc_material(payload, material_value, techset_pointer,
         payload.extend(struct.pack("<I", u32(definition)))
         payload.extend(definition[4:8])
         payload.extend(struct.pack("<I", image_pointer))
+    if inline_images:
+        for image_value in material_value["textures"]:
+            write_pc_image(payload, image_value)
     payload.extend(_convert_material_constants(bytes.fromhex(
         material_value.get("constants", ""))))
     payload.extend(_little_endian_words(bytes.fromhex(
@@ -1798,7 +1852,7 @@ def write_pc_material(payload, material_value, techset_pointer,
 
 
 def write_pc_image(payload, image_value):
-    base = image_value.get("pc_base_level")
+    base = image_value.get("pc_mip_chain") or image_value.get("pc_base_level")
     if not base or "data" not in base:
         raise FormatError(f"image {image_value.get('name')!r} has no decoded base level")
     name = image_value.get("name")
@@ -1820,6 +1874,7 @@ def write_pc_image(payload, image_value):
     depth = max(1, image_value["depth"])
     header = bytearray(36)
     struct.pack_into("<2I", header, 0, 3, INSERT)
+    header[10] = image_value.get("pc_no_picmip", 0)
     header[11] = image_value.get("pc_semantic", 2)
     struct.pack_into("<2I", header, 16, len(data), len(data))
     struct.pack_into("<3H", header, 24, width, height, depth)
@@ -1827,7 +1882,9 @@ def write_pc_image(payload, image_value):
     struct.pack_into("<I", header, 32, INLINE)
     payload.extend(header)
     payload.extend(name.encode() + b"\0")
-    payload.extend(struct.pack("<2B3H4sI", 0, 0, width, height, depth,
+    load_flags = image_value.get("pc_load_flags", (0, 0))
+    payload.extend(struct.pack("<2B3H4sI", load_flags[0], load_flags[1],
+                               width, height, depth,
                                fourcc, len(data)))
     payload.extend(data)
 
@@ -2694,6 +2751,92 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
     return bytes(result)
 
 
+def build_pc_load_zone(path):
+    """Convert a self-contained Xenon map-load zone to the PC v470 layout.
+
+    Load screens use only a shared 2D technique, materials, base-level images,
+    and rawfiles. Unlike a GfxWorld they do not need any reduced-world probes,
+    so this preserves their three native images and material bindings directly.
+    """
+    report = inspect(path, True, True)
+    source_techsets = [asset for asset in report["assets"]
+                       if asset["type"] == "techset"]
+    if len(source_techsets) != 1:
+        raise FormatError("load-zone conversion requires exactly one techset")
+    techset_name = source_techsets[0].get("name")
+    if techset_name != ",2d":
+        raise FormatError(
+            f"load-zone conversion requires the external ',2d' techset, got {techset_name!r}")
+
+    materials = [dict(asset) for asset in report["assets"]
+                 if asset["type"] == "material"]
+    if not materials:
+        raise FormatError("load-zone conversion requires at least one material")
+    images_by_name = {}
+    for material_value in materials:
+        material_value["techset_name"] = techset_name
+        for image_value in material_value.get("textures", []):
+            name = image_value.get("name")
+            if not isinstance(name, str) or "pc_base_level" not in image_value:
+                raise FormatError(
+                    f"load-zone material {material_value.get('name')!r} has no convertible inline image")
+            images_by_name.setdefault(name, image_value)
+    images = list(images_by_name.values())
+    for image_value in images:
+        image_value["pc_no_picmip"] = 1
+        image_value["pc_semantic"] = 0
+        levels = image_value.get("load_definition", {}).get("levels", 1)
+        image_value["pc_load_flags"] = (1, 2) if levels == 1 else (0, 0)
+    rawfiles = [asset for asset in report["assets"]
+                if asset["type"] == "rawfile" and "data" in asset]
+
+    # Native QoS PC map-load zones declare both 2D technique-set aliases and
+    # serialize each image inline beneath its material rather than as a
+    # top-level image asset.
+    techset_names = [",sm2/2d", techset_name]
+    assets = ([(7, name) for name in techset_names]
+              + [(6, material_value) for material_value in materials]
+              + [(32, rawfile) for rawfile in rawfiles])
+    script_strings = report["script_strings"]
+    payload = bytearray(struct.pack(
+        "<4I", len(script_strings), INLINE if script_strings else 0,
+        len(assets), INLINE))
+    payload.extend(struct.pack("<I", INLINE) * len(script_strings))
+    for value in script_strings:
+        payload.extend(value.encode() + b"\0")
+    asset_table_offset = len(payload)
+    payload.extend(b"".join(struct.pack("<2I", kind, INLINE)
+                            for kind, _ in assets))
+    # With no script-string stream, native PC load zones encode the manifest
+    # table at payload offset - 12. This gives 0x4000000D for asset index 1,
+    # matching the stock QoS load zones' reference to the external ',2d' set.
+    asset_table_base = asset_table_offset - 12
+
+    def manifest_pointer(index):
+        return 0x40000001 + asset_table_base + index * 8
+
+    techset_pointer = manifest_pointer(1)
+    for name in techset_names:
+        payload.extend(_pc_external_techset(name))
+    for material_value in materials:
+        write_pc_material(payload, material_value, techset_pointer,
+                          [INLINE] * len(material_value["textures"]), True)
+    for rawfile in rawfiles:
+        data = bytes.fromhex(rawfile["data"])
+        if not data or not data.endswith(b"\0"):
+            raise FormatError(f"rawfile {rawfile['name']!r} is not NUL-terminated")
+        payload.extend(struct.pack("<3I", INLINE, len(data) - 1, INLINE))
+        payload.extend(rawfile["name"].encode() + b"\0")
+        payload.extend(data)
+
+    allocation = len(payload) + 65536
+    result = bytearray(struct.pack("<7I", 470, len(payload), allocation,
+                                   65536, allocation, 0, 0))
+    result.extend(zlib.compress(payload, 1))
+    result.extend(bytes((-len(result)) % 32))
+    return bytes(result)
+
+
 def summarize_world_textures(gfx_world):
     materials = gfx_world.get("geometry", {}).get("surface_materials", [])
     images = [texture for material_value in materials
@@ -2727,6 +2870,8 @@ def main():
                         help="decode supported asset schemas and require exact stream consumption")
     parser.add_argument("--convert-map-probe", type=Path, metavar="OUTPUT",
                         help="emit a reduced PC v470 map zone for loader testing")
+    parser.add_argument("--convert-load-zone", type=Path, metavar="OUTPUT",
+                        help="emit a PC v470 2D map-load zone")
     parser.add_argument("--include-images", action="store_true",
                         help="include decoded base-level images in a converted map probe")
     parser.add_argument("--include-materials", action="store_true",
@@ -2757,6 +2902,18 @@ def main():
             print(json.dumps({"input": str(args.files[0]),
                               "output": str(args.convert_map_probe),
                               "bytes": args.convert_map_probe.stat().st_size}))
+            return 0
+        except (OSError, FormatError) as error:
+            print(json.dumps({"file": str(args.files[0]), "error": str(error)}))
+            return 1
+    if args.convert_load_zone:
+        if len(args.files) != 1:
+            parser.error("--convert-load-zone requires exactly one input")
+        try:
+            args.convert_load_zone.write_bytes(build_pc_load_zone(args.files[0]))
+            print(json.dumps({"input": str(args.files[0]),
+                              "output": str(args.convert_load_zone),
+                              "bytes": args.convert_load_zone.stat().st_size}))
             return 0
         except (OSError, FormatError) as error:
             print(json.dumps({"file": str(args.files[0]), "error": str(error)}))
