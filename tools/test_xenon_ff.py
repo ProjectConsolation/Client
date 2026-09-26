@@ -840,12 +840,12 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<2I", payload, 664),
                          (xenon_ff.INLINE, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<2I", payload, 576), (1, 1))
-        self.assertEqual(struct.unpack_from("<4I", payload, 584),
-                         (xenon_ff.INLINE,) * 4)
+        self.assertEqual(struct.unpack_from("<8I", payload, 584),
+                         (xenon_ff.INLINE,) * 8)
         self.assertEqual(struct.unpack_from("<2I", payload, 680),
                          (xenon_ff.INLINE, xenon_ff.INLINE))
-        self.assertEqual(struct.unpack_from("<3I", payload, 620),
-                         (xenon_ff.INLINE, xenon_ff.INLINE, xenon_ff.INLINE))
+        self.assertEqual(struct.unpack_from("<4I", payload, 616),
+                         (xenon_ff.INLINE,) * 4)
         self.assertEqual(struct.unpack_from("<I", payload, 700),
                          (xenon_ff.INLINE,))
         self.assertEqual(struct.unpack_from("<I", payload, 712), (0,))
@@ -904,7 +904,7 @@ class FastfileTests(unittest.TestCase):
         decoder = zlib.decompressobj()
         pc_payload = decoder.decompress(converted[28:])
         self.assertEqual(version, 470)
-        self.assertEqual(runtime_block_size, 65536)
+        self.assertEqual(runtime_block_size, 2 * 1024 * 1024)
         self.assertEqual(payload_size, len(pc_payload))
         self.assertTrue(decoder.eof)
         self.assertEqual(len(converted) % 32, 0)

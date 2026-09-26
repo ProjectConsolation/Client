@@ -2092,15 +2092,21 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     visibility_capacity = len(cells) + 1
     struct.pack_into("<2I", pc_header, 576,
                      visibility_capacity, visibility_capacity)
-    # Four one-byte-per-static-model visibility arrays are allocated from
-    # stream 1. They are runtime zero-fill storage and consume no archive data.
-    struct.pack_into("<4I", pc_header, 584, INLINE, INLINE, INLINE, INLINE)
+    # QoS PC renderer reset (sub_103A3E90) clears two groups of four runtime
+    # visibility arrays. GfxWorld+0x248..0x254 are sized by the static-model
+    # count, while +0x258..0x264 are sized by each of the four DPVS-world
+    # surface counts. mp_canals reaches the latter with 5,015 surfaces in its
+    # first DPVS world, so omitting those markers leaves +0x258 null and faults
+    # in the native zero-fill loop. All eight live in stream 1 and consume no
+    # archive bytes.
+    struct.pack_into("<8I", pc_header, 584, *((INLINE,) * 8))
     struct.pack_into("<2I", pc_header, 664, INLINE, INLINE)
     struct.pack_into("<2I", pc_header, 680, INLINE, INLINE)
-    # These three renderer work buffers are stream-1 zero-fill allocations.
-    # The native loader sizes them from the DPVS surface count and cell count;
-    # they consume virtual block space but no compressed archive bytes.
-    struct.pack_into("<3I", pc_header, 620, INLINE, INLINE, INLINE)
+    # These four renderer work buffers are stream-1 zero-fill allocations.
+    # GfxWorld+0x268 is the eight-byte-per-surface draw table initialized by
+    # sub_10391100; the following buffers are sized from the DPVS surface and
+    # cell counts. They consume virtual block space but no archive bytes.
+    struct.pack_into("<4I", pc_header, 616, INLINE, INLINE, INLINE, INLINE)
     # Primary-light visibility is a stream-1 bitset sized by the native loader.
     struct.pack_into("<I", pc_header, 700, INLINE)
     struct.pack_into("<I", pc_header, 712,
@@ -2791,7 +2797,17 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
     # probe has no physical/runtime payload, while its small temporary and
     # virtual streams safely fit in this conservative bound.
     allocation = max(len(payload), clip_block2_end) + 65536
-    runtime_allocation = 65536
+    # PC GfxWorld runtime-only buffers are allocated from XFile block 1. The
+    # restored DPVS surface tables alone exceed the old 64 KiB probe reserve on
+    # mp_canals, causing the loader to run past the block and clear the world
+    # pointer before DB_LinkXAssetEntry. Native QoS PC multiplayer zones reserve
+    # as much as ~1.3 MiB here, so retain conservative headroom for converted
+    # worlds and scale further for unusually large surface/light counts.
+    runtime_allocation = max(
+        2 * 1024 * 1024,
+        gfx_world["surface_count"] * 16
+        + len(com_world["primary_lights"]) * 16384
+        + 65536)
     result = bytearray(struct.pack("<7I", 470, len(payload), allocation,
                                    runtime_allocation, allocation, 0, 0))
     result.extend(zlib.compress(payload, 1))
