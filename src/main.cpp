@@ -42,7 +42,8 @@ namespace
 	{
 		return utils::flags::has_flag("offline")
 			|| utils::flags::has_flag("local_offline")
-			|| utils::flags::has_flag("local-offline");
+			|| utils::flags::has_flag("local-offline")
+			|| xlive::is_local_shim_loaded();
 	}
 
 	DECLSPEC_NORETURN void show_missing_gfwl_and_exit()

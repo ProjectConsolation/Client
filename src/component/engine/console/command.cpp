@@ -7,6 +7,7 @@
 #include "component/engine/scripting/gametypes.hpp"
 
 #include <utils/memory.hpp>
+#include <utils/flags.hpp>
 #include <utils/string.hpp>
 #include <utils/io.hpp>
 #include "component/engine/zones/fastfiles.hpp"
@@ -31,6 +32,70 @@ namespace command
 		std::unordered_map<std::string, std::function<void(params&)>> handlers;
 		int next_bot_number = 1;
 		std::vector<std::string> bot_names;
+		constexpr std::size_t max_launch_command_bytes = 0x4000;
+
+		bool is_launch_command(const std::string& argument)
+		{
+			return argument.size() > 1
+				&& (argument[0] == '+' || argument[0] == '-')
+				&& (std::isalpha(static_cast<unsigned char>(argument[1])) || argument[1] == '_');
+		}
+
+		bool is_bootstrap_switch(const std::string& command_name)
+		{
+			const auto lower = utils::string::to_lower(command_name);
+			return lower == "multiplayer" || lower == "offline"
+				|| lower == "local_offline" || lower == "local-offline";
+		}
+
+		std::string quote_launch_argument(std::string argument)
+		{
+			for (auto& character : argument)
+			{
+				if (character == '\r' || character == '\n' || character == '"')
+				{
+					character = ' ';
+				}
+			}
+			return '"' + argument + '"';
+		}
+
+		void forward_launch_commands()
+		{
+			const auto& arguments = utils::flags::get_launch_arguments();
+			std::string commands;
+			std::size_t forwarded_count = 0;
+			for (std::size_t index = 0; index < arguments.size();)
+			{
+				if (!is_launch_command(arguments[index]))
+				{
+					++index;
+					continue;
+				}
+
+				const auto command_name = arguments[index++].substr(1);
+				const auto bootstrap = is_bootstrap_switch(command_name);
+				std::string command_line = command_name;
+				while (index < arguments.size() && !is_launch_command(arguments[index]))
+				{
+					command_line.push_back(' ');
+					command_line.append(quote_launch_argument(arguments[index++]));
+				}
+
+				if (!bootstrap && commands.size() + command_line.size() + 1 <= max_launch_command_bytes)
+				{
+					commands.append(command_line);
+					commands.push_back('\n');
+					++forwarded_count;
+				}
+			}
+
+			if (!commands.empty())
+			{
+				console::info("forwarding %zu launcher command(s)\n", forwarded_count);
+				game::Cbuf_AddText(0, commands.c_str());
+			}
+		}
 
 		bool parse_integer(const char* value, std::uintptr_t* result)
 		{
@@ -947,8 +1012,9 @@ namespace command
 	public:
 		void post_load() override
 		{
-			scheduler::once([&]()
+				scheduler::once([&]()
 				{
+					forward_launch_commands();
 					load_bot_names();
 
 					/*add("kick", [](const params& argument)

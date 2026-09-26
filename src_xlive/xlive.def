@@ -1,5 +1,6 @@
 LIBRARY "xlive"
 EXPORTS
+    ConsolationXLiveShim @6000
     xlive_XWSAStartup @1 NONAME
     xlive_XWSACleanup @2 NONAME
     xlive_XSocketCreate @3 NONAME

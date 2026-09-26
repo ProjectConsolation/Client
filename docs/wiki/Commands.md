@@ -17,3 +17,11 @@ Project: Consolation includes a small set of utility and debugging commands that
 - If you provide a filename to `dvarDump` or `commandDump`, `.txt` is added automatically if needed.
 - `commandDump` is still rough and may produce mangled or incomplete results in some cases.
 - `listassetpool` can also be run without arguments to print the available pool numbers and asset type names.
+
+## Launch Commands
+
+Commands passed to `JB_Launcher_s.exe` with either a `+` or `-` prefix are forwarded to the multiplayer engine command buffer. Launcher-only switches such as `-multiplayer` and `-offline` are consumed by Consolation instead of being submitted as game commands.
+
+```text
+JB_Launcher_s.exe -multiplayer -offline -name mac-dev1 -seta com_maxfps 125 +devmap mp_barge
+```

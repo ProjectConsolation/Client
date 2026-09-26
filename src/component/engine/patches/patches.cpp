@@ -3,6 +3,8 @@
 
 #include "component/engine/console/console.hpp"
 #include "component/engine/console/command.hpp"
+#include "component/engine/patches/xlive.hpp"
+#include "component/utils/resources.hpp"
 #include "component/utils/scheduler.hpp"
 
 #include "game/game.hpp"
@@ -426,7 +428,8 @@ namespace patches
 		{
 			return utils::flags::has_flag("offline")
 				|| utils::flags::has_flag("local_offline")
-				|| utils::flags::has_flag("local-offline");
+				|| utils::flags::has_flag("local-offline")
+				|| xlive::is_local_shim_loaded();
 		}
 
 		void apply_local_offline_mode_patches()
@@ -731,7 +734,25 @@ namespace patches
 
 		HWND __stdcall create_window_ex_stub(DWORD ex_style, LPCSTR class_name, LPCSTR window_name, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE inst, LPVOID param)
 		{
-			if (!strcmp(class_name, "JB_MP"))
+			const auto named_class = class_name && !IS_INTRESOURCE(class_name);
+			if (named_class && !strcmp(class_name, "007 Splash Screen"))
+			{
+				if (resources::get_splash_dimensions(width, height))
+				{
+					x = (GetSystemMetrics(SM_CXFULLSCREEN) - width) / 2;
+					y = (GetSystemMetrics(SM_CYFULLSCREEN) - height) / 2;
+				}
+			}
+			else if (named_class && !strcmp(class_name, "Static") && parent)
+			{
+				char parent_class[64]{};
+				if (GetClassNameA(parent, parent_class, static_cast<int>(sizeof(parent_class)))
+					&& !strcmp(parent_class, "007 Splash Screen"))
+				{
+					resources::get_splash_dimensions(width, height);
+				}
+			}
+			else if (named_class && !strcmp(class_name, "JB_MP"))
 			{
 				window_name = "Project: Consolation - Multiplayer";
 

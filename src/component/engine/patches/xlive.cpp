@@ -5,6 +5,12 @@
 
 namespace xlive
 {
+	bool is_local_shim_loaded()
+	{
+		const auto module = GetModuleHandleA("xlive.dll");
+		return module && GetProcAddress(module, "ConsolationXLiveShim");
+	}
+
 	namespace
 	{
 		constexpr auto status_success = 0x00000000L;

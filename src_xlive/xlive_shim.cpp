@@ -5,6 +5,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <winternl.h>
 #include <shellapi.h>
 
 #include <algorithm>
@@ -198,6 +199,8 @@ namespace
 	};
 	#pragma pack(pop)
 
+	// Layouts adapted from the Microsoft Games for Windows - LIVE SDK
+	// xbox.h/xonline.h declarations and verified against the QoS PC consumer.
 	struct xuser_data
 	{
 		BYTE type;
@@ -224,6 +227,7 @@ namespace
 	static_assert(sizeof(xuser_data) == 24);
 #else
 	static_assert(sizeof(xuser_data) == 16);
+	static_assert(offsetof(xuser_data, int32_value) == 8);
 #endif
 
 	struct xuser_profile_setting
@@ -241,6 +245,9 @@ namespace
 	static_assert(sizeof(xuser_profile_setting) == 48);
 #else
 	static_assert(sizeof(xuser_profile_setting) == 40);
+	static_assert(offsetof(xuser_profile_setting, user) == 8);
+	static_assert(offsetof(xuser_profile_setting, setting_id) == 16);
+	static_assert(offsetof(xuser_profile_setting, data) == 24);
 #endif
 
 	struct xuser_read_profile_setting_result
@@ -303,16 +310,15 @@ namespace
 		return nullptr;
 	}
 
-	std::string command_line_name()
+	std::string parse_command_line_name(const wchar_t* command_line)
 	{
-		const auto command_line = GetCommandLineA();
-		if (!command_line)
+		if (!command_line || !*command_line)
 		{
 			return {};
 		}
 
 		int argc = 0;
-		const auto argvw = CommandLineToArgvW(GetCommandLineW(), &argc);
+		const auto argvw = CommandLineToArgvW(command_line, &argc);
 		if (!argvw)
 		{
 			return {};
@@ -333,7 +339,8 @@ namespace
 				break;
 			}
 
-			if ((_stricmp(arg, "-set") == 0 || _stricmp(arg, "-seta") == 0) && i + 2 < argc)
+			if ((_stricmp(arg, "-set") == 0 || _stricmp(arg, "-seta") == 0
+				|| _stricmp(arg, "+set") == 0 || _stricmp(arg, "+seta") == 0) && i + 2 < argc)
 			{
 				char key[256]{};
 				WideCharToMultiByte(CP_ACP, 0, argvw[i + 1], -1, key, sizeof(key), nullptr, nullptr);
@@ -349,6 +356,101 @@ namespace
 
 		LocalFree(argvw);
 		return result;
+	}
+
+	bool query_process_basic_information(HANDLE process, PROCESS_BASIC_INFORMATION& information)
+	{
+		using query_t = NTSTATUS(NTAPI*)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
+		static const auto query = reinterpret_cast<query_t>(
+			GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess"));
+		return query && query(process, ProcessBasicInformation, &information,
+			sizeof(information), nullptr) >= 0;
+	}
+
+	std::wstring parent_launcher_command_line()
+	{
+		PROCESS_BASIC_INFORMATION current_info{};
+		if (!query_process_basic_information(GetCurrentProcess(), current_info))
+		{
+			return {};
+		}
+
+		const auto parent_pid = static_cast<DWORD>(
+			reinterpret_cast<ULONG_PTR>(current_info.Reserved3));
+		const auto parent = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+			FALSE, parent_pid);
+		if (!parent)
+		{
+			return {};
+		}
+
+		std::wstring result;
+		do
+		{
+			std::array<wchar_t, 32768> image_path{};
+			DWORD image_path_chars = static_cast<DWORD>(image_path.size());
+			if (!QueryFullProcessImageNameW(parent, 0, image_path.data(), &image_path_chars)
+				|| _wcsicmp(std::filesystem::path(image_path.data()).filename().c_str(),
+					L"JB_Launcher_s.exe") != 0)
+			{
+				break;
+			}
+
+			PROCESS_BASIC_INFORMATION parent_info{};
+			if (!query_process_basic_information(parent, parent_info))
+			{
+				break;
+			}
+
+			PEB peb{};
+			SIZE_T bytes_read = 0;
+			if (!ReadProcessMemory(parent, parent_info.PebBaseAddress, &peb,
+				sizeof(peb), &bytes_read) || bytes_read != sizeof(peb) || !peb.ProcessParameters)
+			{
+				break;
+			}
+
+			RTL_USER_PROCESS_PARAMETERS parameters{};
+			if (!ReadProcessMemory(parent, peb.ProcessParameters, &parameters,
+				sizeof(parameters), &bytes_read) || bytes_read != sizeof(parameters))
+			{
+				break;
+			}
+
+			const auto& remote = parameters.CommandLine;
+			constexpr USHORT max_command_line_bytes = 32766 * sizeof(wchar_t);
+			if (!remote.Buffer || remote.Length == 0 || remote.Length > max_command_line_bytes
+				|| (remote.Length % sizeof(wchar_t)) != 0)
+			{
+				break;
+			}
+
+			result.resize(remote.Length / sizeof(wchar_t));
+			if (!ReadProcessMemory(parent, remote.Buffer, result.data(), remote.Length,
+				&bytes_read) || bytes_read != remote.Length)
+			{
+				result.clear();
+			}
+		} while (false);
+
+		CloseHandle(parent);
+		return result;
+	}
+
+	std::string command_line_name()
+	{
+		static const auto requested_name = []
+		{
+			auto name = parse_command_line_name(GetCommandLineW());
+			if (!name.empty())
+			{
+				return name;
+			}
+
+			const auto parent_command_line = parent_launcher_command_line();
+			return parse_command_line_name(parent_command_line.c_str());
+		}();
+		return requested_name;
 	}
 
 	unsigned int offline_instance_index()
@@ -386,19 +488,14 @@ namespace
 	std::string offline_name()
 	{
 		const auto requested_name = command_line_name();
-		if (auto* const name = find_dvar("name"); name && name->type == 7 && name->current.string && *name->current.string)
+		if (!requested_name.empty())
 		{
-			if (!requested_name.empty() && _stricmp(name->current.string, "Player") == 0)
-			{
-				return requested_name;
-			}
-			return name->current.string;
+			return requested_name;
 		}
 
-		auto from_command_line = command_line_name();
-		if (!from_command_line.empty())
+		if (auto* const name = find_dvar("name"); name && name->type == 7 && name->current.string && *name->current.string)
 		{
-			return from_command_line;
+			return name->current.string;
 		}
 
 		return "Player";
@@ -841,6 +938,11 @@ namespace
 	{
 		return finish_operation(overlapped, not_found);
 	}
+}
+
+extern "C" BOOL WINAPI ConsolationXLiveShim()
+{
+	return TRUE;
 }
 
 extern "C"
@@ -1371,6 +1473,13 @@ extern "C"
 		{
 			value_present[index] = read_file(profile_setting_path(title_id, setting_ids[index]), values[index]);
 			const auto type = (setting_ids[index] >> 28) & 0xF;
+			// QoS dereferences a binary pointer whenever it is non-null, even when
+			// cbData is zero, then copies the full 1000-byte title slot. Treat an
+			// empty persisted blob as absent so the engine selects its safe defaults.
+			if (type == xuser_data_type_binary && values[index].empty())
+			{
+				value_present[index] = false;
+			}
 			if (type == xuser_data_type_unicode || type == xuser_data_type_binary)
 			{
 				required += values[index].size();

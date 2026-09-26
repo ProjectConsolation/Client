@@ -109,6 +109,19 @@ namespace resources
 		SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
 	}
 
+	bool get_splash_dimensions(int& width, int& height)
+	{
+		BITMAP bitmap{};
+		if (!splash || GetObjectA(splash, sizeof(bitmap), &bitmap) != sizeof(bitmap))
+		{
+			return false;
+		}
+
+		width = bitmap.bmWidth;
+		height = std::abs(bitmap.bmHeight);
+		return width > 0 && height > 0;
+	}
+
 	class component final : public component_interface
 	{
 	public:
