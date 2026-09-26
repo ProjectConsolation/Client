@@ -820,6 +820,22 @@ def _little_endian_words(raw, start=0, end=None):
     return result
 
 
+def _convert_material_constants(raw):
+    """Convert Xenon MaterialConstantDef records without swapping their names."""
+    if len(raw) % 32:
+        raise FormatError("invalid material constant array")
+
+    converted = bytearray(len(raw))
+    for offset in range(0, len(raw), 32):
+        struct.pack_into("<I", converted, offset, u32(raw, offset))
+        converted[offset + 4:offset + 16] = raw[offset + 4:offset + 16]
+        struct.pack_into(
+            "<4I", converted, offset + 16,
+            *(u32(raw, offset + 16 + component * 4)
+              for component in range(4)))
+    return bytes(converted)
+
+
 def write_pc_com_world(payload, asset):
     header = _little_endian_words(bytes.fromhex(asset["header"]))
     lights = asset["primary_lights"]
@@ -1775,7 +1791,7 @@ def write_pc_material(payload, material_value, techset_pointer,
         payload.extend(struct.pack("<I", u32(definition)))
         payload.extend(definition[4:8])
         payload.extend(struct.pack("<I", image_pointer))
-    payload.extend(_little_endian_words(bytes.fromhex(
+    payload.extend(_convert_material_constants(bytes.fromhex(
         material_value.get("constants", ""))))
     payload.extend(_little_endian_words(bytes.fromhex(
         material_value.get("state_bits", ""))))

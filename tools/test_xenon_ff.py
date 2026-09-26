@@ -175,6 +175,22 @@ class FastfileTests(unittest.TestCase):
 
         self.assertEqual(payload[67], 0)
 
+    def test_material_constant_conversion_preserves_ascii_name(self):
+        source = (struct.pack(">I", 0x12345678)
+                  + b"colorTint\0\0\0"
+                  + struct.pack(">4f", 1.0, 0.5, -1.0, 0.0))
+
+        converted = xenon_ff._convert_material_constants(source)
+
+        self.assertEqual(struct.unpack_from("<I", converted)[0], 0x12345678)
+        self.assertEqual(converted[4:16], b"colorTint\0\0\0")
+        self.assertEqual(struct.unpack_from("<4f", converted, 16),
+                         (1.0, 0.5, -1.0, 0.0))
+
+    def test_material_constant_conversion_rejects_partial_record(self):
+        with self.assertRaisesRegex(xenon_ff.FormatError, "material constant"):
+            xenon_ff._convert_material_constants(bytes(31))
+
     def test_pc_techset_selection_prefers_exact_and_similar_channels(self):
         self.assertEqual(
             xenon_ff.select_pc_techset(",wc_l_sm_b0c0n0s0p0"),
