@@ -51,7 +51,7 @@ namespace renderer_state_validation
 			__asm
 			{
 				pushad
-				mov eax, [esp + 0x34]
+				mov eax, [esp + 0x38]
 				mov ecx, [esp + 0x1C]
 				mov edx, [esp + 0x08]
 				push edx
@@ -73,7 +73,7 @@ namespace renderer_state_validation
 			__asm
 			{
 				pushad
-				mov eax, [esp + 0x34]
+				mov eax, [esp + 0x38]
 				mov ecx, [esp + 0x14]
 				mov edx, [esp + 0x04]
 				push edx
@@ -95,7 +95,7 @@ namespace renderer_state_validation
 			__asm
 			{
 				pushad
-				mov eax, [esp + 0x34]
+				mov eax, [esp + 0x38]
 				mov ecx, [esp + 0x1C]
 				mov edx, [esp + 0x18]
 				push edx
