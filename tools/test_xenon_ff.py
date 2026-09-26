@@ -571,7 +571,8 @@ class FastfileTests(unittest.TestCase):
                 "nodes": struct.pack(">H", 36).hex(),
                 "indices": struct.pack(">H", 37).hex(),
                 "surfaces": surface.hex(),
-                "brush_models": struct.pack(">15I", *range(39, 54)).hex(),
+                "brush_models": struct.pack(">42I", *range(39, 81)).hex(),
+                "dpvs_worlds": struct.pack(">15I", *range(81, 96)).hex(),
                 "static_model_draws": bytes(40).hex(),
                 "static_model_insts": bytes(32).hex(),
                 "pc_static_model_pointers": [0x4000088D],
@@ -600,7 +601,8 @@ class FastfileTests(unittest.TestCase):
                                   5, 6, 7, 8), payload)
         self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
         self.assertIn(struct.pack("<11I", *range(24, 35)), payload)
-        self.assertNotIn(struct.pack("<15I", *range(39, 54)), payload)
+        self.assertIn(struct.pack("<42I", *range(39, 81)), payload)
+        self.assertIn(struct.pack("<15I", *range(81, 96)), payload)
         self.assertIn(struct.pack("<6f", -1.0, -2.0, -3.0,
                                   1.0, 2.0, 3.0), payload)
         pc_cell = xenon_ff._pc_gfx_cell_header(
@@ -814,13 +816,14 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(bytes.fromhex(collision["materials"]["data"]), material)
         self.assertEqual(report["unconsumed_payload_bytes"], 0)
 
-    def test_pc_gfx_world_brush_models_use_pc_stride(self):
+    def test_pc_gfx_world_preserves_dpvs_draw_records(self):
         asset = {
             "world_name": "maps/mp/test.d3dbsp",
             "name": "mp_test",
             "geometry": {
                 "planes": "", "nodes": "", "indices": "", "surfaces": "",
-                "brush_models": bytes(4 * 60).hex(),
+                "brush_models": bytes(4 * 168).hex(),
+                "dpvs_worlds": bytes(4 * 60).hex(),
                 "sky_start_surfs": "", "vertices": "", "vertex_layers": "",
                 "static_model_draws": "", "static_model_insts": "",
                 "cells": [],
@@ -833,7 +836,7 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<2I", payload, 352),
                          (4, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<2I", payload, 360),
-                         (1, xenon_ff.INLINE))
+                         (4, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<2I", payload, 664),
                          (xenon_ff.INLINE, xenon_ff.INLINE))
         self.assertEqual(struct.unpack_from("<2I", payload, 576), (1, 1))
@@ -847,8 +850,9 @@ class FastfileTests(unittest.TestCase):
                          (xenon_ff.INLINE,))
         self.assertEqual(struct.unpack_from("<I", payload, 712), (0,))
         names = (b"maps/mp/test.d3dbsp\0mp_test\0")
-        self.assertEqual(len(payload), 728 + len(names) + 68 + 4 * 168 + 60)
-        self.assertEqual(payload[-(4 * 168 + 60):], bytes(4 * 168 + 60))
+        self.assertEqual(len(payload), 728 + len(names) + 68 + 4 * 168 + 4 * 60)
+        self.assertEqual(payload[-(4 * 168 + 4 * 60):],
+                         bytes(4 * 168 + 4 * 60))
 
         lit_payload = bytearray()
         xenon_ff.write_pc_gfx_world(lit_payload, asset, 3)

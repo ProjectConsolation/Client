@@ -959,14 +959,26 @@ def _gfx_dpvs_planes(reader, header):
     last_offset = 2 * (index + 5)
     if last_offset + 2 > len(header):
         raise FormatError("gfx_map plane index exceeds its embedded header")
+    plane_indices = b""
     if u32(header, 24):
-        reader.take(2 * (u16(header, last_offset) - u16(header, first_offset) + 1))
+        plane_indices = reader.take(
+            2 * (u16(header, last_offset) - u16(header, first_offset) + 1))
+    cell_bits = b""
     if u32(header, 32):
-        reader.take(u32(header, 28))
+        cell_bits = reader.take(u32(header, 28))
+    scene_ent_cell_bits = b""
     if u32(header, 40):
-        reader.take(u32(header, 36) * 4)
+        scene_ent_cell_bits = reader.take(u32(header, 36) * 4)
+    brush_models = b""
     if u32(header, 48):
-        reader.take(u32(header, 44) * 168)
+        brush_models = reader.take(u32(header, 44) * 168)
+    return {
+        "raw": header.hex(),
+        "plane_indices": plane_indices.hex(),
+        "cell_bits": cell_bits.hex(),
+        "scene_ent_cell_bits": scene_ent_cell_bits.hex(),
+        "brush_models": brush_models.hex(),
+    }
 
 
 def resolve_gfx_surface_materials(surfaces, materials):
@@ -1091,7 +1103,7 @@ def gfx_map(reader, pointer, capture=False):
             if u32(records, offset) in (INLINE, INSERT):
                 image(reader, u32(records, offset), capture)
 
-    _gfx_dpvs_planes(reader, header[408:460])
+    dpvs_planes = _gfx_dpvs_planes(reader, header[408:460])
     draw_surfaces = b""
     if u32(header, 464):
         draw_surfaces = reader.take(u32(header, 460) * 60)
@@ -1161,9 +1173,11 @@ def gfx_map(reader, pointer, capture=False):
             "surface_materials": surface_materials,
             "surface_material_slot_base": (
                 hex(material_slot_base) if material_slot_base is not None else None),
-            "brush_models": draw_surfaces.hex(),
+            "brush_models": dpvs_planes["brush_models"],
+            "dpvs_worlds": draw_surfaces.hex(),
             "static_model_draws": static_model_draws.hex(),
             "static_model_insts": static_model_insts.hex(),
+            "dpvs_planes": dpvs_planes,
             "cells": parsed_cells,
             "reflection_probes": reflection_probes,
             "sky_start_surfs": sky_start_surfs.hex(),
@@ -1910,6 +1924,35 @@ def _write_pc_gfx_aabb_nested(payload, tree):
         _write_pc_gfx_aabb_nested(payload, child)
 
 
+def _pc_gfx_dpvs_planes_header(dpvs_planes):
+    raw = bytes.fromhex(dpvs_planes.get("raw", ""))
+    if not raw:
+        return bytes(52)
+    if len(raw) != 52:
+        raise FormatError("invalid Xbox GfxWorld DPVS-plane header")
+
+    converted = bytearray(52)
+    # The leading 16 bytes are eight uint16 partition boundaries. The rest is
+    # composed of 32-bit scalars and archive pointers on both platforms.
+    converted[:16] = _little_endian_u16_array(raw[:16])
+    converted[16:] = _little_endian_words(raw[16:])
+    for offset, field in ((24, "plane_indices"), (32, "cell_bits"),
+                          (40, "scene_ent_cell_bits"), (48, "brush_models")):
+        struct.pack_into("<I", converted, offset,
+                         INLINE if dpvs_planes.get(field) else 0)
+    return bytes(converted)
+
+
+def _write_pc_gfx_dpvs_planes_nested(payload, dpvs_planes):
+    payload.extend(_little_endian_u16_array(bytes.fromhex(
+        dpvs_planes.get("plane_indices", ""))))
+    payload.extend(bytes.fromhex(dpvs_planes.get("cell_bits", "")))
+    payload.extend(_little_endian_words(bytes.fromhex(
+        dpvs_planes.get("scene_ent_cell_bits", ""))))
+    payload.extend(_little_endian_words(bytes.fromhex(
+        dpvs_planes.get("brush_models", ""))))
+
+
 def _pc_gfx_cell_header(cell, include_static_models=False,
                         include_empty_tree=False):
     raw = bytes.fromhex(cell["raw"])
@@ -1967,6 +2010,9 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     indices = bytes.fromhex(geometry["indices"])
     xbox_surfaces = bytes.fromhex(geometry["surfaces"])
     xbox_brush_models = bytes.fromhex(geometry.get("brush_models", ""))
+    dpvs_planes = dict(geometry.get("dpvs_planes", {}))
+    dpvs_planes.setdefault("brush_models", geometry.get("brush_models", ""))
+    dpvs_worlds = bytes.fromhex(geometry.get("dpvs_worlds", ""))
     sky_start_surfs = bytes.fromhex(geometry["sky_start_surfs"])
     xbox_vertices = bytes.fromhex(geometry["vertices"])
     vertex_layers = bytes.fromhex(geometry["vertex_layers"])
@@ -1975,11 +2021,13 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     static_model_pointers = geometry.get("pc_static_model_pointers")
     cells = geometry.get("cells", [])
 
-    if len(xbox_surfaces) % 72 or len(xbox_brush_models) % 60 or len(xbox_vertices) % 44:
+    if (len(xbox_surfaces) % 72 or len(xbox_brush_models) % 168
+            or len(dpvs_worlds) % 60 or len(xbox_vertices) % 44):
         raise FormatError("invalid captured Xbox world geometry")
     surface_count = len(xbox_surfaces) // 72
     vertex_count = len(xbox_vertices) // 44
-    brush_model_count = len(xbox_brush_models) // 60
+    brush_model_count = len(xbox_brush_models) // 168
+    dpvs_world_count = len(dpvs_worlds) // 60
     static_model_count = len(static_draws) // 40
     if len(static_draws) % 40 or len(static_instances) != static_model_count * 32:
         raise FormatError("invalid captured Xbox static-model arrays")
@@ -2033,11 +2081,11 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
                      INLINE if include_static_models else 0)
     struct.pack_into("<3I", pc_header, 288, len(cells),
                      (len(cells) + 31) // 32, INLINE if cells else 0)
+    pc_header[308:360] = _pc_gfx_dpvs_planes_header(dpvs_planes)
     struct.pack_into("<2I", pc_header, 352, brush_model_count,
                      INLINE if brush_model_count else 0)
-    # R_UpdateScene always reads the first 60-byte DPVS world record before
-    # checking its internal surface count.
-    struct.pack_into("<2I", pc_header, 360, 1, INLINE)
+    struct.pack_into("<2I", pc_header, 360, dpvs_world_count,
+                     INLINE if dpvs_world_count else 0)
     # Renderer visibility initialization clears these buffers even when the
     # associated secondary visibility counts are zero. The free-list arrays
     # need one terminator entry beyond the world cell count.
@@ -2085,11 +2133,12 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     for cell in cells:
         _write_pc_gfx_cell_nested(
             payload, cell, include_cell_trees, include_empty_cell_trees)
-    # PC GfxWorld brush models are 168 bytes (Xbox records are 60). The
-    # reduced probe has no brush collision, so retain the count with empty
-    # PC-sized records instead of shifting every subsequent asset in the zone.
-    payload.extend(bytes(brush_model_count * 168))
-    payload.extend(bytes(60))
+    # QoS uses the same 52-byte DPVS-plane header, 168-byte brush-model bounds,
+    # and 60-byte DPVS world records on PC and Xbox. These records own the
+    # surface ranges used for world draw submission; emitting an empty record
+    # leaves collision intact but prevents any map geometry from being drawn.
+    _write_pc_gfx_dpvs_planes_nested(payload, dpvs_planes)
+    payload.extend(_little_endian_words(dpvs_worlds))
     payload.extend(pc_vertices)
     payload.extend(vertex_layers)
     payload.extend(bytes(primary_light_count * 12))

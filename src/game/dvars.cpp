@@ -58,6 +58,8 @@ namespace dvars
 
 	namespace
 	{
+		constexpr auto cg_initialized_address = 0x129FE8E4;
+
 		void apply_safe_area_to_hud()
 		{
 			if (!safeArea_horizontal || !safeArea_vertical)
@@ -82,8 +84,15 @@ namespace dvars
 				return;
 			}
 
-			const auto horizontal_value = safeArea_horizontal->current.value;
-			const auto vertical_value = safeArea_vertical->current.value;
+			// scrPlaceView is shared by the HUD, loading screens, and front-end UI.
+			// Apply user insets only while a cgame is active, and explicitly restore
+			// full bounds when leaving it so menus do not inherit the last HUD area.
+			const auto cgame_active = *reinterpret_cast<const std::uintptr_t*>(
+				game::game_offset(cg_initialized_address)) != 0;
+			const auto horizontal_value = cgame_active
+				? safeArea_horizontal->current.value : 1.0f;
+			const auto vertical_value = cgame_active
+				? safeArea_vertical->current.value : 1.0f;
 			const auto horizontal = std::isfinite(horizontal_value)
 				? std::clamp(horizontal_value, 0.0f, 1.0f) : 1.0f;
 			const auto vertical = std::isfinite(vertical_value)
