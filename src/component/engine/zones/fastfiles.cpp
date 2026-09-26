@@ -43,6 +43,10 @@ namespace fastfiles
 		std::uintptr_t renderer_surface_remap_continue = 0;
 		std::uintptr_t renderer_surface_list_continue = 0;
 		std::uintptr_t renderer_surface_list_return = 0;
+		std::uintptr_t renderer_reflection_probe_continue = 0;
+		std::uintptr_t renderer_reflection_probe_skip = 0;
+		std::uintptr_t renderer_reflection_probe_secondary_continue = 0;
+		std::uintptr_t renderer_reflection_probe_secondary_skip = 0;
 		std::uintptr_t gfx_world_pointer_address = 0;
 		std::uintptr_t cg_initialized_address = 0;
 
@@ -810,6 +814,56 @@ namespace fastfiles
 			return zones[zone_index].flags;
 		}
 
+		__declspec(naked) void renderer_reflection_probe_stub()
+		{
+			__asm
+			{
+				// QoS PC 1.1 resolves the draw-surface reflection-probe index through
+				// GfxWorld+0x10C. The Xenon source has two 16-byte records here, but
+				// their cubemap format is not portable yet. A reduced world therefore
+				// has no complete PC probe image table. Complete native worlds retain
+				// the original lookup; absent tables and null image records take the
+				// function's native no-binding branch.
+				mov edx, dword ptr[10E29B3Ch]
+				shrd eax, edi, 15h
+				and eax, 0FFh
+				shl eax, 4
+				test edx, edx
+				jz no_reflection_probe
+				mov eax, dword ptr[eax + edx + 0Ch]
+				test eax, eax
+				jz no_reflection_probe
+				jmp dword ptr[renderer_reflection_probe_continue]
+
+			no_reflection_probe:
+				jmp dword ptr[renderer_reflection_probe_skip]
+			}
+		}
+
+		__declspec(naked) void renderer_reflection_probe_secondary_stub()
+		{
+			__asm
+			{
+				// A second draw-surface path performs the same GfxWorld+0x10C
+				// reflection-probe lookup. It has different continuation and skip
+				// addresses, so keep a distinct trampoline while applying the same
+				// reduced-world guard.
+				mov edx, dword ptr[10E29B3Ch]
+				shrd eax, edi, 15h
+				and eax, 0FFh
+				shl eax, 4
+				test edx, edx
+				jz no_reflection_probe
+				mov eax, dword ptr[eax + edx + 0Ch]
+				test eax, eax
+				jz no_reflection_probe
+				jmp dword ptr[renderer_reflection_probe_secondary_continue]
+
+			no_reflection_probe:
+				jmp dword ptr[renderer_reflection_probe_secondary_skip]
+			}
+		}
+
 		__declspec(naked) void renderer_surface_visibility_stub()
 		{
 			__asm
@@ -854,140 +908,6 @@ namespace fastfiles
 			}
 		}
 
-		void log_canals_world_materials(const game::XAssetEntry* entry)
-		{
-			// Temporary QoS PC 1.1 diagnostic for the generated Xenon map probe.
-			// The offsets and 48-byte surface stride come from the native PC
-			// GfxWorld loader at 0x103D8960 and its surface loader.
-			if (!entry || !entry->asset.header.data)
-			{
-				return;
-			}
-
-			const auto* const world = static_cast<const unsigned char*>(entry->asset.header.data);
-			const auto surface_count = *reinterpret_cast<const unsigned int*>(world + 32);
-			const auto* const surfaces = *reinterpret_cast<const unsigned char* const*>(world + 36);
-			if (!surfaces || surface_count > 100000)
-			{
-				game::Com_Printf(16, "^1[canals-materials] invalid surface table count=%u surfaces=%p\n",
-					surface_count, surfaces);
-				return;
-			}
-
-			unsigned int null_materials = 0;
-			unsigned int white_materials = 0;
-			unsigned int textured_materials = 0;
-			std::unordered_set<std::string> samples;
-			for (unsigned int index = 0; index < surface_count; ++index)
-			{
-				const auto* const material = *reinterpret_cast<game::Material* const*>(
-					surfaces + index * 48 + 16);
-				if (!material || !material->name)
-				{
-					++null_materials;
-					continue;
-				}
-
-				if (!_stricmp(material->name, "white") || !_stricmp(material->name, ",white"))
-				{
-					++white_materials;
-				}
-				else
-				{
-					++textured_materials;
-				}
-
-				if (samples.size() < 12 && samples.emplace(material->name).second)
-				{
-					const auto* const technique_name = material->techniqueSet && material->techniqueSet->name
-						? material->techniqueSet->name : "<null>";
-					const char* image_name = "<none>";
-					if (material->textureCount > 0 && material->textureTable && material->textureTable[0].image)
-					{
-						const auto* const image = static_cast<const unsigned char*>(material->textureTable[0].image);
-						const auto* const loaded_name = *reinterpret_cast<const char* const*>(image + 32);
-						if (loaded_name)
-						{
-							image_name = loaded_name;
-						}
-					}
-
-					game::Com_Printf(16,
-						"^5[canals-materials] sample=%s techset=%s textures=%u image0=%s\n",
-						material->name, technique_name,
-						static_cast<unsigned int>(static_cast<unsigned char>(material->textureCount)),
-						image_name);
-
-					if (samples.size() <= 4)
-					{
-						unsigned int technique_count = 0;
-						std::string techniques;
-						if (material->techniqueSet)
-						{
-							for (unsigned int technique_index = 0; technique_index < 43; ++technique_index)
-							{
-								const auto* const technique = material->techniqueSet->techniques[technique_index];
-								if (!technique)
-								{
-									continue;
-								}
-
-								++technique_count;
-								if (techniques.size() < 220)
-								{
-									if (!techniques.empty())
-									{
-										techniques += ",";
-									}
-
-									techniques += utils::string::va("%s:%u",
-										technique->name ? technique->name : "<unnamed>",
-										static_cast<unsigned int>(technique->numPasses));
-								}
-							}
-						}
-
-						game::Com_Printf(16,
-							"^5[canals-materials] technique-set=%s ptr=%p worldFormat=%u techniques=%u {%s}\n",
-							technique_name, material->techniqueSet,
-							material->techniqueSet
-								? static_cast<unsigned int>(static_cast<unsigned char>(material->techniqueSet->worldVertFormat))
-								: 0,
-							technique_count, techniques.c_str());
-					}
-
-					if (samples.size() <= 4 && material->textureTable)
-					{
-						const auto texture_count = static_cast<unsigned int>(
-							static_cast<unsigned char>(material->textureCount));
-						for (unsigned int texture_index = 0; texture_index < texture_count; ++texture_index)
-						{
-							const auto& texture = material->textureTable[texture_index];
-							const auto* const image = static_cast<const unsigned char*>(texture.image);
-							const auto* const texture_image_name = image
-								? *reinterpret_cast<const char* const*>(image + 32) : nullptr;
-							const auto gpu_texture = image
-								? *reinterpret_cast<void* const*>(image + 4) : nullptr;
-							const auto width = image
-								? *reinterpret_cast<const unsigned short*>(image + 24) : 0;
-							const auto height = image
-								? *reinterpret_cast<const unsigned short*>(image + 26) : 0;
-							game::Com_Printf(16,
-								"^5[canals-materials] texture material=%s slot=%u hash=0x%08X semantic=%u image=%s gpu=%p size=%ux%u\n",
-								material->name, texture_index, texture.typeHash,
-								static_cast<unsigned int>(static_cast<unsigned char>(texture.semantic)),
-								texture_image_name ? texture_image_name : "<null>", gpu_texture,
-								static_cast<unsigned int>(width), static_cast<unsigned int>(height));
-						}
-					}
-				}
-			}
-
-			game::Com_Printf(16,
-				"^5[canals-materials] surfaces=%u textured=%u white=%u null=%u unique-samples=%zu\n",
-				surface_count, textured_materials, white_materials, null_materials, samples.size());
-		}
-
 		game::XAssetEntry* db_link_xasset_entry_stub(game::XAssetEntry* entry, const int allow_override)
 		{
 			normalize_rawfile_name(entry);
@@ -1023,10 +943,6 @@ namespace fastfiles
 			{
 				game::Com_Printf(16, "^5[map-stage] link returned type=%d name=%s linked=%p\n",
 					type, incoming_name, linked_entry);
-				if (type == game::ASSET_TYPE_GFXWORLD && std::strstr(incoming_name, "mp_canals") != nullptr)
-				{
-					log_canals_world_materials(linked_entry ? linked_entry : entry);
-				}
 			}
 			auto* const log_entry = linked_entry ? linked_entry : entry;
 			if (log_entry)
@@ -1176,6 +1092,21 @@ namespace fastfiles
 			// array yet, so preserve native lookup only when the array exists.
 			reflection_probe_nearest_hook.create(game::game_offset(0x103A4840), reflection_probe_nearest_stub);
 			reflection_probe_nearest_original = reflection_probe_nearest_hook.get_original();
+			// Runtime crash evidence: 0x1037E7FF read 0x0000000C after resolving a
+			// draw surface with reflectionProbeIndex 0 through the absent reduced
+			// world's GfxWorld+268 probe table. The Xbox loader confirms a 16-byte
+			// record with the cubemap image pointer at +12; skip only that unavailable
+			// cubemap binding until its Xenos format is converted.
+			renderer_reflection_probe_continue = game::game_offset(0x1037E803);
+			renderer_reflection_probe_skip = game::game_offset(0x1037E819);
+			utils::hook::nop(game::game_offset(0x1037E7ED), 22);
+			utils::hook::jump(game::game_offset(0x1037E7ED), renderer_reflection_probe_stub);
+			// Runtime crash evidence: 0x1038060D is the corresponding lookup in
+			// the second draw-surface path. Guard its absent table/image record too.
+			renderer_reflection_probe_secondary_continue = game::game_offset(0x10380611);
+			renderer_reflection_probe_secondary_skip = game::game_offset(0x10380629);
+			utils::hook::nop(game::game_offset(0x103805FB), 22);
+			utils::hook::jump(game::game_offset(0x103805FB), renderer_reflection_probe_secondary_stub);
 			// Exit-time dump: 0x103678C9 read 0x13BC through a missing Xenon-world
 			// surface-remap table. Reuse the tree's contiguous firstSurface index.
 			renderer_surface_remap_continue = game::game_offset(0x103678CD);

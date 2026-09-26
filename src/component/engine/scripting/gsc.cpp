@@ -12,6 +12,9 @@
 #include <utils/io.hpp>
 #include <utils/string.hpp>
 
+#include <algorithm>
+#include <cctype>
+
 namespace gsc
 {
 	namespace
@@ -25,7 +28,182 @@ namespace gsc
 		std::unordered_map<const char*, const char*> replaced_functions;
 		const char* replaced_pos = nullptr;
 
-		std::unordered_map<std::string, game::RawFile*> loaded_scripts;
+		struct loaded_script
+		{
+			game::RawFile* rawfile{};
+			std::string source{};
+			std::string real_path{};
+		};
+
+		struct watched_script
+		{
+			std::string script_name{};
+			std::string file_name{};
+			std::string real_path{};
+			std::string source{};
+			std::filesystem::file_time_type write_time{};
+			std::unordered_map<std::string, std::vector<const char*>> function_positions{};
+		};
+
+		std::unordered_map<std::string, loaded_script> loaded_scripts;
+		std::unordered_map<std::string, std::string> hot_reload_sources;
+		std::unordered_map<std::string, watched_script> watched_scripts;
+		std::uint32_t hot_reload_generation{};
+		bool scripts_ready{};
+		utils::hook::detour free_scripts_hook;
+
+		bool& script_loading()
+		{
+			return *reinterpret_cast<bool*>(game::game_offset(0x118D5250));
+		}
+
+		const char* get_program_buffer()
+		{
+			return *reinterpret_cast<const char**>(game::game_offset(0x1173CBF0));
+		}
+
+		game::RawFile* make_rawfile(const char* file_name, const std::string& source_buffer)
+		{
+			const auto rawfile_ptr = utils::memory::allocate<game::RawFile>();
+			const auto name_len = std::strlen(file_name);
+			rawfile_ptr->name = static_cast<char*>(utils::memory::allocate(name_len + 1));
+			std::memcpy(const_cast<char*>(rawfile_ptr->name), file_name, name_len);
+			const_cast<char*>(rawfile_ptr->name)[name_len] = '\0';
+
+			const auto buffer_size = source_buffer.size();
+			rawfile_ptr->len = static_cast<unsigned int>(buffer_size + 1);
+			rawfile_ptr->buffer = static_cast<char*>(utils::memory::allocate(buffer_size + 1));
+			std::memcpy(rawfile_ptr->buffer, source_buffer.data(), buffer_size);
+			rawfile_ptr->buffer[buffer_size] = '\0';
+			return rawfile_ptr;
+		}
+
+		std::vector<std::string> get_function_names(const std::string& source)
+		{
+			std::string code = source;
+			bool in_string = false;
+			bool in_line_comment = false;
+			bool in_block_comment = false;
+			bool escaped = false;
+
+			for (std::size_t i = 0; i < code.size(); ++i)
+			{
+				const auto current = code[i];
+				const auto next = i + 1 < code.size() ? code[i + 1] : '\0';
+
+				if (in_line_comment)
+				{
+					if (current == '\n') in_line_comment = false;
+					else code[i] = ' ';
+					continue;
+				}
+
+				if (in_block_comment)
+				{
+					code[i] = ' ';
+					if (current == '*' && next == '/')
+					{
+						code[++i] = ' ';
+						in_block_comment = false;
+					}
+					continue;
+				}
+
+				if (in_string)
+				{
+					code[i] = ' ';
+					if (!escaped && current == '"') in_string = false;
+					escaped = !escaped && current == '\\';
+					continue;
+				}
+
+				if (current == '/' && next == '/')
+				{
+					code[i] = code[++i] = ' ';
+					in_line_comment = true;
+				}
+				else if (current == '/' && next == '*')
+				{
+					code[i] = code[++i] = ' ';
+					in_block_comment = true;
+				}
+				else if (current == '"')
+				{
+					code[i] = ' ';
+					in_string = true;
+					escaped = false;
+				}
+			}
+
+			std::vector<std::string> names{};
+			int brace_depth = 0;
+			for (std::size_t i = 0; i < code.size();)
+			{
+				if (code[i] == '{')
+				{
+					++brace_depth;
+					++i;
+					continue;
+				}
+				if (code[i] == '}')
+				{
+					brace_depth = std::max(0, brace_depth - 1);
+					++i;
+					continue;
+				}
+				if (brace_depth != 0 || !(std::isalpha(static_cast<unsigned char>(code[i])) || code[i] == '_'))
+				{
+					++i;
+					continue;
+				}
+
+				const auto name_start = i++;
+				while (i < code.size() && (std::isalnum(static_cast<unsigned char>(code[i])) || code[i] == '_')) ++i;
+				const auto name = code.substr(name_start, i - name_start);
+				while (i < code.size() && std::isspace(static_cast<unsigned char>(code[i]))) ++i;
+				if (i >= code.size() || code[i] != '(') continue;
+
+				int parenthesis_depth = 1;
+				for (++i; i < code.size() && parenthesis_depth; ++i)
+				{
+					if (code[i] == '(') ++parenthesis_depth;
+					else if (code[i] == ')') --parenthesis_depth;
+				}
+				while (i < code.size() && std::isspace(static_cast<unsigned char>(code[i]))) ++i;
+				if (parenthesis_depth == 0 && i < code.size() && code[i] == '{')
+				{
+					names.push_back(utils::string::to_lower(name));
+				}
+			}
+
+			std::sort(names.begin(), names.end());
+			names.erase(std::unique(names.begin(), names.end()), names.end());
+			return names;
+		}
+
+		void capture_function_positions(watched_script& script, const std::string& compiled_name,
+			const std::string& source, const bool replace_existing)
+		{
+			const auto* program_buffer = get_program_buffer();
+			if (!program_buffer) return;
+
+			for (const auto& function_name : get_function_names(source))
+			{
+				const auto handle = game::Scr_GetFunctionHandle(compiled_name.c_str(), function_name.c_str());
+				if (!handle) continue;
+
+				const auto* new_position = program_buffer + handle;
+				auto& positions = script.function_positions[function_name];
+				if (replace_existing)
+				{
+					for (const auto* old_position : positions)
+					{
+						replaced_functions[old_position] = new_position;
+					}
+				}
+				positions.push_back(new_position);
+			}
+		}
 
 		game::method_t player_get_method_stub(const char** name)
 		{
@@ -133,9 +311,9 @@ namespace gsc
 			utils::hook::invoke<void>(game::game_offset(0x10179920));
 		}
 
-		bool read_raw_script_file(const std::string& name, std::string* data)
+		bool read_raw_script_file(const std::string& name, std::string* data, std::string* real_path)
 		{
-			if (filesystem::read_file(name, data))
+			if (filesystem::read_file(name, data, real_path))
 			{
 				return true;
 			}
@@ -165,28 +343,22 @@ namespace gsc
 		{
 			if (const auto itr = loaded_scripts.find(file_name); itr != loaded_scripts.end())
 			{
-				return itr->second;
+				return itr->second.rawfile;
 			}
 
 			std::string source_buffer{};
-			if (!read_raw_script_file(file_name, &source_buffer) || source_buffer.empty())
+			std::string real_path{};
+			if (const auto source = hot_reload_sources.find(file_name); source != hot_reload_sources.end())
+			{
+				source_buffer = source->second;
+			}
+			else if (!read_raw_script_file(file_name, &source_buffer, &real_path))
 			{
 				return nullptr;
 			}
 
-			const auto rawfile_ptr = utils::memory::allocate<game::RawFile>();
-			const auto name_len = std::strlen(file_name);
-			rawfile_ptr->name = static_cast<char*>(utils::memory::allocate(name_len + 1));
-			std::memcpy(const_cast<char*>(rawfile_ptr->name), file_name, name_len);
-			const_cast<char*>(rawfile_ptr->name)[name_len] = '\0';
-
-			const auto buffer_size = source_buffer.size();
-			rawfile_ptr->len = static_cast<unsigned int>(buffer_size + 1);
-			rawfile_ptr->buffer = static_cast<char*>(utils::memory::allocate(buffer_size + 1));
-			std::memcpy(rawfile_ptr->buffer, source_buffer.data(), buffer_size);
-			rawfile_ptr->buffer[buffer_size] = '\0';
-
-			loaded_scripts[file_name] = rawfile_ptr;
+			auto* rawfile_ptr = make_rawfile(file_name, source_buffer);
+			loaded_scripts[file_name] = {rawfile_ptr, source_buffer, real_path};
 
 			console::debug("Loaded custom gsc '%s'\n", file_name);
 
@@ -207,6 +379,83 @@ namespace gsc
 			console::debug("Dumped %s\n", name);
 #endif
 			return rawfile;
+		}
+
+		void finish_script_loading_stub()
+		{
+			watched_scripts.clear();
+			for (const auto& [file_name, loaded] : loaded_scripts)
+			{
+				if (loaded.real_path.empty() || !file_name.ends_with(".gsc")) continue;
+
+				watched_script script{};
+				script.script_name = file_name.substr(0, file_name.size() - 4);
+				script.file_name = file_name;
+				script.real_path = loaded.real_path;
+				script.source = loaded.source;
+
+				std::error_code error{};
+				script.write_time = std::filesystem::last_write_time(script.real_path, error);
+				capture_function_positions(script, script.script_name, script.source, false);
+				watched_scripts.emplace(file_name, std::move(script));
+			}
+
+			// QoS normally tail-calls Scr_EndLoadScripts here. Retaining these four
+			// compiler lookup objects lets later generations append bytecode to the
+			// existing program hunk. Restore runtime error semantics while idle;
+			// Scr_FreeScripts is hooked below so native cleanup still owns the data.
+			script_loading() = false;
+			scripts_ready = true;
+		}
+
+		void free_scripts_stub()
+		{
+			scripts_ready = false;
+			if (*reinterpret_cast<std::uint32_t*>(game::game_offset(0x118B5238)))
+			{
+				script_loading() = true;
+			}
+
+			free_scripts_hook.invoke<void>();
+		}
+
+		void reload_script(watched_script& script, std::string source)
+		{
+			const auto generation = ++hot_reload_generation;
+			const auto alias_name = std::string(utils::string::va("scripts/__consolation_hot_%08x", generation));
+			const auto alias_file = alias_name + ".gsc";
+
+			hot_reload_sources[alias_file] = source;
+			console::info("reloading script file %s\n", script.file_name.c_str());
+
+			script_loading() = true;
+			const auto loaded = game::Scr_LoadScript(alias_name.c_str());
+			script_loading() = false;
+			if (!loaded)
+			{
+				console::warn("could not reload script file %s\n", script.file_name.c_str());
+				return;
+			}
+
+			capture_function_positions(script, alias_name, source, true);
+			script.source = std::move(source);
+		}
+
+		void poll_script_changes()
+		{
+			if (!scripts_ready) return;
+
+			for (auto& [name, script] : watched_scripts)
+			{
+				std::error_code error{};
+				const auto write_time = std::filesystem::last_write_time(script.real_path, error);
+				if (error || write_time == script.write_time) continue;
+
+				script.write_time = write_time;
+				std::string source{};
+				if (!utils::io::read_file(script.real_path, &source) || source == script.source) continue;
+				reload_script(script, std::move(source));
+			}
 		}
 
 		const char* get_code_pos_for_param(int index)
@@ -254,10 +503,10 @@ namespace gsc
 
 		void vm_execute_stub()
 		{
-			auto dword_116377F8 = game::game_offset(0x116377F8);
-			auto qword_11738440 = game::game_offset(0x11738440);
+			auto opcode = game::game_offset(0x116377F8);
+			auto code_pos = game::game_offset(0x11738440);
 
-			auto jmp_back_to_10237866 = game::game_offset(0x10237866);
+			auto resume = game::game_offset(0x10237866);
 
 			__asm
 			{
@@ -272,25 +521,31 @@ namespace gsc
 				jne set_pos
 
 				movzx eax, byte ptr[edx]
-				inc edx
+				mov edi, 1
+				add edx, edi
 
-				jmp loc_1
-				loc_1 :
+				jmp store_state
+				store_state:
 				cmp eax, 0x86
 
-					mov dword_116377F8, eax
-					mov dword ptr qword_11738440, edx
+					push ecx
+					mov ecx, opcode
+					mov dword ptr [ecx], eax
+					mov ecx, code_pos
+					mov dword ptr [ecx], edx
+					pop ecx
 
-					push jmp_back_to_10237866
+					push resume
 					retn
-					set_pos :
+				set_pos:
 				mov edx, replaced_pos
 					mov replaced_pos, 0
 
 					movzx eax, byte ptr[edx]
-					inc edx
+					mov edi, 1
+					add edx, edi
 
-					jmp loc_1
+					jmp store_state
 			}
 		}
 
@@ -461,8 +716,14 @@ namespace gsc
 			compile_error_hook.create(game::game_offset(0x1022DD40), compile_error_stub);
 			compile_error_2_hook.create(game::game_offset(0x1022DC70), compile_error_2_stub);
 
-			// hook vm_execute to redirect function calls
-			//utils::hook::jump(game::game_offset(0x1023784C), vm_execute_stub);
+			// Keep the compiler's lookup objects alive after initial game-script loading.
+			// The native shutdown path still owns and releases them with the program hunk.
+			utils::hook::jump(game::game_offset(0x101A8EFF), finish_script_loading_stub);
+			free_scripts_hook.create(game::game_offset(0x1022E4F0), free_scripts_stub);
+
+			// Redirect calls from every older function generation to the latest one.
+			utils::hook::jump(game::game_offset(0x1023784C), vm_execute_stub);
+			scheduler::loop(poll_script_changes, scheduler::pipeline::main, 250ms);
 
 			add_function("replacefunc", []()
 			{
@@ -486,6 +747,10 @@ namespace gsc
 				init_handles.clear();
 				replaced_functions.clear();
 				loaded_scripts.clear();
+				hot_reload_sources.clear();
+				watched_scripts.clear();
+				hot_reload_generation = 0;
+				scripts_ready = false;
 			});
 		}
 	};
