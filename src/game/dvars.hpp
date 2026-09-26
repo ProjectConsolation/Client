@@ -49,6 +49,9 @@ namespace dvars
 	extern game::dvar_s* cg_drawVersionX;
 	extern game::dvar_s* cg_drawVersionY;
 	extern game::dvar_s* cg_drawOrigin;
+	extern game::dvar_s* cg_drawMemInfo;
+	extern game::dvar_s* safeArea_horizontal;
+	extern game::dvar_s* safeArea_vertical;
 	extern game::dvar_s* r_aspectRatioCustomEnable;
 	extern game::dvar_s* r_aspectRatioCustom;
 	extern game::dvar_s* r_ultrawideCustomMode;

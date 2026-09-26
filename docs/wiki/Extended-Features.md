@@ -24,6 +24,31 @@ Input-related improvements for raw mouse handling.
 
 Utility commands for converting, deduping, and locating the active Project: Consolation config.
 
+### Increased Asset Limits
+
+Project: Consolation increases selected fastfile asset pools to targets used by
+[T4M](https://github.com/iAmThatMichael/T4M), described there as similar to or greater than
+*Black Ops* (T5) limits. The implementation is not a direct World at War patch: each asset-type
+index, stock count, backing-pool address, initializer address, and element stride was verified
+against the supported *Quantum of Solace* PC 1.1 multiplayer DLL.
+
+| Asset type | Stock QoS limit | Consolation limit |
+| --- | ---: | ---: |
+| FX | 340 | 600 |
+| Image | 2,800 | 4,096 |
+| Material | 1,626 | 4,096 |
+| Stringtable | 5 | 80 |
+| Weapon | 256 | 320 |
+| Xmodel | 640 | 1,500 |
+
+T4M also increases a separate `Loaded Sound` pool. QoS does not have that asset type: its index
+10 is `Sound Curve`, while its existing `Sound` pool is 10,000 entries. Applying T4M's loaded-sound
+count to either QoS type would therefore be incorrect.
+
+These asset-pool changes allocate approximately 680 KiB of additional backing storage. They do
+not alter the engine hunk or zone-memory limit. T4M's hard-coded `g_mem` addresses and byte values
+belong to World at War and are not applied to QoS without a separate QoS-specific verification.
+
 ### [[Commands]]
 
 Advanced helper commands such as `addbot`, `listassetpool`, `dvarDump`, and `commandDump`.

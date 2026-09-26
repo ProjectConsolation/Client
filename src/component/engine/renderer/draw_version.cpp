@@ -11,64 +11,45 @@ namespace draw_version
 {
 	namespace
 	{
-		constexpr float watermark_font_scale = 0.5f;
+		constexpr float watermark_font_scale = 0.95f;
 		constexpr float version_font_scale = 1.0f;
-		constexpr float watermark_margin_x = 12.0f;
-		constexpr float watermark_margin_y = 10.0f;
+		constexpr float watermark_margin_x = 6.0f;
+		constexpr float watermark_margin_y = 6.0f;
 		constexpr float shadow_offset_x = 1.0f;
 		constexpr float shadow_offset_y = 1.0f;
 		float shadow_color[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
-		float version_text_color[4] = { 0.20f, 0.58f, 1.0f, 0.85f };
-		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.65f };
+		float version_text_color[4] = { 0.20f, 0.55f, 1.0f, 0.85f };
+		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.35f };
 		const char* watermark_text = "Project: Consolation";
-		float resolve_layout_width(const game::ScreenPlacement& scr_place)
-		{
-			const auto real_a = scr_place.realViewportSize[0];
-			const auto real_b = scr_place.realViewportSize[1];
-			const auto virtual_a = scr_place.virtualViewableMax[0];
-			const auto virtual_b = scr_place.virtualViewableMax[1];
+		std::atomic_bool overlay_enabled{false};
 
-			if (real_a > 0.0f && real_b > 0.0f)
+		struct watermark_font
+		{
+			game::Font_s* font{};
+			float scale{watermark_font_scale};
+		};
+
+		watermark_font get_watermark_font()
+		{
+			auto* const normal_font = game::R_RegisterFont("fonts/normalFont");
+			if (!normal_font || normal_font->pixelHeight <= 0)
 			{
-				return std::max(real_a, real_b);
+				return {};
 			}
 
-			if (virtual_a > 0.0f && virtual_b > 0.0f)
+			const auto target_height = static_cast<float>(normal_font->pixelHeight)
+				* watermark_font_scale;
+			for (const auto* const name : {"fonts/extrabigfont", "fonts/bigfont"})
 			{
-				return std::max(virtual_a, virtual_b);
+				auto* const font = game::R_RegisterFont(name);
+				if (font && font->fontName && !_stricmp(font->fontName, name)
+					&& font->pixelHeight > normal_font->pixelHeight)
+				{
+					return {font, target_height / static_cast<float>(font->pixelHeight)};
+				}
 			}
 
-			return 640.0f;
-		}
-
-		float resolve_layout_height(const game::ScreenPlacement& scr_place)
-		{
-			const auto real_a = scr_place.realViewportSize[0];
-			const auto real_b = scr_place.realViewportSize[1];
-			const auto virtual_a = scr_place.virtualViewableMax[0];
-			const auto virtual_b = scr_place.virtualViewableMax[1];
-
-			if (real_a > 0.0f && real_b > 0.0f)
-			{
-				return std::min(real_a, real_b);
-			}
-
-			if (virtual_a > 0.0f && virtual_b > 0.0f)
-			{
-				return std::min(virtual_a, virtual_b);
-			}
-
-			return 480.0f;
-		}
-
-		float get_layout_width()
-		{
-			return resolve_layout_width(game::ScrPlace_GetViewPlacement());
-		}
-
-		float get_layout_height()
-		{
-			return resolve_layout_height(game::ScrPlace_GetViewPlacement());
+			return {normal_font, watermark_font_scale};
 		}
 
 		float get_line_height(const game::Font_s* font, float scale)
@@ -79,6 +60,30 @@ namespace draw_version
 			}
 
 			return static_cast<float>(font->pixelHeight) * scale;
+		}
+
+		float get_client_width()
+		{
+			RECT client_rect{};
+			const auto window = *game::main_window;
+			if (window && GetClientRect(window, &client_rect) && client_rect.right > client_rect.left)
+			{
+				return static_cast<float>(client_rect.right - client_rect.left);
+			}
+
+			return 640.0f;
+		}
+
+		float get_client_height()
+		{
+			RECT client_rect{};
+			const auto window = *game::main_window;
+			if (window && GetClientRect(window, &client_rect) && client_rect.bottom > client_rect.top)
+			{
+				return static_cast<float>(client_rect.bottom - client_rect.top);
+			}
+
+			return 480.0f;
 		}
 
 		const char* get_version_text()
@@ -111,16 +116,20 @@ namespace draw_version
 				return;
 			}
 
-			const auto* const font = game::R_RegisterFont("fonts/boldfont");
-			if (!font)
+			const auto selected_font = get_watermark_font();
+			if (!selected_font.font)
 			{
 				return;
 			}
 
-			const auto line_height = get_line_height(font, watermark_font_scale);
+			const auto line_height = get_line_height(selected_font.font, selected_font.scale);
+			const auto text_width = static_cast<float>(game::R_TextWidth(watermark_text,
+				0x7FFFFFFF, selected_font.font)) * selected_font.scale;
+			const auto x = std::max(1.0f, get_client_width() - text_width - watermark_margin_x);
 			const auto y = watermark_margin_y + line_height;
-			draw_text_shadowed(watermark_text, watermark_margin_x, y,
-				watermark_font_scale, font, watermark_text_color);
+			game::R_AddCmdDrawText(watermark_text, 0x7FFFFFFF,
+				selected_font.font, x, y, selected_font.scale,
+				selected_font.scale, 0.0f, watermark_text_color, 0);
 		}
 
 		void cg_draw_version()
@@ -130,7 +139,7 @@ namespace draw_version
 				return;
 			}
 
-			const auto* const font = game::R_RegisterFont("fonts/normalfont");
+			const auto* const font = game::R_RegisterFont("fonts/consolefont");
 			if (!font)
 			{
 				return;
@@ -142,18 +151,11 @@ namespace draw_version
 				return;
 			}
 
-			const auto text_width = static_cast<float>(game::R_TextWidth(version_buffer_ptr, std::numeric_limits<int>::max(), const_cast<game::Font_s*>(font)));
-			const auto x_offset = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
-			const auto y_offset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 18.0f;
-			const auto placement = game::ScrPlace_GetViewPlacement();
-			const auto right = placement.virtualViewableMax[0] > placement.virtualViewableMin[0]
-				? placement.virtualViewableMax[0]
-				: get_layout_width();
-			const auto bottom = placement.virtualViewableMax[1] > placement.virtualViewableMin[1]
-				? placement.virtualViewableMax[1]
-				: get_layout_height();
-			const auto x = right - text_width - x_offset;
-			const auto y = bottom - y_offset;
+			// Match the full-screen console footer's bottom-line anchor. X is an
+			// inset from the left; Y is an inset from the bottom.
+			const auto x = dvars::cg_drawVersionX ? dvars::cg_drawVersionX->current.value : 50.0f;
+			const auto bottom_inset = dvars::cg_drawVersionY ? dvars::cg_drawVersionY->current.value : 17.0f;
+			const auto y = get_client_height() - bottom_inset;
 
 			draw_text_shadowed(version_buffer_ptr, x, y, version_font_scale, font, version_text_color);
 		}
@@ -165,11 +167,22 @@ namespace draw_version
 	public:
 		void post_load() override
 		{
+			overlay_enabled.store(true, std::memory_order_release);
 			scheduler::loop([]()
 				{
+					if (!overlay_enabled.load(std::memory_order_acquire))
+					{
+						return;
+					}
+
 					cg_draw_watermark();
 					cg_draw_version();
 				}, scheduler::pipeline::renderer);
+		}
+
+		void pre_destroy() override
+		{
+			overlay_enabled.store(false, std::memory_order_release);
 		}
 	};
 }

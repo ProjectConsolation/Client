@@ -266,7 +266,7 @@ namespace game
 		GfxDrawSurf drawSurf; // 8
 		unsigned int surfaceTypeBits; // 16
 		unsigned __int16 hashIndex; // 20
-		char __pad0[8]; // 24 (rest of MaterialInfo?)
+		char __pad0[10]; // 22 (rest of MaterialInfo)
 		char stateBitsEntry[35]; // 32
 		char textureCount; // 67
 		char constantCount; // 68
@@ -278,7 +278,11 @@ namespace game
 		MaterialTextureDef* textureTable; // 88
 		MaterialConstantDef* constantTable; // 92
 		GfxStateBits* stateBitTable; // 96
-	}; static_assert(sizeof(Material) == 104);
+	};
+	static_assert(offsetof(Material, stateBitsEntry) == 32);
+	static_assert(offsetof(Material, textureCount) == 67);
+	static_assert(offsetof(Material, techniqueSet) == 84);
+	static_assert(sizeof(Material) == 104);
 
 #pragma pack(push, 2)
 #pragma warning(push)
@@ -706,11 +710,20 @@ namespace game
 		float scaleRealToVirtual[2];
 		float virtualViewableMin[2];
 		float virtualViewableMax[2];
+		// QoS PC's placement routines keep one additional scalar at this offset.
+		float unknown_28;
 		float realViewportSize[2];
 		float realViewableMin[2];
 		float realViewableMax[2];
 		float subScreen[2];
 	};
+	static_assert(offsetof(ScreenPlacement, virtualViewableMin) == 0x18);
+	static_assert(offsetof(ScreenPlacement, unknown_28) == 0x28);
+	static_assert(offsetof(ScreenPlacement, realViewportSize) == 0x2C);
+	static_assert(offsetof(ScreenPlacement, realViewableMin) == 0x34);
+	static_assert(offsetof(ScreenPlacement, realViewableMax) == 0x3C);
+	static_assert(offsetof(ScreenPlacement, subScreen) == 0x44);
+	static_assert(sizeof(ScreenPlacement) == 0x4C);
 
 	enum DvarType : uint8_t
 	{

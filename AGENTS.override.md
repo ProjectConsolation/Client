@@ -37,6 +37,10 @@ Use these loaded IDA databases as symbol and implementation references:
 - World at War, Xbox 360: `G:\DBs\WaW360.idb`
 - Black Ops 1 server, PC: `G:\DBs\PC\BO1\CoDMPServer.pdb`
 
+The COD4 alpha Xbox 360 database may appear in MCP as `G:\DBs\COD4A_PDBLoaded.i64`; this is the same COD4A reference as `G:\DBs\COD4A\_PDBLoaded.i64` under an alternate filename/path. Treat those names as aliases when MCP reports the former.
+
+For safe-area comparisons, COD4A `ScrPlace_CalcSafeAreaOffsets` (`0x82173A18`) populates real and virtual viewable bounds from `safeArea_horizontal` and `safeArea_vertical`; HUD alignment consumes those bounds. In the QoS PC `jb_mp_s.dll` IDB, `scrPlaceView` is at `0x1127BA50`, and the screen-placement alignment helper is at `0x1030DF40`. That QoS build has no native `safeArea_horizontal`/`safeArea_vertical` strings, so the client registers the dvars and updates only the HUD placement bounds. Never apply safe-area offsets to the Consolation watermark or version overlay.
+
 The installed Games for Windows LIVE SDK is mandatory for all XLive/GFWL reverse engineering:
 
 - GFWL SDK: `C:\Program Files (x86)\Microsoft Games for Windows - LIVE SDK`

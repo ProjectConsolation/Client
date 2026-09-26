@@ -11,7 +11,9 @@
 
 #include <utils/hook.hpp>
 #include <utils/flags.hpp>
+#include <utils/memory.hpp>
 #include <utils/nt.hpp>
+#include <utils/string.hpp>
 
 #include <unordered_set>
 #include <cstring>
@@ -37,8 +39,16 @@ namespace fastfiles
 		void* db_load_cmodel_original = nullptr;
 		void* db_load_map_ents_original = nullptr;
 		void* reflection_probe_nearest_original = nullptr;
+		std::uintptr_t renderer_surface_visibility_continue = 0;
+		std::uintptr_t renderer_surface_remap_continue = 0;
 		std::uintptr_t renderer_surface_list_continue = 0;
 		std::uintptr_t renderer_surface_list_return = 0;
+		std::uintptr_t renderer_reflection_probe_continue = 0;
+		std::uintptr_t renderer_reflection_probe_skip = 0;
+		std::uintptr_t renderer_reflection_probe_secondary_continue = 0;
+		std::uintptr_t renderer_reflection_probe_secondary_skip = 0;
+		std::uintptr_t gfx_world_pointer_address = 0;
+		std::uintptr_t cg_initialized_address = 0;
 
 		bool common_fastfiles_seen = false;
 		bool patch_consolation_loaded = false;
@@ -49,6 +59,54 @@ namespace fastfiles
 		unsigned int normalized_rawfile_name_index = 0;
 		std::mutex external_asset_log_mutex;
 		std::unordered_set<std::string> logged_external_assets;
+
+		struct asset_pool_extension
+		{
+			game::XAssetType type;
+			unsigned int stock_size;
+			unsigned int extended_size;
+			std::size_t element_size;
+			std::uintptr_t stock_pool_address;
+			std::uintptr_t initializer_address;
+		};
+
+		constexpr asset_pool_extension asset_pool_extensions[]
+		{
+			{game::ASSET_TYPE_XMODEL, 640, 1500, 0xF0, 0x108A5BB0, 0x103DECD0},
+			{game::ASSET_TYPE_MATERIAL, 1626, 4096, 0x68, 0x10933798, 0x103DEC90},
+			{game::ASSET_TYPE_IMAGE, 2800, 4096, 0x24, 0x1091ADD0, 0x103DEC00},
+			{game::ASSET_TYPE_WEAPON, 256, 320, 0xACC, 0x1098D360, 0x103DE960},
+			{game::ASSET_TYPE_FX, 340, 600, 0x20, 0x1095CD30, 0x103DE920},
+			{game::ASSET_TYPE_STRINGTABLE, 5, 80, 0x10, 0x1098CC88, 0x103DE870},
+		};
+
+		void extend_asset_pools()
+		{
+			// Pool targets are adapted from iAmThatMichael/T4M's
+			// PatchT4MemoryLimits.cpp, but every address, stock count, and element
+			// stride below is verified against QoS PC 1.1. DB_InitXAssetPools
+			// (0x103DFA90) walks 38 entries and invokes the corresponding initializer
+			// from 0x1055E898 with the pool pointer and count.
+			static_assert(sizeof(game::Material) == 104);
+			auto** const asset_pools = reinterpret_cast<void**>(game::game_offset(0x1055EA60));
+			auto* const pool_sizes = reinterpret_cast<unsigned int*>(game::game_offset(0x1055E800));
+			auto** const pool_initializers = reinterpret_cast<void**>(game::game_offset(0x1055E898));
+
+			for (const auto& extension : asset_pool_extensions)
+			{
+				const auto type = static_cast<unsigned int>(extension.type);
+				if (pool_sizes[type] != extension.stock_size
+					|| asset_pools[type] != reinterpret_cast<void*>(game::game_offset(extension.stock_pool_address))
+					|| pool_initializers[type] != reinterpret_cast<void*>(game::game_offset(extension.initializer_address)))
+				{
+					throw std::runtime_error("QoS asset-pool layout did not match PC 1.1");
+				}
+
+				asset_pools[type] = utils::memory::get_allocator()->allocate(
+					extension.element_size * extension.extended_size);
+				pool_sizes[type] = extension.extended_size;
+			}
+		}
 
 		bool debug_xasset()
 		{
@@ -83,10 +141,28 @@ namespace fastfiles
 			{
 				// QoS PC 1.1 sub_1036E6F0 can retain a non-zero surface count
 				// after its TLS list has been released during a Xenon map teardown.
+				// During an active converted map, use the serialized GfxWorld DPVS
+				// remap table when the PC-only TLS alias was never initialized.
 				mov edx, dword ptr[edi + 1Ch]
 				mov eax, dword ptr[eax + 20h]
 				test eax, eax
+				jnz have_list
+				mov eax, dword ptr[cg_initialized_address]
+				test eax, eax
 				jz no_list
+				cmp dword ptr[eax], 0
+				jz no_list
+				mov eax, dword ptr[gfx_world_pointer_address]
+				test eax, eax
+				jz no_list
+				mov eax, dword ptr[eax]
+				test eax, eax
+				jz no_list
+				mov eax, dword ptr[eax + 2B8h]
+				test eax, eax
+				jz no_list
+
+			have_list:
 				jmp dword ptr[renderer_surface_list_continue]
 
 			no_list:
@@ -738,6 +814,100 @@ namespace fastfiles
 			return zones[zone_index].flags;
 		}
 
+		__declspec(naked) void renderer_reflection_probe_stub()
+		{
+			__asm
+			{
+				// QoS PC 1.1 resolves the draw-surface reflection-probe index through
+				// GfxWorld+0x10C. The Xenon source has two 16-byte records here, but
+				// their cubemap format is not portable yet. A reduced world therefore
+				// has no complete PC probe image table. Complete native worlds retain
+				// the original lookup; absent tables and null image records take the
+				// function's native no-binding branch.
+				mov edx, dword ptr[10E29B3Ch]
+				shrd eax, edi, 15h
+				and eax, 0FFh
+				shl eax, 4
+				test edx, edx
+				jz no_reflection_probe
+				mov eax, dword ptr[eax + edx + 0Ch]
+				test eax, eax
+				jz no_reflection_probe
+				jmp dword ptr[renderer_reflection_probe_continue]
+
+			no_reflection_probe:
+				jmp dword ptr[renderer_reflection_probe_skip]
+			}
+		}
+
+		__declspec(naked) void renderer_reflection_probe_secondary_stub()
+		{
+			__asm
+			{
+				// A second draw-surface path performs the same GfxWorld+0x10C
+				// reflection-probe lookup. It has different continuation and skip
+				// addresses, so keep a distinct trampoline while applying the same
+				// reduced-world guard.
+				mov edx, dword ptr[10E29B3Ch]
+				shrd eax, edi, 15h
+				and eax, 0FFh
+				shl eax, 4
+				test edx, edx
+				jz no_reflection_probe
+				mov eax, dword ptr[eax + edx + 0Ch]
+				test eax, eax
+				jz no_reflection_probe
+				jmp dword ptr[renderer_reflection_probe_secondary_continue]
+
+			no_reflection_probe:
+				jmp dword ptr[renderer_reflection_probe_secondary_skip]
+			}
+		}
+
+		__declspec(naked) void renderer_surface_visibility_stub()
+		{
+			__asm
+			{
+				// QoS PC 1.1 normally remaps the GfxAabbTree's contiguous surface
+				// range through a PC-only uint16 list in TLS. Reduced Xenon worlds
+				// do not serialize that list. A low address here is the null base plus
+				// firstSurface * 2, so use the already-validated contiguous index.
+				cmp edx, 10000h
+				jb use_contiguous_index
+				movzx eax, word ptr[edx + ecx * 2]
+				jmp load_tls
+
+			use_contiguous_index:
+				mov eax, dword ptr[ebx + 1Ch]
+				add eax, ecx
+
+			load_tls:
+				mov edi, fs:[2Ch]
+				mov edi, dword ptr[edi + esi * 4]
+				jmp dword ptr[renderer_surface_visibility_continue]
+			}
+		}
+
+		__declspec(naked) void renderer_surface_remap_stub()
+		{
+			__asm
+			{
+				// A converted Xenon GfxWorld may omit the PC surface-remap table.
+				// This loop already has (firstSurface + index) * 2 in EBP; when the
+				// optional remap pointer is absent, use that contiguous surface index.
+				mov eax, dword ptr[edx + 2B8h]
+				test eax, eax
+				jz use_contiguous_index
+				movzx esi, word ptr[eax + ebp]
+				jmp dword ptr[renderer_surface_remap_continue]
+
+			use_contiguous_index:
+				mov esi, ebp
+				shr esi, 1
+				jmp dword ptr[renderer_surface_remap_continue]
+			}
+		}
+
 		game::XAssetEntry* db_link_xasset_entry_stub(game::XAssetEntry* entry, const int allow_override)
 		{
 			normalize_rawfile_name(entry);
@@ -914,11 +1084,40 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
+			extend_asset_pools();
+			gfx_world_pointer_address = game::game_offset(0x10C4A354);
+			cg_initialized_address = game::game_offset(0x129FE8E4);
 			// sub_103A4840 assumes every cell probe index has a matching world
 			// origin array. Generated reduced worlds do not serialize that PC-only
 			// array yet, so preserve native lookup only when the array exists.
 			reflection_probe_nearest_hook.create(game::game_offset(0x103A4840), reflection_probe_nearest_stub);
 			reflection_probe_nearest_original = reflection_probe_nearest_hook.get_original();
+			// Runtime crash evidence: 0x1037E7FF read 0x0000000C after resolving a
+			// draw surface with reflectionProbeIndex 0 through the absent reduced
+			// world's GfxWorld+268 probe table. The Xbox loader confirms a 16-byte
+			// record with the cubemap image pointer at +12; skip only that unavailable
+			// cubemap binding until its Xenos format is converted.
+			renderer_reflection_probe_continue = game::game_offset(0x1037E803);
+			renderer_reflection_probe_skip = game::game_offset(0x1037E819);
+			utils::hook::nop(game::game_offset(0x1037E7ED), 22);
+			utils::hook::jump(game::game_offset(0x1037E7ED), renderer_reflection_probe_stub);
+			// Runtime crash evidence: 0x1038060D is the corresponding lookup in
+			// the second draw-surface path. Guard its absent table/image record too.
+			renderer_reflection_probe_secondary_continue = game::game_offset(0x10380611);
+			renderer_reflection_probe_secondary_skip = game::game_offset(0x10380629);
+			utils::hook::nop(game::game_offset(0x103805FB), 22);
+			utils::hook::jump(game::game_offset(0x103805FB), renderer_reflection_probe_secondary_stub);
+			// Exit-time dump: 0x103678C9 read 0x13BC through a missing Xenon-world
+			// surface-remap table. Reuse the tree's contiguous firstSurface index.
+			renderer_surface_remap_continue = game::game_offset(0x103678CD);
+			utils::hook::nop(game::game_offset(0x103678C3), 10);
+			utils::hook::jump(game::game_offset(0x103678C3), renderer_surface_remap_stub);
+			// Runtime crash evidence: 0x1036E67D read 0x00000E80 while traversing
+			// a valid converted cell tree. Fall back to its contiguous surface range
+			// only when the optional PC remap-list base is absent.
+			renderer_surface_visibility_continue = game::game_offset(0x1036E68B);
+			utils::hook::nop(game::game_offset(0x1036E67D), 14);
+			utils::hook::jump(game::game_offset(0x1036E67D), renderer_surface_visibility_stub);
 			// Runtime crash evidence: 0x1036E769 read [0x00000B5A] with a null
 			// TLS surface-list base at the end of mp_canals. Preserve native work
 			// when the list exists and skip only the stale-list iteration.

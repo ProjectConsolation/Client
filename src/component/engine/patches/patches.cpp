@@ -1058,7 +1058,12 @@ namespace patches
 				//debug block sv_cheats
 #ifdef DEBUG
 				utils::hook::nop(game::game_offset(0x101AB211), 5);
+				// The removed registration call normally leaves its dvar in EAX. If
+				// the following store remains, map/server initialization writes the
+				// unrelated stale EAX value over the native cheat-gate pointer.
+				utils::hook::nop(game::game_offset(0x101AB22A), 5);
 				utils::hook::nop(game::game_offset(0x10245A2A), 5);
+				utils::hook::nop(game::game_offset(0x10245A2F), 5);
 
 				auto* const sv_cheats = dvars::Dvar_RegisterBool("sv_cheats", 1, "Enable Cheats", game::dvar_flags::none);
 				*reinterpret_cast<game::dvar_s**>(game::game_offset(0x11A343C0)) = sv_cheats;
