@@ -26,10 +26,4 @@ Example showcase:
 
 ## Live Reload
 
-While a level is running, Project: Consolation watches every disk-backed `.gsc` that was compiled for that level. Saving one of those files compiles a new bytecode generation immediately and prints:
-
-`reloading script file <path>`
-
-Future calls to functions present in both generations are redirected to the newest bytecode without `map_restart` or restarting the level. Existing threads keep their old instruction stream until they enter a reloaded function; this preserves active VM stack frames instead of attempting to relocate a running thread into changed bytecode.
-
-The reloader does not run `main` or `init` again, because doing so can duplicate entities, callbacks, and long-running threads. Newly added functions are available to other functions in the new generation, while a removed function remains callable from older bytecode until the level ends. Reload generations consume space in the level's fixed script bytecode arena and are released through the normal script shutdown path.
+Live GSC reload is currently disabled. The experimental implementation bypassed native script finalization and intercepted the VM dispatcher, which could corrupt script variable state during map startup. Disk-backed script loading and overrides remain supported; restart the map after changing a script.

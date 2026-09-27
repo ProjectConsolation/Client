@@ -716,14 +716,8 @@ namespace gsc
 			compile_error_hook.create(game::game_offset(0x1022DD40), compile_error_stub);
 			compile_error_2_hook.create(game::game_offset(0x1022DC70), compile_error_2_stub);
 
-			// Keep the compiler's lookup objects alive after initial game-script loading.
-			// The native shutdown path still owns and releases them with the program hunk.
-			utils::hook::jump(game::game_offset(0x101A8EFF), finish_script_loading_stub);
-			free_scripts_hook.create(game::game_offset(0x1022E4F0), free_scripts_stub);
-
-			// Redirect calls from every older function generation to the latest one.
-			utils::hook::jump(game::game_offset(0x1023784C), vm_execute_stub);
-			scheduler::loop(poll_script_changes, scheduler::pipeline::main, 250ms);
+			// Native script finalization and VM dispatch must remain intact. The live-reload
+			// hooks corrupted VM variable state during map startup on the supported PC build.
 
 			add_function("replacefunc", []()
 			{

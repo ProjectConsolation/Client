@@ -172,12 +172,27 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<4I", header, 84),
                          (0x40000101, xenon_ff.INLINE,
                           xenon_ff.INLINE, xenon_ff.INLINE))
-        self.assertEqual(header[20:60], bytes(range(40)))
+        self.assertEqual(header[20:32], bytes(range(12)))
+        self.assertEqual(
+            header[32:67],
+            bytes((12,)) * 13 + bytes(range(18, 40)))
         nested = 104 + len("test_material") + 1
         self.assertEqual(struct.unpack_from("<I", payload, nested)[0],
                          0x12345678)
         self.assertEqual(struct.unpack_from("<I", payload, nested + 8)[0],
                          0x40000201)
+
+    def test_pc_material_state_slots_match_paired_pc_expansion(self):
+        source = bytes.fromhex(
+            "020202020202030303ffffffff04ff0205"
+            "0202020202020202030303")
+
+        converted = xenon_ff._convert_material_state_slots(source)
+
+        self.assertEqual(converted, bytes.fromhex(
+            "02020202020202020202020202030303ffffffff04ff0205"
+            "0202020202020202030303"))
+        self.assertEqual(len(converted), 35)
 
     def test_pc_material_serialization_uses_filtered_texture_count(self):
         source = bytearray(96)
@@ -277,6 +292,25 @@ class FastfileTests(unittest.TestCase):
             xenon_ff.select_pc_techset("wc_l_sm_r0c0d0n0s0"),
             "wc_l_sm_b0c0n0s0p0")
         self.assertIsNone(xenon_ff.select_pc_techset("wc_water"))
+
+    def test_pc_external_techset_always_uses_external_asset_marker(self):
+        header_size = xenon_ff.PC_LAYOUTS["techset"][1]
+
+        self.assertEqual(
+            xenon_ff._pc_external_techset("wc_l_sm_b0c0")[header_size:],
+            b",wc_l_sm_b0c0\0")
+        self.assertEqual(
+            xenon_ff._pc_external_techset(",wc_l_sm_b0c0")[header_size:],
+            b",wc_l_sm_b0c0\0")
+
+    def test_pc_map_images_precede_materials_in_manifest(self):
+        assets = xenon_ff._pc_map_assets(
+            ["model"], ["techset"], ["image"], ["material"], ["rawfile"],
+            True)
+        kinds = [kind for kind, _ in assets]
+
+        self.assertEqual(kinds, [12, 5, 7, 8, 6, 6, 13, 17, 15, 32])
+        self.assertLess(kinds.index(8), kinds.index(6))
 
     def test_gfx_surface_material_references_target_earlier_slots(self):
         surfaces = bytes(4 * 72)

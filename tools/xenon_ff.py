@@ -879,6 +879,19 @@ def _convert_material_constants(raw):
     return bytes(converted)
 
 
+def _convert_material_state_slots(raw):
+    """Expand Xenon's 28 technique state slots to the 35-slot PC layout."""
+    if len(raw) != 28:
+        raise FormatError("invalid Xenon material state-slot table")
+    # Paired QoS mp_barge zones show that PC adds seven technique positions
+    # before Xenon slot 6. Those PC-only techniques share the first state used
+    # by the material; the remaining platform-common positions retain their
+    # source order.
+    first_state = next((value for value in raw if value != 0xFF), 0xFF)
+    return (bytes((first_state,)) * 13 + raw[6:9] + raw[9:13]
+            + raw[13:17] + raw[17:25] + raw[25:28])
+
+
 def write_pc_com_world(payload, asset):
     header = _little_endian_words(bytes.fromhex(asset["header"]))
     lights = asset["primary_lights"]
@@ -1818,6 +1831,10 @@ def _pc_external_material(name=",white"):
 
 
 def _pc_external_techset(name):
+    # QoS PC DB_LinkXAssetEntry (0x103E0640) treats a leading comma as an
+    # external reference and resolves the name without allocating a new asset.
+    if not name.startswith(","):
+        name = "," + name
     header = bytearray(184)
     struct.pack_into("<I", header, 0, INLINE)
     return bytes(header) + name.encode() + b"\0"
@@ -1833,12 +1850,11 @@ def write_pc_material(payload, material_value, techset_pointer,
         raise FormatError("material is missing a PC-resolvable name or technique set")
 
     converted = bytearray(104)
-    # QoS serializes MaterialInfo + the 28 native state-bit slots byte-for-byte
-    # through +59 on both platforms. PC adds seven state-bit slots before the
-    # count/flag fields and stores the two following scalar words little-endian.
-    converted[:60] = source[:60]
+    # MaterialInfo is byte-compatible, but PC expands Xenon's 28 technique
+    # state slots to 35 entries before the count/flag fields.
+    converted[:32] = source[:32]
     struct.pack_into("<I", converted, 0, INLINE)
-    converted[60:67] = b"\xFF" * 7
+    converted[32:67] = _convert_material_state_slots(source[32:60])
     converted[67] = len(image_pointers)
     converted[68:75] = source[61:68]
     struct.pack_into("<2I", converted, 76, u32(source, 68), u32(source, 72))
@@ -2577,6 +2593,23 @@ def resolve_material_image_references(materials):
     }
 
 
+def _pc_map_assets(models, techset_names, images, materials, rawfiles,
+                   include_materials):
+    # QoS PC's image-pointer loader (0x103D45B0) immediately dereferences a
+    # packed asset-table reference. Images must therefore be linked before the
+    # materials that consume their table cells; forward references retain the
+    # table's INLINE marker and render white.
+    return ([(12, "clip")]
+            + [(5, model) for model in models]
+            + [(7, name) for name in techset_names]
+            + [(8, image_value) for image_value in images]
+            + ([(6, None)] + [(6, material_value)
+                              for material_value in materials]
+               if include_materials else [])
+            + [(13, "com"), (17, "gfx"), (15, "game")]
+            + [(32, rawfile) for rawfile in rawfiles])
+
+
 def build_pc_map_probe(path, include_images=False, include_materials=False):
     """Build a reduced PC zone for testing map and world deserialization.
 
@@ -2690,15 +2723,8 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
             convertible_materials.append(converted)
     gfx_world["geometry"]["material_image_resolution"] = material_image_report
     techset_names = list(techsets_by_name)
-    assets = ([(12, "clip")]
-              + [(5, model) for model in models]
-              + [(7, name) for name in techset_names]
-              + ([(6, None)] + [(6, material_value)
-                                for material_value in unique_materials]
-                 if include_materials else [])
-              + [(13, "com"), (17, "gfx"), (15, "game")]
-              + [(8, image_value) for image_value in images]
-              + [(32, rawfile) for rawfile in rawfiles])
+    assets = _pc_map_assets(models, techset_names, images, unique_materials,
+                            rawfiles, include_materials)
     script_strings = report["script_strings"]
     payload = bytearray(struct.pack(
         "<4I", len(script_strings), INLINE if script_strings else 0,
@@ -2737,6 +2763,9 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
 
     for name in techset_names:
         payload.extend(_pc_external_techset(name))
+
+    for image_value in images:
+        write_pc_image(payload, image_value)
 
     surface_material_pointers = None
     if include_materials:
@@ -2781,9 +2810,6 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
 
     payload.extend(struct.pack("<I", INLINE))
     payload.extend(game_name.encode() + b"\0")
-
-    for image_value in images:
-        write_pc_image(payload, image_value)
 
     for rawfile in rawfiles:
         data = bytes.fromhex(rawfile["data"])
