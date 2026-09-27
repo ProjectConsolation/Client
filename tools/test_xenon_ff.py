@@ -33,6 +33,19 @@ class FastfileTests(unittest.TestCase):
         layout = xenon_ff._xenos_texture_layout(256, 256, 0x12)
         self.assertEqual(layout[4:], (512, 32768, 32768))
 
+    def test_xenos_argb8_tile_untile_round_trip(self):
+        width, height = 37, 19
+        linear_size = xenon_ff._xenos_texture_layout(width, height, 0x06)[5]
+        linear = bytes((index * 29 + 7) & 0xFF
+                       for index in range(linear_size))
+
+        tiled = xenon_ff.tile_xenos_texture(
+            width, height, 0x06, linear, endian=2)
+        restored = xenon_ff.untile_xenos_texture(
+            width, height, 0x06 | (2 << 6), tiled)
+
+        self.assertEqual(restored, linear)
+
     def test_xenos_dxt1_tile_untile_round_trip_with_gpu_endian(self):
         width, height = 68, 36
         linear_size = xenon_ff._xenos_texture_layout(width, height, 0x12)[5]
@@ -135,6 +148,28 @@ class FastfileTests(unittest.TestCase):
             struct.unpack_from("<2B3H4sI", payload, load_offset)[5], b"DXT5")
         self.assertEqual(len(payload[load_offset + 16:]), 16)
 
+    def test_pc_image_serialization_preserves_lightmap_metadata(self):
+        image = {
+            "name": "*lightmap0_primary",
+            "width": 8, "height": 4, "depth": 1,
+            "pc_base_level": {
+                "format": "DXT1", "bytes": 16,
+                "sha256": "unused", "data": bytes(range(16)).hex(),
+            },
+        }
+        payload = bytearray()
+
+        xenon_ff.configure_pc_lightmap_image(image)
+        xenon_ff.write_pc_image(payload, image)
+
+        header = payload[:36]
+        self.assertEqual(header[11], 1)
+        self.assertEqual(header[30], 2)
+        load_offset = 36 + len(image["name"]) + 1
+        self.assertEqual(
+            struct.unpack_from("<2B3H4sI", payload, load_offset),
+            (1, 2, 8, 4, 1, b"DXT1", 16))
+
     def test_dxn_to_dxt5_preserves_x_block_and_encodes_green(self):
         x_block = bytes((240, 16, 0, 0, 0, 0, 0, 0))
         y_block = bytes((220, 20, 0, 0, 0, 0, 0, 0))
@@ -193,6 +228,28 @@ class FastfileTests(unittest.TestCase):
             "02020202020202020202020202030303ffffffff04ff0205"
             "0202020202020202030303"))
         self.assertEqual(len(converted), 35)
+
+    def test_pc_material_state_bits_match_paired_pc_expansion(self):
+        source = bytes.fromhex(
+            "001288120000000d001288120000003d181288120000000d"
+            "18128928e004004888128812e49e492c181289410000002c")
+
+        converted, mapping, verified = xenon_ff._convert_material_state_bits(source)
+
+        self.assertTrue(verified)
+        self.assertEqual(mapping, {0: 0, 1: 2, 2: 1, 3: 4, 4: 5, 5: 6})
+        self.assertEqual(converted.hex(),
+            "128812000d000000128812180d000000128812003d000000"
+            "124812180d00000028891218480004e0128812882c499ee4"
+            "418912182c000000")
+
+        slots = bytes.fromhex(
+            "020202020202030303ffffffff04ff0205"
+            "0202020202020202030303")
+        self.assertEqual(
+            xenon_ff._convert_material_state_slots(slots, mapping).hex(),
+            "01010101010101010101010101040404ffffffff05ff0106"
+            "0101010101010101040404")
 
     def test_pc_material_serialization_uses_filtered_texture_count(self):
         source = bytearray(96)
@@ -293,6 +350,28 @@ class FastfileTests(unittest.TestCase):
             "wc_l_sm_b0c0n0s0p0")
         self.assertIsNone(xenon_ff.select_pc_techset("wc_water"))
 
+    def test_pc_material_techset_fallback_uses_texture_semantics(self):
+        def texture(semantic):
+            definition = bytearray(12)
+            definition[7] = semantic
+            return {"definition": definition.hex()}
+
+        selected, reason = xenon_ff.select_pc_material_techset({
+            "techset_name": "wc_water",
+            "textures": [texture(2), texture(5), texture(8)],
+        })
+
+        self.assertEqual(selected, "wc_l_sm_b0c0n0s0p0")
+        self.assertEqual(reason, "texture_semantic_fallback")
+
+    def test_pc_material_techset_reports_signature_substitution(self):
+        selected, reason = xenon_ff.select_pc_material_techset({
+            "techset_name": "wc_l_sm_r0c0d0n0s0",
+        })
+
+        self.assertEqual(selected, "wc_l_sm_b0c0n0s0p0")
+        self.assertEqual(reason, "channel_signature")
+
     def test_pc_external_techset_always_uses_external_asset_marker(self):
         header_size = xenon_ff.PC_LAYOUTS["techset"][1]
 
@@ -302,6 +381,43 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(
             xenon_ff._pc_external_techset(",wc_l_sm_b0c0")[header_size:],
             b",wc_l_sm_b0c0\0")
+
+    def test_snd_driver_globals_consumes_fixed_reverb_array(self):
+        settings = bytes(xenon_ff.SND_DRIVER_REVERB_COUNT
+                         * xenon_ff.SND_DRIVER_REVERB_SIZE)
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 26, xenon_ff.INLINE)
+        payload += struct.pack(">2I", xenon_ff.INLINE, xenon_ff.INLINE)
+        payload += settings + b"singleton\0"
+
+        report = self.inspect_blob(self.zone(payload), True)
+
+        asset = report["assets"][0]
+        self.assertEqual(asset["type"], "snddriverglobals")
+        self.assertEqual(asset["name"], "singleton")
+        self.assertEqual(asset["reverb_settings_count"], 26)
+        self.assertEqual(asset["reverb_settings_bytes"], len(settings))
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
+
+    def test_string_table_consumes_inline_row_major_values(self):
+        values = [b"NAME\0", b"2300\0", b"RANKXP\0", b"2301\0"]
+        payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
+        payload += struct.pack(">2I", 34, xenon_ff.INLINE)
+        payload += struct.pack(">4I", xenon_ff.INLINE, 2, 2,
+                               xenon_ff.INLINE)
+        payload += b"mp/playerstats.csv\0"
+        payload += struct.pack(">4I", *((xenon_ff.INLINE,) * 4))
+        payload += b"".join(values)
+
+        report = self.inspect_blob(self.zone(payload), True)
+
+        asset = report["assets"][0]
+        self.assertEqual(asset["type"], "stringtable")
+        self.assertEqual(asset["name"], "mp/playerstats.csv")
+        self.assertEqual(asset["column_count"], 2)
+        self.assertEqual(asset["row_count"], 2)
+        self.assertEqual(asset["values"], ["NAME", "2300", "RANKXP", "2301"])
+        self.assertEqual(report["unconsumed_payload_bytes"], 0)
 
     def test_pc_map_images_precede_materials_in_manifest(self):
         assets = xenon_ff._pc_map_assets(
@@ -619,6 +735,17 @@ class FastfileTests(unittest.TestCase):
                     "cull_groups": "",
                     "reflection_probes": "37",
                 }],
+                "reflection_probes": [{
+                    "raw": struct.pack(">3fI", 1.5, 2.5, 3.5,
+                                       xenon_ff.INLINE).hex(),
+                    "image": {"name": "reflection_test"},
+                }],
+                "lightmaps": [{
+                    "raw": struct.pack(">2I", xenon_ff.INLINE,
+                                       xenon_ff.INLINE).hex(),
+                    "images": [{"name": "lightmap_primary"},
+                               {"name": "lightmap_secondary"}],
+                }],
                 "sky_start_surfs": struct.pack(">I", 38).hex(),
                 "vertices": vertex.hex(),
                 "vertex_layers": "2728",
@@ -629,8 +756,10 @@ class FastfileTests(unittest.TestCase):
         header = payload[:728]
         self.assertEqual([struct.unpack_from("<I", header, offset)[0]
                           for offset in (8, 16, 24, 32, 60, 80, 92, 252,
-                                         276, 280, 284, 288, 292, 352)],
-                         [1, 1, 1, 1, 1, 1, 2, 3, 0, 0, 0, 1, 1, 1])
+                                         264, 268, 276, 280, 284, 288, 292,
+                                         300, 304, 352)],
+                         [1, 1, 1, 1, 1, 1, 2, 3, 1, xenon_ff.INLINE,
+                          0, 0, 0, 1, 1, 1, xenon_ff.INLINE, 1])
         self.assertIn(struct.pack("<4f4B", 1.0, 2.0, 3.0, 4.0,
                                   5, 6, 7, 8), payload)
         self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
@@ -655,7 +784,11 @@ class FastfileTests(unittest.TestCase):
 
         shared_payload = bytearray()
         xenon_ff.write_pc_gfx_world(
-            shared_payload, asset, 3, [0x40001235])
+            shared_payload, asset, 3, [0x40001235], {
+                "reflection_test": 0x40002001,
+                "lightmap_primary": 0x40002009,
+                "lightmap_secondary": 0x40002011,
+            })
         surface_offset = shared_payload.find(
             struct.pack("<IIHHI", 9, 10, 11, 12, 13))
         self.assertNotEqual(surface_offset, -1)
@@ -663,6 +796,10 @@ class FastfileTests(unittest.TestCase):
             struct.unpack_from("<I", shared_payload, surface_offset + 16)[0],
             0x40001235)
         self.assertNotIn(b",white\0", shared_payload)
+        self.assertIn(struct.pack("<3fI", 1.5, 2.5, 3.5, 0x40002001),
+                      shared_payload)
+        self.assertIn(struct.pack("<2I", 0x40002009, 0x40002011),
+                      shared_payload)
 
     def test_rawfile_byte_content_is_not_swapped(self):
         payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)

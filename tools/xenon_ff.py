@@ -47,6 +47,9 @@ MAX_BYTES = 256 * 1024 * 1024
 # Xbox 360 GPU texture format IDs used by QoS. The tiling equations below are
 # adapted from michaeloliverx/codxe's xenos_texture implementation.
 XENOS_TEXTURE_FORMATS = {
+    # Xenia TextureFormat::k_8_8_8_8 (ID 6). After tiled-address and GPU-endian
+    # conversion, the bytes can be written directly with standard ARGB masks.
+    0x06: (1, 1, 4, "ARGB8"),
     0x12: (4, 4, 8, "DXT1"),
     0x13: (4, 4, 16, "DXT2_3"),
     0x14: (4, 4, 16, "DXT4_5"),
@@ -58,6 +61,8 @@ PC_TEXTURE_FOURCC = {
     "DXT4_5": b"DXT5",
     "DXN": b"DXT5",
 }
+SND_DRIVER_REVERB_COUNT = 26
+SND_DRIVER_REVERB_SIZE = 52
 PC_COMMON_TECHSETS = (
     ",wc_l_sm_b0c0n0s0p0",
     "wc_l_sm_b0c0",
@@ -223,6 +228,36 @@ def select_pc_techset(source_name, candidates=PC_COMMON_TECHSETS):
                  + 3 * len(missing_features) + len(extra_features))
         scored.append((score, len(candidate_features), candidate))
     return min(scored)[2] if scored else None
+
+
+def select_pc_material_techset(material_value, candidates=PC_COMMON_TECHSETS):
+    """Select a verified PC techset and explain any provisional substitution."""
+    source_name = material_value.get("techset_name", "")
+    selected = select_pc_techset(source_name, candidates)
+    if selected is not None:
+        return selected, ("exact_techset" if selected == source_name
+                          else "channel_signature")
+
+    semantics = set()
+    for image_value in material_value.get("textures", []):
+        definition = image_value.get("definition")
+        if isinstance(definition, str):
+            raw = bytes.fromhex(definition)
+            if len(raw) == 12:
+                semantics.add(raw[7])
+
+    if 5 in semantics and 8 in semantics:
+        fallback = "wc_l_sm_b0c0n0s0p0"
+    elif 5 in semantics:
+        fallback = "wc_l_sm_b0c0n0p0"
+    elif 8 in semantics:
+        fallback = "wc_l_sm_b0c0s0p0"
+    else:
+        fallback = "wc_l_sm_b0c0"
+    if fallback not in candidates:
+        fallback = next((name for name in candidates if not name.startswith(",")),
+                        candidates[0] if candidates else None)
+    return fallback, "texture_semantic_fallback"
 
 
 def _decode_bc4_block(block):
@@ -548,6 +583,174 @@ def techset(reader):
     return {"name": name, "techniques": techniques}
 
 
+def snd_driver_globals(reader, pointer, capture=False):
+    """Read the fixed QoS Xenon sound-driver globals asset.
+
+    The root and XaReverbSettings declarations are adapted from the supplied
+    QOSXenon_Assets.h. The 26-record count and nested order are verified against
+    code_post_gfx_mp.ff and the QoS Wii SndDriverGlobals naming.
+    """
+    if pointer not in (INLINE, INSERT):
+        return {"reference": hex(pointer)}
+    start = reader.pos
+    header = reader.take(8)
+    settings_pointer = u32(header)
+    if settings_pointer in (INLINE, INSERT):
+        settings = reader.take(
+            SND_DRIVER_REVERB_COUNT * SND_DRIVER_REVERB_SIZE)
+    elif settings_pointer:
+        settings = b""
+    else:
+        settings = b""
+    result = {
+        "name": reader.string(u32(header, 4)),
+        "offset": hex(start),
+        "reverb_settings_count": (
+            SND_DRIVER_REVERB_COUNT if settings else 0),
+        "reverb_settings_bytes": len(settings),
+        "reverb_settings_sha256": hashlib.sha256(settings).hexdigest(),
+    }
+    if capture:
+        result["header"] = header.hex()
+        result["reverb_settings"] = settings.hex()
+    return result
+
+
+def string_table(reader, pointer, capture=False):
+    """Read the QoS Xenon StringTable root and its row-major string cells."""
+    if pointer not in (INLINE, INSERT):
+        return {"reference": hex(pointer)}
+    start = reader.pos
+    header = reader.take(16)
+    column_count = u32(header, 4)
+    row_count = u32(header, 8)
+    cell_count = column_count * row_count
+    if column_count > 4096 or row_count > 1_000_000 or cell_count > 1_000_000:
+        raise FormatError("invalid string-table dimensions")
+    name = reader.string(u32(header))
+    values_pointer = u32(header, 12)
+    value_pointers = (reader.take(cell_count * 4)
+                      if values_pointer in (INLINE, INSERT) else b"")
+    values = []
+    for offset in range(0, len(value_pointers), 4):
+        value_pointer = u32(value_pointers, offset)
+        if value_pointer in (INLINE, INSERT):
+            values.append(reader.string(value_pointer))
+        elif value_pointer:
+            values.append({"reference": hex(value_pointer)})
+        else:
+            values.append(None)
+    result = {
+        "name": name,
+        "offset": hex(start),
+        "column_count": column_count,
+        "row_count": row_count,
+        "cell_count": cell_count,
+        "values": values,
+    }
+    if capture:
+        result["header"] = header.hex()
+        result["value_pointers"] = value_pointers.hex()
+    return result
+
+
+def xanim(reader, pointer, capture=False):
+    """Read a QoS Xenon XAnimParts asset without interpreting animation data.
+
+    Field offsets follow the verified 92-byte Xenon layout. Nested load order
+    and structure names follow QoS Wii Load_XAnimParts (0x8CF1C); the two
+    platforms use different root layouts, so only the nested behavior is
+    transferred.
+    """
+    if pointer not in (INLINE, INSERT):
+        return {"reference": hex(pointer)}
+    start = reader.pos
+    header = reader.take(92)
+    counts = {
+        "data_byte": u16(header, 8),
+        "data_short": u16(header, 10),
+        "data_int": u16(header, 12),
+        "random_data_byte": u16(header, 14),
+        "random_data_int": u16(header, 16),
+        "random_data_short": u32(header, 36),
+        "indices": u32(header, 40),
+    }
+    numframes = u16(header, 18)
+    bone_counts = list(header[22:32])
+    notify_count = header[32]
+    result = {
+        "name": reader.string(u32(header)),
+        "unknown_string": reader.string(u32(header, 4)),
+        "offset": hex(start),
+        "numframes": numframes,
+        "loop": bool(header[20]),
+        "delta": bool(header[21]),
+        "bone_counts": bone_counts,
+        "notify_count": notify_count,
+        "asset_type": header[33],
+        "is_default": bool(header[34]),
+        "counts": counts,
+    }
+
+    names = reader.take(bone_counts[9] * 2) if u32(header, 52) else b""
+    notifies = reader.take(notify_count * 8) if u32(header, 84) else b""
+
+    delta_summary = None
+    if u32(header, 88):
+        delta = reader.take(8)
+        delta_summary = {"translation": None, "quaternion": None}
+        if u32(delta):
+            trans = reader.take(4)
+            size = u16(trans)
+            small = bool(trans[2])
+            if size:
+                frames = reader.take(28)
+                index_width = 2 if numframes >= 256 else 1
+                reader.take((size + 1) * index_width)
+                if u32(frames, 24):
+                    reader.take((size + 1) * (3 if small else 6))
+            else:
+                reader.take(12)
+            delta_summary["translation"] = {"size": size, "small": small}
+        if u32(delta, 4):
+            quat = reader.take(4)
+            size = u16(quat)
+            if size:
+                frames = reader.take(4)
+                index_width = 2 if numframes >= 256 else 1
+                reader.take((size + 1) * index_width)
+                if u32(frames):
+                    reader.take((size + 1) * 4)
+            else:
+                reader.take(4)
+            delta_summary["quaternion"] = {"size": size}
+
+    arrays = {}
+    for key, pointer_offset, element_size in (
+            ("data_byte", 56, 1), ("data_short", 60, 2),
+            ("data_int", 64, 4), ("random_data_short", 68, 2),
+            ("random_data_byte", 72, 1), ("random_data_int", 76, 4)):
+        raw = reader.take(counts[key] * element_size) if u32(header, pointer_offset) else b""
+        arrays[key] = {
+            "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()
+        }
+        if capture and key == "data_byte":
+            arrays[key]["data"] = raw.hex()
+
+    index_width = 2 if numframes >= 256 else 1
+    indices = reader.take(counts["indices"] * index_width) if u32(header, 80) else b""
+    result.update({
+        "names_bytes": len(names),
+        "notify_bytes": len(notifies),
+        "delta_part": delta_summary,
+        "arrays": arrays,
+        "indices_bytes": len(indices),
+    })
+    if capture:
+        result["header"] = header.hex()
+    return result
+
+
 def material(reader, capture=False):
     start = reader.pos
     header = reader.take(96)
@@ -560,6 +763,7 @@ def material(reader, capture=False):
         result["techset_reference"] = hex(pointer)
     pointer = u32(header, 80)
     if pointer == INLINE:
+        texture_stream_offset = reader.pos
         textures = reader.take(header[60] * 12)
         for offset in range(0, len(textures), 12):
             if textures[offset + 7] == 11:
@@ -567,6 +771,10 @@ def material(reader, capture=False):
             image_value = image(reader, u32(textures, offset + 8), capture)
             if capture:
                 image_value["definition"] = textures[offset:offset + 12].hex()
+                image_value["definition_offset"] = hex(
+                    texture_stream_offset + offset)
+                image_value["image_pointer_offset"] = hex(
+                    texture_stream_offset + offset + 8)
             result["textures"].append(image_value)
     elif pointer:
         result["texture_reference"] = hex(pointer)
@@ -879,17 +1087,48 @@ def _convert_material_constants(raw):
     return bytes(converted)
 
 
-def _convert_material_state_slots(raw):
+def _convert_material_state_slots(raw, state_mapping=None):
     """Expand Xenon's 28 technique state slots to the 35-slot PC layout."""
     if len(raw) != 28:
         raise FormatError("invalid Xenon material state-slot table")
+    state_mapping = state_mapping or {}
+    remapped = bytes(
+        state_mapping.get(value, value) if value != 0xFF else value
+        for value in raw)
     # Paired QoS mp_barge zones show that PC adds seven technique positions
     # before Xenon slot 6. Those PC-only techniques share the first state used
     # by the material; the remaining platform-common positions retain their
     # source order.
-    first_state = next((value for value in raw if value != 0xFF), 0xFF)
-    return (bytes((first_state,)) * 13 + raw[6:9] + raw[9:13]
-            + raw[13:17] + raw[17:25] + raw[25:28])
+    first_state = next((value for value in remapped if value != 0xFF), 0xFF)
+    return bytes((first_state,)) * 13 + remapped[6:]
+
+
+def _convert_material_state_bits(raw):
+    """Convert and expand platform-specific material render-state records.
+
+    The record ordering and PC-only state are verified against paired Xenon/PC
+    mp_barge materials. Two-state materials are already platform-common.
+    Unknown record counts remain byte-order converted without speculative
+    insertion; callers can report those materials for later comparison.
+    """
+    if len(raw) % 8:
+        raise FormatError("invalid material state-bit array")
+    records = [bytes(_little_endian_words(raw, offset, offset + 8)[offset:offset + 8])
+               for offset in range(0, len(raw), 8)]
+    if len(records) == 6:
+        pc_only = struct.pack("<2I", 0x18124812,
+                              struct.unpack_from("<I", records[2], 4)[0])
+        converted = [records[index] for index in (0, 2, 1)]
+        converted.append(pc_only)
+        converted.extend(records[3:])
+        return b"".join(converted), {0: 0, 1: 2, 2: 1, 3: 4, 4: 5, 5: 6}, True
+    if len(records) == 5:
+        pc_only = struct.pack("<2I", 0x18124812,
+                              struct.unpack_from("<I", records[2], 4)[0])
+        converted = [records[0], pc_only, *records[1:]]
+        return b"".join(converted), {0: 0, 1: 2, 2: 3, 3: 4, 4: 5}, True
+    mapping = {index: index for index in range(len(records))}
+    return b"".join(records), mapping, len(records) in (0, 2)
 
 
 def write_pc_com_world(payload, asset):
@@ -1110,11 +1349,23 @@ def gfx_map(reader, pointer, capture=False):
         cells = reader.take(u32(header, 388) * 52)
         for offset in range(0, len(cells), 52):
             parsed_cells.append(_gfx_cell(reader, cells[offset:offset + 52]))
+    lightmaps = []
     if u32(header, 404):
         records = reader.take(u32(header, 400) * 8)
-        for offset in range(0, len(records), 4):
-            if u32(records, offset) in (INLINE, INSERT):
-                image(reader, u32(records, offset), capture)
+        for offset in range(0, len(records), 8):
+            images = []
+            for pointer_offset in (0, 4):
+                image_pointer = u32(records, offset + pointer_offset)
+                if image_pointer in (INLINE, INSERT):
+                    image_value = image(reader, image_pointer, capture)
+                elif image_pointer:
+                    image_value = {"reference": hex(image_pointer)}
+                else:
+                    image_value = None
+                images.append(image_value)
+            if capture:
+                lightmaps.append({"raw": records[offset:offset + 8].hex(),
+                                  "images": images})
 
     dpvs_planes = _gfx_dpvs_planes(reader, header[408:460])
     draw_surfaces = b""
@@ -1193,6 +1444,7 @@ def gfx_map(reader, pointer, capture=False):
             "dpvs_planes": dpvs_planes,
             "cells": parsed_cells,
             "reflection_probes": reflection_probes,
+            "lightmaps": lightmaps,
             "sky_start_surfs": sky_start_surfs.hex(),
             "vertices": vertices.hex(),
             "vertex_layers": vertex_layers.hex(),
@@ -1734,50 +1986,73 @@ def write_pc_xmodel(payload, model):
     payload.extend(_little_endian_words(_captured_bytes(model["bone_info"])))
 
 
-def inspect(path, details=False, capture_map=False):
+def inspect(path, details=False, capture_map=False, allow_partial=False):
     reader, entries, report = read_zone(path)
     if details:
         assets = []
+        partial_error = None
         for index, (kind, pointer) in enumerate(entries):
-            if pointer not in (INLINE, INSERT):
-                raise FormatError(f"asset {index} has unsupported pointer {pointer:#x}")
             start = reader.pos
-            if kind == 8:
-                asset = techset(reader)
-            elif kind == 5:
-                asset = xmodel(reader, capture_map)
-            elif kind == 1:
-                asset = _phys_preset(reader, pointer)
-            elif kind == 14:
-                asset = com_map(reader, pointer)
-            elif kind == 19:
-                asset = lightdef(reader, pointer)
-            elif kind == 18:
-                asset = gfx_map(reader, pointer, capture_map)
-            elif kind == 16:
-                asset = game_map_mp(reader, pointer)
-            elif kind == 13:
-                asset = col_map_mp(reader, pointer)
-            elif kind == 10:
-                asset = sound(reader, pointer)
-            elif kind == 27:
-                asset = fx(reader, pointer)
-            elif kind == 6:
-                asset = material(reader, capture_map)
-            elif kind == 33:
-                header = reader.take(12)
-                asset = {"name": reader.string(u32(header))}
-                payload = reader.take(u32(header, 4) + 1) if u32(header, 8) else b""
-                asset["bytes"] = len(payload)
-                asset["sha256"] = hashlib.sha256(payload).hexdigest()
-                if capture_map:
-                    asset["data"] = payload.hex()
-            else:
-                raise FormatError(f"asset {index}: {ASSET_NAMES[kind]} details unsupported "
-                                  f"at stream offset 0x{start:x}")
+            try:
+                if pointer not in (INLINE, INSERT):
+                    raise FormatError(
+                        f"asset {index} has unsupported pointer {pointer:#x}")
+                if kind == 8:
+                    asset = techset(reader)
+                elif kind == 9:
+                    asset = image(reader, pointer, capture_map)
+                elif kind == 5:
+                    asset = xmodel(reader, capture_map)
+                elif kind == 4:
+                    asset = xanim(reader, pointer, capture_map)
+                elif kind == 1:
+                    asset = _phys_preset(reader, pointer)
+                elif kind == 14:
+                    asset = com_map(reader, pointer)
+                elif kind == 19:
+                    asset = lightdef(reader, pointer)
+                elif kind == 18:
+                    asset = gfx_map(reader, pointer, capture_map)
+                elif kind == 16:
+                    asset = game_map_mp(reader, pointer)
+                elif kind == 13:
+                    asset = col_map_mp(reader, pointer)
+                elif kind == 10:
+                    asset = sound(reader, pointer)
+                elif kind == 27:
+                    asset = fx(reader, pointer)
+                elif kind == 26:
+                    asset = snd_driver_globals(reader, pointer, capture_map)
+                elif kind == 34:
+                    asset = string_table(reader, pointer, capture_map)
+                elif kind == 6:
+                    asset = material(reader, capture_map)
+                elif kind == 33:
+                    header = reader.take(12)
+                    asset = {"name": reader.string(u32(header))}
+                    payload = (reader.take(u32(header, 4) + 1)
+                               if u32(header, 8) else b"")
+                    asset["bytes"] = len(payload)
+                    asset["sha256"] = hashlib.sha256(payload).hexdigest()
+                    if capture_map:
+                        asset["data"] = payload.hex()
+                else:
+                    raise FormatError(
+                        f"asset {index}: {ASSET_NAMES[kind]} details unsupported "
+                        f"at stream offset 0x{start:x}")
+            except FormatError as error:
+                if not allow_partial:
+                    raise
+                partial_error = {
+                    "asset_index": index,
+                    "asset_type": ASSET_NAMES[kind],
+                    "stream_offset": hex(start),
+                    "message": str(error),
+                }
+                break
             assets.append({"type": ASSET_NAMES[kind], "manifest_index": index,
                            "offset": hex(start), **asset})
-        for asset in assets:
+        for asset in assets if partial_error is None else ():
             if asset["type"] != "gfx_map" or "geometry" not in asset:
                 continue
             draws = bytes.fromhex(asset["geometry"]["static_model_draws"])
@@ -1812,7 +2087,9 @@ def inspect(path, details=False, capture_map=False):
                     material_value["techset_name"] = assets[technique_index].get("name")
         report["assets"] = assets
         report["unconsumed_payload_bytes"] = len(reader.data) - reader.pos
-        if reader.pos != len(reader.data):
+        if partial_error is not None:
+            report["partial_error"] = partial_error
+        elif reader.pos != len(reader.data):
             raise FormatError(f"unconsumed payload at 0x{reader.pos:x}")
     return report
 
@@ -1849,14 +2126,18 @@ def write_pc_material(payload, material_value, techset_pointer,
     if not isinstance(name, str) or not isinstance(material_value.get("techset_name"), str):
         raise FormatError("material is missing a PC-resolvable name or technique set")
 
+    state_bits, state_mapping, state_layout_verified = _convert_material_state_bits(
+        bytes.fromhex(material_value.get("state_bits", "")))
     converted = bytearray(104)
     # MaterialInfo is byte-compatible, but PC expands Xenon's 28 technique
     # state slots to 35 entries before the count/flag fields.
     converted[:32] = source[:32]
     struct.pack_into("<I", converted, 0, INLINE)
-    converted[32:67] = _convert_material_state_slots(source[32:60])
+    converted[32:67] = _convert_material_state_slots(
+        source[32:60], state_mapping)
     converted[67] = len(image_pointers)
     converted[68:75] = source[61:68]
+    converted[69] = len(state_bits) // 8
     struct.pack_into("<2I", converted, 76, u32(source, 68), u32(source, 72))
     struct.pack_into("<4I", converted, 84, techset_pointer,
                      INLINE if image_pointers else 0,
@@ -1877,8 +2158,8 @@ def write_pc_material(payload, material_value, techset_pointer,
             write_pc_image(payload, image_value)
     payload.extend(_convert_material_constants(bytes.fromhex(
         material_value.get("constants", ""))))
-    payload.extend(_little_endian_words(bytes.fromhex(
-        material_value.get("state_bits", ""))))
+    payload.extend(state_bits)
+    material_value["pc_state_layout_verified"] = state_layout_verified
 
 
 def write_pc_image(payload, image_value):
@@ -1908,7 +2189,7 @@ def write_pc_image(payload, image_value):
     header[11] = image_value.get("pc_semantic", 2)
     struct.pack_into("<2I", header, 16, len(data), len(data))
     struct.pack_into("<3H", header, 24, width, height, depth)
-    header[30] = 3  # IMG_CATEGORY_LOAD_FROM_FILE
+    header[30] = image_value.get("pc_category", 3)
     struct.pack_into("<I", header, 32, INLINE)
     payload.extend(header)
     payload.extend(name.encode() + b"\0")
@@ -1917,6 +2198,13 @@ def write_pc_image(payload, image_value):
                                width, height, depth,
                                fourcc, len(data)))
     payload.extend(data)
+
+
+def configure_pc_lightmap_image(image_value):
+    """Apply the QoS PC GfxWorld lightmap image metadata contract."""
+    image_value["pc_semantic"] = 1
+    image_value["pc_category"] = 2
+    image_value["pc_load_flags"] = (1, 2)
 
 
 def _pc_gfx_aabb_header(tree):
@@ -2019,7 +2307,7 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
 
 
 def write_pc_gfx_world(payload, asset, primary_light_count,
-                       material_pointers=None):
+                       material_pointers=None, image_pointers=None):
     geometry = asset["geometry"]
     planes = bytes.fromhex(geometry["planes"])
     nodes = bytes.fromhex(geometry["nodes"])
@@ -2036,6 +2324,9 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     static_instances = bytes.fromhex(geometry.get("static_model_insts", ""))
     static_model_pointers = geometry.get("pc_static_model_pointers")
     cells = geometry.get("cells", [])
+    reflection_probes = geometry.get("reflection_probes", [])
+    lightmaps = geometry.get("lightmaps", [])
+    image_pointers = image_pointers or {}
 
     if (len(xbox_surfaces) % 72 or len(xbox_brush_models) % 168
             or len(dpvs_worlds) % 60 or len(xbox_vertices) % 44):
@@ -2091,12 +2382,16 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     # up a map. Its final light-definition pointer remains null in the probe.
     struct.pack_into("<I", pc_header, 232, INLINE)
     struct.pack_into("<I", pc_header, 252, primary_light_count)
+    struct.pack_into("<2I", pc_header, 264, len(reflection_probes),
+                     INLINE if reflection_probes else 0)
     struct.pack_into("<3I", pc_header, 276,
                      static_model_count if include_static_models else 0,
                      INLINE if include_static_models else 0,
                      INLINE if include_static_models else 0)
     struct.pack_into("<3I", pc_header, 288, len(cells),
                      (len(cells) + 31) // 32, INLINE if cells else 0)
+    struct.pack_into("<2I", pc_header, 300, len(lightmaps),
+                     INLINE if lightmaps else 0)
     pc_header[308:360] = _pc_gfx_dpvs_planes_header(dpvs_planes)
     struct.pack_into("<2I", pc_header, 352, brush_model_count,
                      INLINE if brush_model_count else 0)
@@ -2145,6 +2440,15 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
             payload.extend(_pc_external_material())
     payload.extend(_little_endian_words(sky_start_surfs))
     payload.extend(bytes(68))
+    for probe in reflection_probes:
+        source = bytes.fromhex(probe["raw"])
+        if len(source) != 16:
+            raise FormatError("invalid Xenon reflection-probe record")
+        image_value = probe.get("image")
+        pointer = (image_pointers.get(image_value.get("name"), 0)
+                   if image_value else 0)
+        payload.extend(_little_endian_words(source, 0, 12)[:12])
+        payload.extend(struct.pack("<I", pointer))
     if include_static_models:
         payload.extend(convert_static_model_draws(
             static_draws, static_model_pointers))
@@ -2155,6 +2459,14 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     for cell in cells:
         _write_pc_gfx_cell_nested(
             payload, cell, include_cell_trees, include_empty_cell_trees)
+    for lightmap in lightmaps:
+        pair = lightmap.get("images", [])
+        if len(pair) != 2:
+            raise FormatError("invalid Xenon lightmap image pair")
+        for image_value in pair:
+            pointer = (image_pointers.get(image_value.get("name"), 0)
+                       if image_value else 0)
+            payload.extend(struct.pack("<I", pointer))
     # QoS uses the same 52-byte DPVS-plane header, 168-byte brush-model bounds,
     # and 60-byte DPVS world records on PC and Xbox. These records own the
     # surface ranges used for world draw submission; emitting an empty record
@@ -2610,7 +2922,8 @@ def _pc_map_assets(models, techset_names, images, materials, rawfiles,
             + [(32, rawfile) for rawfile in rawfiles])
 
 
-def build_pc_map_probe(path, include_images=False, include_materials=False):
+def build_pc_map_probe(path, include_images=False, include_materials=False,
+                       diagnostics=None):
     """Build a reduced PC zone for testing map and world deserialization.
 
     QoS PC mp_barge.ff confirms that PC and Xenon both use version 470 and the
@@ -2683,6 +2996,12 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
         gfx_world["geometry"]["surface_materials"])
     images_by_name = {}
     if include_images:
+        def keep_image(image_value):
+            if (image_value and isinstance(image_value.get("name"), str)
+                    and "pc_base_level" in image_value
+                    and image_value["pc_base_level"]["format"] in PC_TEXTURE_FOURCC):
+                images_by_name.setdefault(image_value["name"], image_value)
+
         for material_value in gfx_world["geometry"]["surface_materials"]:
             for image_value in material_value.get("textures", []):
                 if "pc_base_level" in image_value:
@@ -2692,18 +3011,36 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
                         if definition:
                             image_value.setdefault(
                                 "pc_semantic", bytes.fromhex(definition)[7])
-                        images_by_name.setdefault(image_value["name"], image_value)
+                        keep_image(image_value)
+        for probe in gfx_world["geometry"].get("reflection_probes", []):
+            keep_image(probe.get("image"))
+        for lightmap in gfx_world["geometry"].get("lightmaps", []):
+            for image_value in lightmap.get("images", []):
+                # Native QoS PC world lightmaps use IMG_SEMANTIC_1 and the
+                # category/load tuple 2/(1, 2), unlike ordinary streamed
+                # material images. These fields control renderer texture setup.
+                configure_pc_lightmap_image(image_value)
+                keep_image(image_value)
     images = list(images_by_name.values())
     convertible_materials = []
     unique_materials = []
     converted_by_source = {}
     techsets_by_name = {}
+    techset_mappings = Counter()
+    material_mappings = Counter()
+    unverified_state_layouts = Counter()
     if include_materials:
         for material_value in gfx_world["geometry"]["surface_materials"]:
             source_identity = id(material_value)
             if source_identity not in converted_by_source:
-                pc_techset_name = select_pc_techset(
-                    material_value.get("techset_name", ""))
+                source_techset_name = material_value.get("techset_name", "")
+                pc_techset_name, mapping_reason = select_pc_material_techset(
+                    material_value)
+                if pc_techset_name is not None:
+                    techset_mappings[(source_techset_name, pc_techset_name)] += 1
+                    material_mappings[(material_value.get("name", "<unnamed>"),
+                                       source_techset_name, pc_techset_name,
+                                       mapping_reason)] += 1
                 textures = [
                     image_value for image_value in material_value.get("textures", [])
                     if image_value.get("name") in images_by_name
@@ -2767,18 +3104,18 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
     for image_value in images:
         write_pc_image(payload, image_value)
 
+    def manifest_pointer(index):
+        return 0x40000001 + asset_table_base + index * 8
+
+    image_pointers = {
+        value["name"]: manifest_pointer(index)
+        for index, (kind, value) in enumerate(assets) if kind == 8
+    }
     surface_material_pointers = None
     if include_materials:
-        def manifest_pointer(index):
-            return 0x40000001 + asset_table_base + index * 8
-
         techset_pointers = {
             value: manifest_pointer(index)
             for index, (kind, value) in enumerate(assets) if kind == 7
-        }
-        image_pointers = {
-            value["name"]: manifest_pointer(index)
-            for index, (kind, value) in enumerate(assets) if kind == 8
         }
         material_entries = [
             (index, value) for index, (kind, value) in enumerate(assets)
@@ -2797,6 +3134,10 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
                 techset_pointers[material_value["pc_techset_name"]],
                 [image_pointers[image_value["name"]]
                  for image_value in material_value["textures"]])
+            if not material_value.get("pc_state_layout_verified", False):
+                source_count = len(bytes.fromhex(
+                    material_value.get("state_bits", ""))) // 8
+                unverified_state_layouts[source_count] += 1
         surface_material_pointers = [
             (material_pointers[id(material_value)]
              if material_value is not None else fallback_material_pointer)
@@ -2806,7 +3147,7 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
     write_pc_com_world(payload, com_world)
 
     write_pc_gfx_world(payload, gfx_world, len(com_world["primary_lights"]),
-                       surface_material_pointers)
+                       surface_material_pointers, image_pointers)
 
     payload.extend(struct.pack("<I", INLINE))
     payload.extend(game_name.encode() + b"\0")
@@ -2839,6 +3180,22 @@ def build_pc_map_probe(path, include_images=False, include_materials=False):
     result.extend(zlib.compress(payload, 1))
     # Native PC and Xenon QoS fastfiles pad the zlib stream to 32 bytes.
     result.extend(bytes((-len(result)) % 32))
+    if diagnostics is not None:
+        diagnostics["techset_mappings"] = [
+            {"source": source, "pc": pc, "exact": source == pc,
+             "materials": count}
+            for (source, pc), count in sorted(techset_mappings.items())
+        ]
+        diagnostics["material_mappings"] = [
+            {"material": material, "source_techset": source,
+             "pc_techset": pc, "reason": reason, "instances": count}
+            for (material, source, pc, reason), count
+            in sorted(material_mappings.items())
+        ]
+        diagnostics["unverified_state_layouts"] = [
+            {"xenon_state_count": count, "materials": materials}
+            for count, materials in sorted(unverified_state_layouts.items())
+        ]
     return bytes(result)
 
 
@@ -2988,11 +3345,22 @@ def main():
         if len(args.files) != 1:
             parser.error("--convert-map-probe requires exactly one input")
         try:
+            diagnostics = {}
             args.convert_map_probe.write_bytes(build_pc_map_probe(
-                args.files[0], args.include_images, args.include_materials))
-            print(json.dumps({"input": str(args.files[0]),
-                              "output": str(args.convert_map_probe),
-                              "bytes": args.convert_map_probe.stat().st_size}))
+                args.files[0], args.include_images, args.include_materials,
+                diagnostics))
+            result = {"input": str(args.files[0]),
+                      "output": str(args.convert_map_probe),
+                      "bytes": args.convert_map_probe.stat().st_size,
+                      **diagnostics}
+            mappings_directory = Path(__file__).resolve().parent / ".work" / "reports"
+            mappings_directory.mkdir(parents=True, exist_ok=True)
+            mappings_path = mappings_directory / (
+                args.convert_map_probe.name + ".mappings.json")
+            mappings_path.write_text(json.dumps(result, indent=2),
+                                     encoding="utf-8")
+            result["mappings_output"] = str(mappings_path)
+            print(json.dumps(result, indent=2))
             return 0
         except (OSError, FormatError) as error:
             print(json.dumps({"file": str(args.files[0]), "error": str(error)}))
