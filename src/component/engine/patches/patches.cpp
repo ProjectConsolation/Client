@@ -270,6 +270,44 @@ namespace patches
 			console::info("[patches - stats] PATCHED: profile initialization during cinematics\n");
 		}
 
+		void disable_startup_remote_screen_sync()
+		{
+			// QoS 1.1 brackets two blocking startup operations with its remote-screen
+			// renderer handshake: profile parsing and final renderer initialization.
+			// On the supported PC build either end call can wait forever at 0x103BF658
+			// when the backend misses its second acknowledgement. Neither operation
+			// depends on the presentation-only handshake, so remove each balanced pair.
+			struct call_patch
+			{
+				std::uintptr_t address;
+				std::array<unsigned char, 5> expected;
+			};
+
+			constexpr std::array patches{
+				call_patch{0x10243D3E, {0xE8, 0xBD, 0xC1, 0x17, 0x00}},
+				call_patch{0x10243DAE, {0xE8, 0x0D, 0xB8, 0x17, 0x00}},
+				call_patch{0x103FA22E, {0xE8, 0xCD, 0x5C, 0xFC, 0xFF}},
+				call_patch{0x103FA243, {0xE8, 0x78, 0x53, 0xFC, 0xFF}},
+			};
+
+			for (const auto& patch : patches)
+			{
+				const auto site = game::game_offset(patch.address);
+				if (std::memcmp(reinterpret_cast<const void*>(site), patch.expected.data(), patch.expected.size()) != 0)
+				{
+					console::error("[patches - startup] skipped: unsupported remote-screen call at 0x%08X\n",
+						static_cast<unsigned int>(patch.address));
+					return;
+				}
+			}
+
+			for (const auto& patch : patches)
+			{
+				utils::hook::nop(game::game_offset(patch.address), patch.expected.size());
+			}
+			console::info("[patches - startup] PATCHED: disabled blocking startup render synchronization\n");
+		}
+
 		void apply_missing_voice_engine_guard()
 		{
 			// QoS 1.1 faults at 0x102462F0 when XHVCreateEngine leaves a null engine.
@@ -737,6 +775,9 @@ namespace patches
 			const auto named_class = class_name && !IS_INTRESOURCE(class_name);
 			if (named_class && !strcmp(class_name, "007 Splash Screen"))
 			{
+				// Keep QoS' later GetWindowRect/SetWindowPos resize in physical pixels.
+				// Otherwise a DPI-virtualized startup thread scales 768x480 twice.
+				resources::prepare_splash_thread();
 				if (resources::get_splash_dimensions(width, height))
 				{
 					x = (GetSystemMetrics(SM_CXFULLSCREEN) - width) / 2;
@@ -992,6 +1033,7 @@ namespace patches
 		{
 			apply_video_dvar_patches();
 			apply_cinematic_stats_guard();
+			disable_startup_remote_screen_sync();
 			apply_missing_voice_engine_guard();
 			apply_private_match_unpause();
 			apply_cg_draw_fps_modes();

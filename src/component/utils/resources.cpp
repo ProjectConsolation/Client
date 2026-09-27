@@ -71,7 +71,10 @@ namespace resources
 			if (type == IMAGE_BITMAP && splash &&
 				((is_game_module(handle) && is_integer_resource(name, 0x64)) || is_named_resource(name, "jb.bmp")))
 			{
-				return copy_image_or_original(splash, IMAGE_BITMAP, c_x, c_y);
+				// The original launcher requests its stock bitmap dimensions. Resizing
+				// the embedded 768x480 replacement to that request makes it appear
+				// cropped/zoomed inside the native-sized splash window.
+				return copy_image_or_original(splash, IMAGE_BITMAP, 0, 0);
 			}
 
 			if (type == IMAGE_BITMAP && console_logo &&
@@ -107,6 +110,25 @@ namespace resources
 
 		SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
 		SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+	}
+
+	void prepare_splash_thread()
+	{
+		static thread_local bool configured = false;
+		if (configured)
+		{
+			return;
+		}
+
+		const utils::nt::library user32{"user32.dll"};
+		const auto set_thread_dpi = user32
+			? user32.get_proc<DPI_AWARENESS_CONTEXT(WINAPI*)(DPI_AWARENESS_CONTEXT)>(
+				"SetThreadDpiAwarenessContext")
+			: nullptr;
+		if (set_thread_dpi && set_thread_dpi(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+		{
+			configured = true;
+		}
 	}
 
 	bool get_splash_dimensions(int& width, int& height)

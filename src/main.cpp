@@ -148,8 +148,10 @@ namespace
 				: nullptr;
 			if (set_dpi)
 			{
-				set_dpi(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-				return;
+				if (set_dpi(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+				{
+					return;
+				}
 			}
 		}
 		{
@@ -160,8 +162,10 @@ namespace
 				: nullptr;
 			if (set_dpi)
 			{
-				set_dpi(PROCESS_PER_MONITOR_DPI_AWARE);
-				return;
+				if (SUCCEEDED(set_dpi(PROCESS_PER_MONITOR_DPI_AWARE)))
+				{
+					return;
+				}
 			}
 		}
 
