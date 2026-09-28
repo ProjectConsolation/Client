@@ -1048,6 +1048,38 @@ class FastfileTests(unittest.TestCase):
                          (xenon_ff.INLINE,))
         self.assertEqual(lit_payload[-36:], bytes(36))
 
+    def test_pc_gfx_world_translates_xenon_runtime_tail(self):
+        runtime_tail = bytearray(168)
+        struct.pack_into(">6I", runtime_tail, 0, 0x3F800000,
+                         xenon_ff.INSERT, 0x100, 2, 0x201, 5)
+        for offset in range(24, 156, 4):
+            struct.pack_into(">I", runtime_tail, offset, xenon_ff.INLINE)
+        struct.pack_into(">3I", runtime_tail, 156, 2, xenon_ff.INLINE, 0)
+        runtime_records = struct.pack(">12I", *range(1, 13))
+        asset = {
+            "name": "mp_test",
+            "world_name": "maps/mp/test.d3dbsp",
+            "geometry": {
+                "planes": "", "nodes": "", "indices": "", "surfaces": "",
+                "brush_models": "", "dpvs_worlds": "",
+                "sky_start_surfs": "", "vertices": "", "vertex_layers": "",
+                "static_model_draws": "", "static_model_insts": "",
+                "cells": [], "runtime_tail": runtime_tail.hex(),
+                "runtime_records": runtime_records.hex(),
+            },
+        }
+
+        payload = bytearray()
+        xenon_ff.write_pc_gfx_world(payload, asset, 0)
+        header = payload[:728]
+        self.assertEqual(struct.unpack_from("<6I", header, 0x230),
+                         (0x3F800000, xenon_ff.INSERT, 0x200, 2, 0x401, 5))
+        self.assertEqual(struct.unpack_from("<I", header, 0x248),
+                         (xenon_ff.INLINE,))
+        self.assertEqual(struct.unpack_from("<3I", header, 0x2CC),
+                         (2, xenon_ff.INLINE, 0))
+        self.assertEqual(payload[-48:], struct.pack("<12I", *range(1, 13)))
+
     def test_pc_surface_remap_is_identity_and_bounded(self):
         self.assertEqual(xenon_ff._pc_surface_remap(4),
                          struct.pack("<4H", 0, 1, 2, 3))

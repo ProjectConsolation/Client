@@ -1,21 +1,28 @@
 #include <std_include.hpp>
 
 #include "loader/component_loader.hpp"
-
 #include "component/utils/scheduler.hpp"
-
 #include "game/game.hpp"
 #include "game/dvars.hpp"
 
-#include <utils/hook.hpp>
 #include <utils/string.hpp>
 
 namespace draw_techset
 {
 	namespace
 	{
+		constexpr auto cg_initialized_address = 0x129FE8E4;
+		// QoS PC 1.1 CG_DrawMaterial (0x102B58D0) uses this trace to fill
+		// its material, surface-type, and contents labels.
+		constexpr auto material_trace_function_address = 0x103B9F50;
+		constexpr auto material_trace_start_address = 0x12A502E8;
+		constexpr auto material_trace_end_address = 0x12A502F4;
+		constexpr std::size_t trace_text_capacity = 0x1000;
 		constexpr std::size_t max_texture_count = 16;
-		constexpr DWORD capture_lifetime_ms = 100;
+		constexpr float virtual_width = 640.0f;
+		constexpr float virtual_height = 480.0f;
+		constexpr float native_anchor_x = 56.0f;
+		constexpr float native_anchor_y = 350.0f;
 
 		struct gfx_image_view
 		{
@@ -33,27 +40,45 @@ namespace draw_techset
 
 		struct material_snapshot
 		{
-			bool valid{};
-			DWORD captured_at{};
-			game::Font_s* font{};
-			float x{};
-			float y{};
-			float x_scale{};
-			float y_scale{};
 			char material_name[96]{};
 			char technique_name[96]{};
 			unsigned char texture_count{};
 			texture_snapshot textures[max_texture_count]{};
 		};
 
-		utils::hook::detour draw_text_hook;
-		material_snapshot current_material{};
-		bool resolving_material_label = false;
-		bool drawing_overlay = false;
+		struct trace_text
+		{
+			char material[trace_text_capacity]{};
+			char surface_type[trace_text_capacity]{};
+			char contents[trace_text_capacity]{};
+		};
+
+		std::uintptr_t material_trace_function{};
+		std::uintptr_t material_trace_start{};
+		std::uintptr_t material_trace_end{};
 		float text_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 		float shadow_color[4] = {0.0f, 0.0f, 0.0f, 0.75f};
 
-		bool copy_guarded_string(char* destination, const std::size_t capacity, const char* source)
+		__declspec(naked) int trace_material_native(char*, char*, char*)
+		{
+			__asm
+			{
+				mov eax, [esp + 0Ch]
+				push eax
+				mov eax, [esp + 0Ch]
+				push eax
+				mov eax, [esp + 0Ch]
+				push eax
+				mov eax, dword ptr [material_trace_end]
+				mov ecx, dword ptr [material_trace_start]
+				call dword ptr [material_trace_function]
+				add esp, 0Ch
+				ret
+			}
+		}
+
+		bool copy_guarded_string(char* destination, const std::size_t capacity,
+			const char* source)
 		{
 			if (!destination || !capacity)
 			{
@@ -88,7 +113,8 @@ namespace draw_techset
 			}
 		}
 
-		bool capture_material(const game::Material* material, material_snapshot* snapshot)
+		bool capture_material(const game::Material* material,
+			material_snapshot* snapshot)
 		{
 			if (!material || !snapshot)
 			{
@@ -97,16 +123,18 @@ namespace draw_techset
 
 			__try
 			{
-				if (!material->name || !material->techniqueSet || !material->techniqueSet->name
-					|| material->textureCount < 0 || material->textureCount > max_texture_count
+				if (!material->name || !material->techniqueSet
+					|| !material->techniqueSet->name || material->textureCount < 0
+					|| material->textureCount > max_texture_count
 					|| (material->textureCount && !material->textureTable))
 				{
 					return false;
 				}
 
-				if (!copy_guarded_string(snapshot->material_name, sizeof(snapshot->material_name), material->name)
-					|| !copy_guarded_string(snapshot->technique_name, sizeof(snapshot->technique_name),
-						material->techniqueSet->name))
+				if (!copy_guarded_string(snapshot->material_name,
+					sizeof(snapshot->material_name), material->name)
+					|| !copy_guarded_string(snapshot->technique_name,
+						sizeof(snapshot->technique_name), material->techniqueSet->name))
 				{
 					return false;
 				}
@@ -119,7 +147,8 @@ namespace draw_techset
 					texture.semantic = static_cast<unsigned char>(definition.semantic);
 					texture.sampler_state = static_cast<unsigned char>(definition.sampleState);
 					const auto* const image = static_cast<const gfx_image_view*>(definition.image);
-					if (!image || !copy_guarded_string(texture.image_name, sizeof(texture.image_name), image->name))
+					if (!image || !copy_guarded_string(texture.image_name,
+						sizeof(texture.image_name), image->name))
 					{
 						strcpy_s(texture.image_name, "<invalid>");
 					}
@@ -133,99 +162,111 @@ namespace draw_techset
 			}
 		}
 
-		bool is_material_label(const char* text)
+		bool trace_current_material(trace_text* text)
 		{
-			if (!text || !*text)
+			if (!text || !material_trace_function || !material_trace_start
+				|| !material_trace_end)
 			{
 				return false;
 			}
 
-			for (std::size_t index = 0; index < 96; ++index)
+			__try
 			{
-				const auto value = static_cast<unsigned char>(text[index]);
-				if (!value)
-				{
-					return index > 1;
-				}
-				if (value <= ' ' || value >= 0x7F)
+				if (!*reinterpret_cast<std::uintptr_t*>(
+					game::game_offset(cg_initialized_address)))
 				{
 					return false;
 				}
+
+				return trace_material_native(text->material, text->surface_type,
+					text->contents) != 0 && text->material[0] != '\0';
 			}
-
-			return false;
-		}
-
-		void draw_text_stub(const char* text, const int max_chars, game::Font_s* font,
-			const float x, const float y, const float x_scale, const float y_scale,
-			const float rotation, const float* color, const int style)
-		{
-			if (!resolving_material_label && !drawing_overlay
-				&& dvars::cg_drawTechset && dvars::cg_drawTechset->current.enabled)
+			__except (EXCEPTION_EXECUTE_HANDLER)
 			{
-				const auto* const draw_material = game::Dvar_FindVar("cg_drawMaterial");
-				if (draw_material && draw_material->current.enabled && is_material_label(text))
-				{
-					resolving_material_label = true;
-					const auto reset_guard = gsl::finally([] { resolving_material_label = false; });
-					const auto header = game::DB_FindXAssetHeader_Internal(game::ASSET_TYPE_MATERIAL, text, 0);
-					material_snapshot snapshot{};
-					if (capture_material(header.material, &snapshot)
-						&& !_stricmp(snapshot.material_name, text))
-					{
-						snapshot.valid = true;
-						snapshot.captured_at = GetTickCount();
-						snapshot.font = font;
-						snapshot.x = x;
-						snapshot.y = y;
-						snapshot.x_scale = x_scale;
-						snapshot.y_scale = y_scale;
-						current_material = snapshot;
-					}
-				}
+				return false;
 			}
-
-			draw_text_hook.invoke<void>(text, max_chars, font, x, y, x_scale, y_scale,
-				rotation, color, style);
 		}
 
-		void draw_line(const char* text, game::Font_s* font, const float x, const float y,
-			const float x_scale, const float y_scale)
+		void get_client_size(float* width, float* height)
 		{
-			draw_text_hook.invoke<void>(text, 0x7FFFFFFF, font, x + 1.0f, y + 1.0f,
-				x_scale, y_scale, 0.0f, shadow_color, 0);
-			draw_text_hook.invoke<void>(text, 0x7FFFFFFF, font, x, y,
-				x_scale, y_scale, 0.0f, text_color, 0);
+			*width = virtual_width;
+			*height = virtual_height;
+			RECT client_rect{};
+			const auto window = *game::main_window;
+			if (window && GetClientRect(window, &client_rect)
+				&& client_rect.right > client_rect.left
+				&& client_rect.bottom > client_rect.top)
+			{
+				*width = static_cast<float>(client_rect.right - client_rect.left);
+				*height = static_cast<float>(client_rect.bottom - client_rect.top);
+			}
+		}
+
+		void draw_line(const char* text, game::Font_s* font, const float x,
+			const float y, const float scale)
+		{
+			game::R_AddCmdDrawText(text, 0x7FFFFFFF, font, x + 1.0f, y + 1.0f,
+				scale, scale, 0.0f, shadow_color, 0);
+			game::R_AddCmdDrawText(text, 0x7FFFFFFF, font, x, y,
+				scale, scale, 0.0f, text_color, 0);
 		}
 
 		void draw()
 		{
-			if (!dvars::cg_drawTechset || !dvars::cg_drawTechset->current.enabled
-				|| !current_material.valid
-				|| GetTickCount() - current_material.captured_at > capture_lifetime_ms
-				|| !current_material.font || current_material.font->pixelHeight <= 0)
+			if (!dvars::cg_drawTechset || !dvars::cg_drawTechset->current.enabled)
 			{
 				return;
 			}
 
-			drawing_overlay = true;
-			const auto reset_guard = gsl::finally([] { drawing_overlay = false; });
-			const auto line_height = static_cast<float>(current_material.font->pixelHeight)
-				* current_material.y_scale;
-			auto y = current_material.y + line_height * 3.0f;
-			draw_line(utils::string::va("techset: %s", current_material.technique_name),
-				current_material.font, current_material.x, y,
-				current_material.x_scale, current_material.y_scale);
+			const auto* const draw_material = game::Dvar_FindVar("cg_drawMaterial");
+			if (!draw_material || !draw_material->current.enabled)
+			{
+				return;
+			}
 
-			for (std::size_t index = 0; index < current_material.texture_count; ++index)
+			trace_text trace{};
+			if (!trace_current_material(&trace))
+			{
+				return;
+			}
+
+			const auto header = game::DB_FindXAssetHeader_Internal(
+				game::ASSET_TYPE_MATERIAL, trace.material, 0);
+			material_snapshot material{};
+			if (!capture_material(header.material, &material)
+				|| _stricmp(material.material_name, trace.material))
+			{
+				return;
+			}
+
+			auto* const font = game::R_RegisterFont("fonts/consolefont");
+			if (!font || font->pixelHeight <= 0)
+			{
+				return;
+			}
+
+			float width{};
+			float height{};
+			get_client_size(&width, &height);
+			const auto layout_scale = (std::min)(width / virtual_width,
+				height / virtual_height);
+			const auto font_scale = (std::max)(0.5f, layout_scale * 0.5f);
+			const auto x = native_anchor_x * width / virtual_width;
+			auto y = native_anchor_y * height / virtual_height;
+			const auto line_height = static_cast<float>(font->pixelHeight) * font_scale;
+
+			draw_line(utils::string::va("techset: %s", material.technique_name),
+				font, x, y, font_scale);
+			for (std::size_t index = 0; index < material.texture_count; ++index)
 			{
 				y += line_height;
-				const auto& texture = current_material.textures[index];
-				draw_line(utils::string::va("texture %u: semantic=%u sampler=%u image=%s",
-					static_cast<unsigned int>(index), static_cast<unsigned int>(texture.semantic),
-					static_cast<unsigned int>(texture.sampler_state), texture.image_name),
-					current_material.font, current_material.x, y,
-					current_material.x_scale, current_material.y_scale);
+				const auto& texture = material.textures[index];
+				draw_line(utils::string::va(
+					"texture %u: semantic=%u sampler=%u image=%s",
+					static_cast<unsigned int>(index),
+					static_cast<unsigned int>(texture.semantic),
+					static_cast<unsigned int>(texture.sampler_state),
+					texture.image_name), font, x, y, font_scale);
 			}
 		}
 	}
@@ -235,8 +276,17 @@ namespace draw_techset
 	public:
 		void post_load() override
 		{
-			draw_text_hook.create(game::R_AddCmdDrawText, draw_text_stub);
+			material_trace_function = game::game_offset(material_trace_function_address);
+			material_trace_start = game::game_offset(material_trace_start_address);
+			material_trace_end = game::game_offset(material_trace_end_address);
 			scheduler::loop(draw, scheduler::pipeline::renderer);
+		}
+
+		void pre_destroy() override
+		{
+			material_trace_function = 0;
+			material_trace_start = 0;
+			material_trace_end = 0;
 		}
 	};
 }

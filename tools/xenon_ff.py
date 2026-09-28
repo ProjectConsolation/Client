@@ -1442,8 +1442,9 @@ def gfx_map(reader, pointer, capture=False):
                 reader.take(u16(records, offset) * 2)
             if u32(records, offset + 8):
                 reader.take(u16(records, offset + 2) * 2)
+    runtime_records = b""
     if u32(header, 820):
-        reader.take(u32(header, 816) * 24)
+        runtime_records = reader.take(u32(header, 816) * 24)
     if u32(header, 824) in (INLINE, INSERT):
         material(reader, capture)
 
@@ -1482,6 +1483,11 @@ def gfx_map(reader, pointer, capture=False):
             "sky_start_surfs": sky_start_surfs.hex(),
             "vertices": vertices.hex(),
             "vertex_layers": vertex_layers.hex(),
+            # Xbox +0x294..+0x338 is the platform counterpart of PC
+            # +0x230..+0x2D4. It contains renderer allocation counts and
+            # stream markers that must survive conversion.
+            "runtime_tail": header[660:828].hex(),
+            "runtime_records": runtime_records.hex(),
         }
     return result
 
@@ -2370,6 +2376,8 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     cells = geometry.get("cells", [])
     reflection_probes = geometry.get("reflection_probes", [])
     lightmaps = geometry.get("lightmaps", [])
+    runtime_tail = bytes.fromhex(geometry.get("runtime_tail", ""))
+    runtime_records = bytes.fromhex(geometry.get("runtime_records", ""))
     image_pointers = image_pointers or {}
 
     if (len(xbox_surfaces) % 72 or len(xbox_brush_models) % 168
@@ -2447,36 +2455,47 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
                      INLINE if brush_model_count else 0)
     struct.pack_into("<2I", pc_header, 360, dpvs_world_count,
                      INLINE if dpvs_world_count else 0)
-    # Renderer visibility initialization clears these buffers even when the
-    # associated secondary visibility counts are zero. The free-list arrays
-    # need one terminator entry beyond the world cell count.
-    visibility_capacity = len(cells) + 1
-    struct.pack_into("<2I", pc_header, 576,
-                     visibility_capacity, visibility_capacity)
-    # QoS PC renderer reset (sub_103A3E90) clears two groups of four runtime
-    # visibility arrays. GfxWorld+0x248..0x254 are sized by the static-model
-    # count, while +0x258..0x264 are sized by each of the four DPVS-world
-    # surface counts. mp_canals reaches the latter with 5,015 surfaces in its
-    # first DPVS world, so omitting those markers leaves +0x258 null and faults
-    # in the native zero-fill loop. All eight live in stream 1 and consume no
-    # archive bytes.
-    struct.pack_into("<8I", pc_header, 584, *((INLINE,) * 8))
-    struct.pack_into("<2I", pc_header, 664, INLINE, INLINE)
-    struct.pack_into("<2I", pc_header, 680, INLINE, INLINE)
-    # These four renderer work buffers are stream-1 zero-fill allocations.
-    # GfxWorld+0x268 is the eight-byte-per-surface draw table initialized by
-    # sub_10391100; the following buffers are sized from the DPVS surface and
-    # cell counts. They consume virtual block space but no archive bytes.
-    struct.pack_into("<4I", pc_header, 616, INLINE, INLINE, INLINE, INLINE)
-    # Primary-light visibility is a stream-1 bitset sized by the native loader.
-    struct.pack_into("<I", pc_header, 700, INLINE)
-    # PC sub_103D8960 allocates this uint16 table from the first DPVS world's
-    # surface count. Native draw-list construction indexes it after marking the
-    # cell AABB ranges, so a null pointer suppresses otherwise-visible geometry.
-    struct.pack_into("<I", pc_header, 696,
-                     INLINE if surface_remap else 0)
-    struct.pack_into("<I", pc_header, 712,
-                     INLINE if primary_light_count else 0)
+    if runtime_tail:
+        if len(runtime_tail) != 168:
+            raise FormatError("invalid captured Xbox GfxWorld runtime tail")
+        runtime_record_count = u32(runtime_tail, 156)
+        runtime_record_pointer = u32(runtime_tail, 160)
+        expected_runtime_bytes = (runtime_record_count * 24
+                                  if runtime_record_pointer else 0)
+        if len(runtime_records) != expected_runtime_bytes:
+            raise FormatError(
+                "captured Xbox GfxWorld runtime-record count mismatch")
+        xenon_visibility_capacity = u32(runtime_tail, 8)
+        pc_visibility_capacity = xenon_visibility_capacity * 2
+        if pc_visibility_capacity > 0xFFFFFFFF:
+            raise FormatError("GfxWorld visibility capacity overflows PC field")
+        struct.pack_into("<I", pc_header, 0x230, u32(runtime_tail, 0))
+        struct.pack_into("<I", pc_header, 0x234, u32(runtime_tail, 4))
+        struct.pack_into("<I", pc_header, 0x238, pc_visibility_capacity)
+        struct.pack_into("<I", pc_header, 0x23C, u32(runtime_tail, 12))
+        # The PC combined visibility count includes both halves of the Xenon
+        # capacity rather than the single Xenon half represented at +0x29C.
+        struct.pack_into("<I", pc_header, 0x240,
+                         u32(runtime_tail, 16) + pc_visibility_capacity)
+        struct.pack_into("<I", pc_header, 0x244, u32(runtime_tail, 20))
+        pc_header[0x248:0x2D8] = _little_endian_words(runtime_tail[24:])
+    else:
+        # Synthetic fixtures do not carry a source runtime tail. Keep a
+        # conservative allocation layout so their serialized shape remains
+        # useful without pretending to reconstruct source-only counts.
+        visibility_capacity = len(cells) + 1
+        struct.pack_into("<2I", pc_header, 576,
+                         visibility_capacity, visibility_capacity)
+        struct.pack_into("<8I", pc_header, 584, *((INLINE,) * 8))
+        struct.pack_into("<4I", pc_header, 616,
+                         INLINE, INLINE, INLINE, INLINE)
+        struct.pack_into("<2I", pc_header, 664, INLINE, INLINE)
+        struct.pack_into("<2I", pc_header, 680, INLINE, INLINE)
+        struct.pack_into("<I", pc_header, 696,
+                         INLINE if surface_remap else 0)
+        struct.pack_into("<I", pc_header, 700, INLINE)
+        struct.pack_into("<I", pc_header, 712,
+                         INLINE if primary_light_count else 0)
 
     names = asset.get("names", [])
     world_name = names[0] if len(names) > 0 and isinstance(names[0], str) else asset["world_name"]
@@ -2532,6 +2551,8 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     payload.extend(vertex_layers)
     payload.extend(surface_remap)
     payload.extend(bytes(primary_light_count * 12))
+    if runtime_records:
+        payload.extend(_little_endian_words(runtime_records))
 
 
 def _swap_record_fields(raw, stride, words=(), halves=()):
