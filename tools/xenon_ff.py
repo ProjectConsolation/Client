@@ -10,6 +10,7 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import struct
@@ -1069,6 +1070,39 @@ def _little_endian_words(raw, start=0, end=None):
     for offset in range(start, end, 4):
         struct.pack_into("<I", result, offset, u32(raw, offset))
     return result
+
+
+def _pc_surface_remap(count):
+    """Build the PC renderer's uint16 DPVS surface-index table."""
+    if count < 0 or count > 0x10000:
+        raise FormatError(f"invalid PC surface remap count {count}")
+    return struct.pack(f"<{count}H", *range(count)) if count else b""
+
+
+def _pc_bounds_from_xenon(raw, offset=0):
+    """Convert Xenon mins/maxs to the PC Bounds midpoint/half-size form."""
+    mins = struct.unpack_from(">3f", raw, offset)
+    maxs = struct.unpack_from(">3f", raw, offset + 12)
+    values = mins + maxs
+    if not all(math.isfinite(value) for value in values):
+        raise FormatError("non-finite Xenon bounds")
+    if any(minimum > maximum for minimum, maximum in zip(mins, maxs)):
+        raise FormatError("inverted Xenon bounds")
+    midpoint = tuple((minimum + maximum) * 0.5
+                     for minimum, maximum in zip(mins, maxs))
+    half_size = tuple((maximum - minimum) * 0.5
+                      for minimum, maximum in zip(mins, maxs))
+    return struct.pack("<6f", *(midpoint + half_size))
+
+
+def _pc_dpvs_worlds(raw):
+    if len(raw) % 60:
+        raise FormatError("invalid captured Xbox DPVS world array")
+    converted = _little_endian_words(raw)
+    for offset in range(0, len(raw), 60):
+        converted[offset + 24:offset + 48] = _pc_bounds_from_xenon(
+            raw, offset + 24)
+    return converted
 
 
 def _convert_material_constants(raw):
@@ -2207,25 +2241,31 @@ def configure_pc_lightmap_image(image_value):
     image_value["pc_load_flags"] = (1, 2)
 
 
-def _pc_gfx_aabb_header(tree):
+def _pc_gfx_aabb_header(tree, include_static_model_indexes=False):
     raw = bytes.fromhex(tree["raw"])
     indexes = bytes.fromhex(tree["indexes"])
     children = tree["children"]
-    converted = _little_endian_words(raw, 0, 32)
-    struct.pack_into("<4I", converted, 32, len(indexes) // 4,
-                     INLINE if indexes else 0, len(children),
+    converted = bytearray(_little_endian_words(raw, 0, 32))
+    converted[:24] = _pc_bounds_from_xenon(raw)
+    index_count = len(indexes) // 4 if include_static_model_indexes else 0
+    struct.pack_into("<4I", converted, 32, index_count,
+                     INLINE if index_count else 0, len(children),
                      INLINE if children else 0)
     return converted
 
 
-def _write_pc_gfx_aabb_nested(payload, tree):
+def _write_pc_gfx_aabb_nested(payload, tree,
+                              include_static_model_indexes=False):
     indexes = bytes.fromhex(tree["indexes"])
-    payload.extend(_little_endian_words(indexes))
+    if include_static_model_indexes:
+        payload.extend(_little_endian_words(indexes))
     children = tree["children"]
     for child in children:
-        payload.extend(_pc_gfx_aabb_header(child))
+        payload.extend(_pc_gfx_aabb_header(
+            child, include_static_model_indexes))
     for child in children:
-        _write_pc_gfx_aabb_nested(payload, child)
+        _write_pc_gfx_aabb_nested(
+            payload, child, include_static_model_indexes)
 
 
 def _pc_gfx_dpvs_planes_header(dpvs_planes):
@@ -2260,7 +2300,8 @@ def _write_pc_gfx_dpvs_planes_nested(payload, dpvs_planes):
 def _pc_gfx_cell_header(cell, include_static_models=False,
                         include_empty_tree=False):
     raw = bytes.fromhex(cell["raw"])
-    converted = _little_endian_words(raw, 0, 24)
+    converted = bytearray(_little_endian_words(raw, 0, 24))
+    converted[:24] = _pc_bounds_from_xenon(raw)
     cull_groups = bytes.fromhex(cell["cull_groups"])
     # Cell probe bytes index the GfxWorld-wide reflection-probe origin array.
     # That PC array is not serialized yet, so advertising source indices would
@@ -2280,8 +2321,11 @@ def _pc_gfx_cell_header(cell, include_static_models=False,
 def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
                               include_empty_tree=False):
     if include_static_models and cell["tree"]:
-        payload.extend(_pc_gfx_aabb_header(cell["tree"]))
-        _write_pc_gfx_aabb_nested(payload, cell["tree"])
+        # The tree's surface ranges drive world visibility independently of
+        # its static-model index arrays. Keep the hierarchy but strip those
+        # indices until the PC static-model mark buffers are available.
+        payload.extend(_pc_gfx_aabb_header(cell["tree"], False))
+        _write_pc_gfx_aabb_nested(payload, cell["tree"], False)
     elif include_empty_tree and cell["tree"]:
         payload.extend(bytes(48))
 
@@ -2335,19 +2379,25 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     vertex_count = len(xbox_vertices) // 44
     brush_model_count = len(xbox_brush_models) // 168
     dpvs_world_count = len(dpvs_worlds) // 60
+    surface_remap_count = u32(dpvs_worlds, 48) if dpvs_world_count else 0
+    if surface_remap_count > surface_count:
+        raise FormatError(
+            "primary DPVS surface count exceeds GfxWorld surface count")
+    surface_remap = _pc_surface_remap(surface_remap_count)
     static_model_count = len(static_draws) // 40
     if len(static_draws) % 40 or len(static_instances) != static_model_count * 32:
         raise FormatError("invalid captured Xbox static-model arrays")
     have_static_models = static_model_count > 0 and static_model_pointers is not None
     if have_static_models and len(static_model_pointers) != static_model_count:
         raise FormatError("invalid relocated static-model pointer array")
-    # Static-model culling is one indivisible PC subsystem: worker jobs assume
-    # the cell tree, global index array, and mark buffers all exist whenever the
-    # world advertises a nonzero model count. The latter buffers are not mapped
-    # yet, so omit world static models while retaining standalone XModel assets.
+    # Static-model culling is one indivisible PC subsystem, so omit world static
+    # models until its global index and mark buffers are mapped. Cell AABB trees
+    # must still be retained: PC sub_1036E580 walks each tree's contiguous
+    # surface ranges to populate the world-surface visibility list. The client
+    # remaps those ranges directly when the optional PC uint16 table is absent.
     include_static_models = False
-    include_cell_trees = False
-    include_empty_cell_trees = True
+    include_cell_trees = True
+    include_empty_cell_trees = False
 
     pc_planes = bytearray(len(planes))
     for offset in range(0, len(planes), 20):
@@ -2365,7 +2415,7 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
                             if material_pointers is not None else INLINE)
         struct.pack_into("<I", pc_surfaces, target + 16, material_pointer)
         pc_surfaces[target + 20:target + 24] = source[44:48]
-        pc_surfaces[target + 24:target + 48] = _little_endian_words(source, 48, 72)[48:72]
+        pc_surfaces[target + 24:target + 48] = _pc_bounds_from_xenon(source, 48)
 
     pc_vertices = _little_endian_words(xbox_vertices)
     pc_header = bytearray(728)
@@ -2420,6 +2470,11 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     struct.pack_into("<4I", pc_header, 616, INLINE, INLINE, INLINE, INLINE)
     # Primary-light visibility is a stream-1 bitset sized by the native loader.
     struct.pack_into("<I", pc_header, 700, INLINE)
+    # PC sub_103D8960 allocates this uint16 table from the first DPVS world's
+    # surface count. Native draw-list construction indexes it after marking the
+    # cell AABB ranges, so a null pointer suppresses otherwise-visible geometry.
+    struct.pack_into("<I", pc_header, 696,
+                     INLINE if surface_remap else 0)
     struct.pack_into("<I", pc_header, 712,
                      INLINE if primary_light_count else 0)
 
@@ -2472,9 +2527,10 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     # surface ranges used for world draw submission; emitting an empty record
     # leaves collision intact but prevents any map geometry from being drawn.
     _write_pc_gfx_dpvs_planes_nested(payload, dpvs_planes)
-    payload.extend(_little_endian_words(dpvs_worlds))
+    payload.extend(_pc_dpvs_worlds(dpvs_worlds))
     payload.extend(pc_vertices)
     payload.extend(vertex_layers)
+    payload.extend(surface_remap)
     payload.extend(bytes(primary_light_count * 12))
 
 

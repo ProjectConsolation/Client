@@ -28,6 +28,7 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 | `cg_drawVersionX` | Saved horizontal position from the left edge for the version string. | Default: `50`, Range: `-1024` to `1024` |
 | `cg_drawVersionY` | Saved inset from the bottom edge for the version string. | Default: `17`, Range: `-1024` to `1024` |
 | `cg_drawOrigin` | Draws live player origin and velocity below the active `cg_drawFPS` block. | Boolean |
+| `cg_drawTechset` | When `cg_drawMaterial` is enabled, draws the selected material's resolved technique set and texture/image bindings directly below the stock material diagnostic block. | Boolean |
 | `cg_drawFPS` | Saved debug overlay mode. `1` draws FPS only; values `2` and higher draw the standard three-line FPS, frame-time, and triangle block. | `0` to `7` |
 | `cg_drawMemInfo` | Saved live memory overlay, centered at the right edge. Mode `1` shows working, private, peak, then a blank line and free process address space in MB. Mode `2` reproduces the native `meminfo` hunk, physical-memory, and high/low zone breakdown; mode `3` shows those same quantities in bytes. Memory pressure is colored yellow/red. | Default: `0`, Range: `0` to `3` |
 | `cg_debugInfoCornerOffset` | Default value corrected to `0 0`. Affects the corner offset used by some debug-style HUD info such as `cg_drawFPS`. | Default: `0 0` |

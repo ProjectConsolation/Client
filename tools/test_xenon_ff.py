@@ -705,6 +705,9 @@ class FastfileTests(unittest.TestCase):
                          21.0, 22.0, 23.0)
         vertex = struct.pack(">11I", *range(24, 35))
         tree_raw = bytearray(48)
+        struct.pack_into(">6f", tree_raw, 0, -10.0, -20.0, -30.0,
+                         30.0, 40.0, 50.0)
+        struct.pack_into(">2I", tree_raw, 24, 1, 0)
         struct.pack_into(">4I", tree_raw, 32, 1, xenon_ff.INLINE, 0, 0)
         cell_raw = bytearray(52)
         struct.pack_into(">6f", cell_raw, 0, -1.0, -2.0, -3.0,
@@ -712,6 +715,8 @@ class FastfileTests(unittest.TestCase):
         struct.pack_into(">I", cell_raw, 24, xenon_ff.INLINE)
         cell_raw[44] = 1
         struct.pack_into(">I", cell_raw, 48, xenon_ff.INLINE)
+        dpvs_world = list(range(81, 96))
+        dpvs_world[12] = 1
         asset = {
             "name": "mp_test",
             "world_name": "maps/mp/test.d3dbsp",
@@ -722,7 +727,7 @@ class FastfileTests(unittest.TestCase):
                 "indices": struct.pack(">H", 37).hex(),
                 "surfaces": surface.hex(),
                 "brush_models": struct.pack(">42I", *range(39, 81)).hex(),
-                "dpvs_worlds": struct.pack(">15I", *range(81, 96)).hex(),
+                "dpvs_worlds": struct.pack(">15I", *dpvs_world).hex(),
                 "static_model_draws": bytes(40).hex(),
                 "static_model_insts": bytes(32).hex(),
                 "pc_static_model_pointers": [0x4000088D],
@@ -763,23 +768,35 @@ class FastfileTests(unittest.TestCase):
         self.assertIn(struct.pack("<4f4B", 1.0, 2.0, 3.0, 4.0,
                                   5, 6, 7, 8), payload)
         self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
+        self.assertIn(struct.pack("<6f", 19.5, 20.5, 21.5,
+                                  1.5, 1.5, 1.5), payload)
         self.assertIn(struct.pack("<11I", *range(24, 35)), payload)
         self.assertIn(struct.pack("<42I", *range(39, 81)), payload)
-        self.assertIn(struct.pack("<15I", *range(81, 96)), payload)
-        self.assertIn(struct.pack("<6f", -1.0, -2.0, -3.0,
+        self.assertIn(xenon_ff._pc_dpvs_worlds(
+            struct.pack(">15I", *dpvs_world)), payload)
+        self.assertEqual(struct.unpack_from("<I", header, 696)[0],
+                         xenon_ff.INLINE)
+        self.assertEqual(payload[-38:-36], b"\0\0")
+        self.assertIn(struct.pack("<6f", 0.0, 0.0, 0.0,
                                   1.0, 2.0, 3.0), payload)
         pc_cell = xenon_ff._pc_gfx_cell_header(
-            asset["geometry"]["cells"][0], False)
-        self.assertEqual(struct.unpack_from("<I", pc_cell, 24)[0], 0)
-        empty_tree_cell = xenon_ff._pc_gfx_cell_header(
-            asset["geometry"]["cells"][0], False, True)
-        self.assertEqual(struct.unpack_from("<I", empty_tree_cell, 24)[0],
+            asset["geometry"]["cells"][0], True)
+        self.assertEqual(struct.unpack_from("<I", pc_cell, 24)[0],
                          xenon_ff.INLINE)
-        self.assertEqual(empty_tree_cell[44], 0)
-        self.assertEqual(struct.unpack_from("<I", empty_tree_cell, 48)[0], 0)
-        self.assertIn(empty_tree_cell, payload)
-        self.assertNotIn(xenon_ff._pc_gfx_aabb_header(
-            asset["geometry"]["cells"][0]["tree"]), payload)
+        self.assertEqual(pc_cell[44], 0)
+        self.assertEqual(struct.unpack_from("<I", pc_cell, 48)[0], 0)
+        self.assertIn(pc_cell, payload)
+        pc_tree = xenon_ff._pc_gfx_aabb_header(
+            asset["geometry"]["cells"][0]["tree"])
+        self.assertEqual(struct.unpack_from("<2I", pc_tree, 24), (1, 0))
+        self.assertEqual(struct.unpack_from("<6f", pc_tree),
+                         (10.0, 10.0, 10.0, 20.0, 30.0, 40.0))
+        self.assertEqual(struct.unpack_from("<2I", pc_tree, 32), (0, 0))
+        self.assertIn(pc_tree, payload)
+        nested = bytearray()
+        xenon_ff._write_pc_gfx_aabb_nested(
+            nested, asset["geometry"]["cells"][0]["tree"])
+        self.assertEqual(nested, b"")
         self.assertIn(b",white\0", payload)
 
         shared_payload = bytearray()
@@ -1030,6 +1047,20 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", lit_payload, 712),
                          (xenon_ff.INLINE,))
         self.assertEqual(lit_payload[-36:], bytes(36))
+
+    def test_pc_surface_remap_is_identity_and_bounded(self):
+        self.assertEqual(xenon_ff._pc_surface_remap(4),
+                         struct.pack("<4H", 0, 1, 2, 3))
+        with self.assertRaises(xenon_ff.FormatError):
+            xenon_ff._pc_surface_remap(0x10001)
+
+    def test_pc_bounds_convert_min_max_to_midpoint_half_size(self):
+        raw = struct.pack(">6f", -8.0, 4.0, -2.0, 12.0, 10.0, 6.0)
+        self.assertEqual(struct.unpack("<6f", xenon_ff._pc_bounds_from_xenon(raw)),
+                         (2.0, 7.0, 2.0, 10.0, 3.0, 4.0))
+        with self.assertRaises(xenon_ff.FormatError):
+            xenon_ff._pc_bounds_from_xenon(
+                struct.pack(">6f", 1.0, 0.0, 0.0, -1.0, 0.0, 0.0))
 
     def test_pc_map_probe_preserves_entities_and_root_names(self):
         model = bytearray(240)
