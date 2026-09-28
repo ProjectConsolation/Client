@@ -1076,9 +1076,8 @@ class FastfileTests(unittest.TestCase):
                          (0x3F800000, xenon_ff.INSERT, 0x200, 2, 0x401, 5))
         self.assertEqual(struct.unpack_from("<I", header, 0x248),
                          (xenon_ff.INLINE,))
-        self.assertEqual(struct.unpack_from("<3I", header, 0x2CC),
-                         (2, xenon_ff.INLINE, 0))
-        self.assertEqual(payload[-48:], struct.pack("<12I", *range(1, 13)))
+        self.assertEqual(struct.unpack_from("<3I", header, 0x2CC), (0, 0, 0))
+        self.assertFalse(payload.endswith(struct.pack("<12I", *range(1, 13))))
 
     def test_pc_surface_remap_is_identity_and_bounded(self):
         self.assertEqual(xenon_ff._pc_surface_remap(4),

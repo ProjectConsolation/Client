@@ -43,54 +43,12 @@ exclude:
     - "*.sum"
     - "**/*.sum"
     - "**/SKILL.md"
-    # Tests and specs are not part of the product implementation documentation.
-    - "**/*.test.*"
-    - "**/*.spec.*"
-    - "**/*_test.*"
-    - "**/*_unittest.*"
-    - "**/test_*.*"
-    - "**/__tests__/**"
-    - "**/__mocks__/**"
-    - "**/*.stories.*"
-    - "**/*.story.*"
-    # Repository automation and editor/tool configuration.
-    - "**/.github/workflows/**"
-    - "**/.gitlab-ci.yml"
-    - "**/Jenkinsfile"
-    - "**/.circleci/**"
-    - "**/.travis.yml"
-    - "**/.eslintrc*"
-    - "**/.prettierrc*"
-    - "**/jest.config.*"
-    - "**/.editorconfig"
-    - "**/babel.config.*"
-    - "**/webpack.config.*"
-    - "**/vite.config.*"
-    - "**/rollup.config.*"
-    - "**/tsconfig*.json"
-    - "**/.lintstagedrc*"
-    - "**/.huskyrc*"
-    - "**/.stylelintrc*"
-    - "**/commitlint.config.*"
-    # Container and infrastructure definitions.
-    - "**/Dockerfile*"
-    - "**/docker-compose*"
-    - "**/*.Dockerfile"
-    - "**/k8s/**"
-    - "**/terraform/**"
-    - "**/helm/**"
-    # Bundled third-party and temporary reference source is external to the client.
-    - "deps/**"
-    - "_tmp_iw4x_gamepad/**"
-    - ".github/**"
-    - ".vscode/**"
 
   # Vendor directories to exclude from analysis
   # These are typically package managers, build outputs, or version control
   vendorDirs:
     - node_modules
     - vendor
-    - deps
     - .git
     - dist
     - build
@@ -187,7 +145,7 @@ ai:
   #           gemini-2.5-pro | gemini-2.5-flash
   # OpenCode: provider/model format — e.g. anthropic/claude-sonnet-4-5,
   #           openai/gpt-5, google/gemini-2.5, groq/..., ollama/...
-  model: gpt-5.6-luna
+  model: gpt-5-codex-mini
 
   # Model for `are specify` and `are rebuild` — these commands benefit from a
   # stronger model. When unset, the default `model: sonnet` is upgraded to
@@ -205,9 +163,9 @@ ai:
 
   # Number of concurrent AI calls (parallelism)
   # Range: 1-20, Default: auto-detected from CPU cores and available memory
-  # Current machine default: 20
+  # Current machine default: 7
   # Uncomment to override:
-  # concurrency: 20
+  # concurrency: 7
 
   # Telemetry settings
   telemetry:

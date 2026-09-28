@@ -49,6 +49,8 @@ Inspect its headers, import libraries, samples, and documentation before impleme
 
 The QoS Wii database is the primary naming reference for identifying and renaming corresponding functions in the PC `jb_mp_s.dll` IDB. COD4 and World at War databases are comparative references for inherited engine architecture, algorithms, ownership boundaries, and subsystem behavior. They are not directly bindable implementations.
 
+Prefer the QoS Wii database and QoS Xbox 360 executable for cross-platform comparisons. Use their symbols, structures, and implementations before consulting other Call of Duty titles. When a QoS name is unavailable or cannot be matched confidently, consult COD4 next as a provisional naming or architectural reference, then validate the result against the QoS PC binary and runtime evidence before adopting it.
+
 When BO1 Windows x86 server or KisakBlack material is available and relevant, use it only as an additional comparative source, especially where COD4 and World at War differ. Do not treat it as authoritative QoS behavior.
 
 ## Reverse-Engineering Standard

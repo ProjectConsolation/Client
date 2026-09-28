@@ -2479,6 +2479,12 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
                          u32(runtime_tail, 16) + pc_visibility_capacity)
         struct.pack_into("<I", pc_header, 0x244, u32(runtime_tail, 20))
         pc_header[0x248:0x2D8] = _little_endian_words(runtime_tail[24:])
+        # Xenon +0x330/+0x334 describes a 24-byte platform-specific draw
+        # record table. PC 0x10393450 treats its first dword as an index into
+        # GfxWorld+0x2B8; copying the Xenon record verbatim produces an invalid
+        # surface index. Leave the optional PC table absent until its fields
+        # are structurally converted.
+        struct.pack_into("<2I", pc_header, 0x2CC, 0, 0)
     else:
         # Synthetic fixtures do not carry a source runtime tail. Keep a
         # conservative allocation layout so their serialized shape remains
@@ -2551,8 +2557,6 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     payload.extend(vertex_layers)
     payload.extend(surface_remap)
     payload.extend(bytes(primary_light_count * 12))
-    if runtime_records:
-        payload.extend(_little_endian_words(runtime_records))
 
 
 def _swap_record_fields(raw, stride, words=(), halves=()):
