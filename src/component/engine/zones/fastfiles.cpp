@@ -55,12 +55,84 @@ namespace fastfiles
 		bool patch_mp_loaded = false;
 		bool common_xenon_loaded = false;
 		bool common_xenon_attempted = false;
+		std::atomic_bool common_xenon_preloading = false;
 		bool patch_consolation_attempted = false;
 		bool patch_mp_attempted = false;
 		char normalized_rawfile_names[1024][256]{};
 		unsigned int normalized_rawfile_name_index = 0;
 		std::mutex external_asset_log_mutex;
 		std::unordered_set<std::string> logged_external_assets;
+
+		constexpr float preload_margin_x = 24.0f;
+		constexpr float preload_margin_y = 24.0f;
+		constexpr float preload_bar_width = 240.0f;
+		constexpr float preload_bar_height = 6.0f;
+		constexpr float preload_text_scale = 0.5f;
+		float preload_dim_color[4] = {0.0f, 0.0f, 0.0f, 0.72f};
+		float preload_bar_back_color[4] = {1.0f, 1.0f, 1.0f, 0.24f};
+		float preload_bar_fill_color[4] = {0.28f, 0.62f, 1.0f, 0.92f};
+		float preload_text_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+		void draw_common_xenon_preload()
+		{
+			if (!common_xenon_preloading.load(std::memory_order_acquire))
+			{
+				return;
+			}
+
+			RECT client_rect{};
+			const auto window = *game::main_window;
+			if (!window || !GetClientRect(window, &client_rect))
+			{
+				return;
+			}
+
+			const auto width = static_cast<float>(client_rect.right - client_rect.left);
+			const auto height = static_cast<float>(client_rect.bottom - client_rect.top);
+			if (width <= 0.0f || height <= 0.0f)
+			{
+				return;
+			}
+
+			auto* const white = game::Material_RegisterHandle("white");
+			auto* const font = game::R_RegisterFont("fonts/normalFont");
+			if (!white || !font)
+			{
+				return;
+			}
+
+			game::R_AddCmdDrawStretchPic(0.0f, 0.0f, width, height,
+				0.0f, 0.0f, 0.0f, 0.0f, preload_dim_color, white, 0);
+
+			const auto bar_x = preload_margin_x;
+			const auto bar_y = height - preload_margin_y - preload_bar_height;
+			const auto text_y = bar_y - 12.0f;
+			game::R_AddCmdDrawText("Preloading zone...", 0x7FFFFFFF, font,
+				bar_x, text_y, preload_text_scale, preload_text_scale, 0.0f,
+				preload_text_color, 0);
+			game::R_AddCmdDrawStretchPic(bar_x, bar_y, preload_bar_width,
+				preload_bar_height, 0.0f, 0.0f, 0.0f, 0.0f,
+				preload_bar_back_color, white, 0);
+
+			// QoS PC exposes DB completion, not reliable byte progress. Draw a
+			// centered indeterminate segment rather than presenting a false percent.
+			constexpr float segment_width = preload_bar_width * 0.32f;
+			game::R_AddCmdDrawStretchPic(bar_x + (preload_bar_width - segment_width) * 0.5f,
+				bar_y, segment_width, preload_bar_height, 0.0f, 0.0f, 0.0f, 0.0f,
+				preload_bar_fill_color, white, 0);
+		}
+
+		void present_common_xenon_preload()
+		{
+			common_xenon_preloading.store(true, std::memory_order_release);
+			const auto window = *game::main_window;
+			if (window && IsWindow(window))
+			{
+				// QoS PC Con_DrawConsole (0x10311F70) runs CL_DrawScreen and closes
+				// the frame through R_EndFrame, where the renderer pipeline executes.
+				game::Con_DrawConsole();
+			}
+		}
 
 		struct asset_pool_extension
 		{
@@ -639,6 +711,11 @@ namespace fastfiles
 					{
 						game::XZoneInfo donor_zone{"common_xenon", 0x11, 0};
 						game::Com_Printf(16, "^5[Xenon] Preloading shared PC render assets from common_xenon.ff\n");
+						present_common_xenon_preload();
+						const auto clear_preload_overlay = gsl::finally([]()
+						{
+							common_xenon_preloading.store(false, std::memory_order_release);
+						});
 						db_load_xassets_hook.invoke<int>(&donor_zone, 1, 0);
 						game::DB_WaitXAssets.get()();
 						game::Com_Printf(16, common_xenon_loaded
@@ -1142,6 +1219,7 @@ namespace fastfiles
 		void post_load() override
 		{
 			extend_asset_pools();
+			scheduler::loop(draw_common_xenon_preload, scheduler::pipeline::renderer);
 			gfx_world_pointer_address = game::game_offset(0x10C4A354);
 			cg_initialized_address = game::game_offset(0x129FE8E4);
 			// sub_103A4840 assumes every cell probe index has a matching world
@@ -1217,6 +1295,7 @@ namespace fastfiles
 
 		void pre_destroy() override
 		{
+			common_xenon_preloading.store(false, std::memory_order_release);
 			xenon::clear();
 		}
 	};
