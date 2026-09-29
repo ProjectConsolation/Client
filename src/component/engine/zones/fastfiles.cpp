@@ -53,6 +53,8 @@ namespace fastfiles
 		bool common_fastfiles_seen = false;
 		bool patch_consolation_loaded = false;
 		bool patch_mp_loaded = false;
+		bool common_xenon_loaded = false;
+		bool common_xenon_attempted = false;
 		bool patch_consolation_attempted = false;
 		bool patch_mp_attempted = false;
 		char normalized_rawfile_names[1024][256]{};
@@ -113,10 +115,28 @@ namespace fastfiles
 			return utils::flags::has_flag("debug_xasset");
 		}
 
+		const char* asset_type_name(const int type)
+		{
+			static constexpr const char* names[]
+			{
+				"xmodelpieces", "physpreset", "physconstraints", "destructibledef",
+				"xanim", "xmodel", "material", "techset", "image", "sound",
+				"sndcurve", "col_map_sp", "col_map_mp", "com_map", "game_map_sp",
+				"game_map_mp", "map_ents", "gfx_map", "lightdef", "ui_map",
+				"font", "menulist", "menu", "localize", "weapon",
+				"snddriverglobals", "fx", "impactfx", "aitype", "mptype",
+				"character", "xmodelalias", "rawfile", "stringtable", "xmltree",
+				"scene_animation", "cutscene", "custom_camera",
+			};
+			static_assert(sizeof(names) / sizeof(names[0]) == game::ASSET_TYPE_COUNT);
+
+			return type >= 0 && type < game::ASSET_TYPE_COUNT ? names[type] : "unknown";
+		}
+
 		void __cdecl log_default_asset_creation(const int type, const char* name)
 		{
-			game::Com_Printf(16, "^3[fastfiles] creating default for missing asset type=%d name=%s\n",
-				type, name ? name : "<null>");
+			game::Com_Printf(16, "^3[fastfiles] creating default for missing asset type=%d(%s) name=%s\n",
+				type, asset_type_name(type), name ? name : "<null>");
 		}
 
 		__declspec(naked) void db_create_default_asset_stub()
@@ -228,8 +248,8 @@ namespace fastfiles
 			if (type == game::ASSET_TYPE_COMWORLD || type == game::ASSET_TYPE_GFXWORLD
 				|| type == game::ASSET_TYPE_gameWORLD_MP || type == game::ASSET_TYPE_CLIPMAP_MP)
 			{
-				game::Com_Printf(16, "^5[map-stage] DB_LoadXAsset %s type=%u token=0x%08X entry=%p\n",
-					returning ? "returned" : "enter", type,
+				game::Com_Printf(16, "^5[map-stage] DB_LoadXAsset %s type=%u(%s) token=0x%08X entry=%p\n",
+					returning ? "returned" : "enter", type, asset_type_name(static_cast<int>(type)),
 					*reinterpret_cast<const std::uint32_t*>(entry + 4), reinterpret_cast<const void*>(entry));
 			}
 		}
@@ -586,10 +606,12 @@ namespace fastfiles
 
 		int db_load_xassets_stub(game::XZoneInfo* zones, const int count, const int sync)
 		{
+			bool multiplayer_map_requested = false;
 			for (int i = 0; zones && i < count; ++i)
 			{
 				if (zones[i].name && std::string_view(zones[i].name).starts_with("mp_"))
 				{
+					multiplayer_map_requested = true;
 					std::lock_guard lock(external_asset_log_mutex);
 					logged_external_assets.clear();
 					break;
@@ -608,6 +630,25 @@ namespace fastfiles
 					const auto source = find_zone_file(std::string(zones[i].name) + ".ff");
 					if (source && xenon::prepare(*source, zones[i].name) && unloads_zones)
 						throw std::runtime_error("Xenon UI conversion requires resident PC shader assets; use loadXenonZone without unloading zones");
+				}
+
+				if (multiplayer_map_requested && !common_xenon_attempted)
+				{
+					common_xenon_attempted = true;
+					if (find_zone_file("common_xenon.ff"))
+					{
+						game::XZoneInfo donor_zone{"common_xenon", 0x11, 0};
+						game::Com_Printf(16, "^5[Xenon] Preloading shared PC render assets from common_xenon.ff\n");
+						db_load_xassets_hook.invoke<int>(&donor_zone, 1, 0);
+						game::DB_WaitXAssets.get()();
+						game::Com_Printf(16, common_xenon_loaded
+							? "^5[Xenon] common_xenon.ff linked; continuing map load\n"
+							: "^3[Xenon] common_xenon.ff submitted, but no linked assets were observed\n");
+					}
+					else
+					{
+						game::Com_Printf(16, "^3[Xenon] common_xenon.ff was not found; continuing without shared PC render assets\n");
+					}
 				}
 			}
 			catch (const std::exception& error)
@@ -922,7 +963,8 @@ namespace fastfiles
 					&& std::strstr(incoming_name, "mp_canals") != nullptr));
 			if (trace_map_asset)
 			{
-				game::Com_Printf(16, "^5[map-stage] link enter type=%d name=%s\n", type, incoming_name);
+				game::Com_Printf(16, "^5[map-stage] link enter type=%d(%s) name=%s\n",
+					type, asset_type_name(type), incoming_name);
 			}
 			if (incoming_name[0] == ',')
 			{
@@ -934,15 +976,15 @@ namespace fastfiles
 				}
 				if (first_reference)
 				{
-					game::Com_Printf(16, "^5[fastfiles] resolving external asset type=%d name=%s\n",
-						static_cast<int>(entry->asset.type), incoming_name + 1);
+					game::Com_Printf(16, "^5[fastfiles] resolving external asset type=%d(%s) name=%s\n",
+						type, asset_type_name(type), incoming_name + 1);
 				}
 			}
 			auto* const linked_entry = db_link_xasset_entry_hook.invoke<game::XAssetEntry*>(entry, allow_override);
 			if (trace_map_asset)
 			{
-				game::Com_Printf(16, "^5[map-stage] link returned type=%d name=%s linked=%p\n",
-					type, incoming_name, linked_entry);
+				game::Com_Printf(16, "^5[map-stage] link returned type=%d(%s) name=%s linked=%p\n",
+					type, asset_type_name(type), incoming_name, linked_entry);
 			}
 			auto* const log_entry = linked_entry ? linked_entry : entry;
 			if (log_entry)
@@ -955,6 +997,7 @@ namespace fastfiles
 				common_fastfiles_seen = common_fastfiles_seen || zone_name_equals(incoming_zone_name, "common_mp") || zone_name_equals(zone_name, "common_mp");
 				patch_mp_loaded = patch_mp_loaded || zone_name_equals(incoming_zone_name, "patch_mp") || zone_name_equals(zone_name, "patch_mp");
 				patch_consolation_loaded = patch_consolation_loaded || zone_name_equals(incoming_zone_name, "patch_consolation") || zone_name_equals(zone_name, "patch_consolation");
+				common_xenon_loaded = common_xenon_loaded || zone_name_equals(incoming_zone_name, "common_xenon") || zone_name_equals(zone_name, "common_xenon");
 
 				if (is_scaleform_asset_name(incoming_name) || is_scaleform_asset_name(linked_name))
 				{

@@ -207,27 +207,103 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<4I", header, 84),
                          (0x40000101, xenon_ff.INLINE,
                           xenon_ff.INLINE, xenon_ff.INLINE))
-        self.assertEqual(header[20:32], bytes(range(12)))
+        self.assertEqual(header[20:24], bytes(range(4)))
         self.assertEqual(
-            header[32:67],
-            bytes((12,)) * 13 + bytes(range(18, 40)))
+            header[24:67],
+            xenon_ff._convert_material_state_slots(
+                bytes(range(4, 40)), {0: 0}))
         nested = 104 + len("test_material") + 1
         self.assertEqual(struct.unpack_from("<I", payload, nested)[0],
                          0x12345678)
         self.assertEqual(struct.unpack_from("<I", payload, nested + 8)[0],
                          0x40000201)
 
+    def test_pc_material_serialization_uses_native_pc_donor_fields(self):
+        source = bytearray(96)
+        source[60:63] = bytes((1, 1, 1))
+        definition = struct.pack(">I4B", 0x12345678, 1, 2, 3, 2) + struct.pack(">I", 1)
+        donor_header = bytearray(range(104))
+        struct.pack_into("<I", donor_header, 0, xenon_ff.INLINE)
+        donor_header[67:70] = bytes((1, 1, 1))
+        donor_texture = struct.pack("<I4B", 0x12345678, 1, 2, 3, 2) + struct.pack("<I", 0x40009901)
+        donor_constants = bytes(range(32))
+        donor_states = bytes(range(8))
+        material = {
+            "header": source.hex(), "name": "donor_material",
+            "techset_name": "test_techset", "pc_techset_name": "test_techset",
+            "textures": [{"definition": definition.hex(), "name": "test_image"}],
+            "constants": bytes(32).hex(), "state_bits": bytes(8).hex(),
+            "pc_material_donor": {
+                "header": bytes(donor_header), "textures": donor_texture,
+                "constants": donor_constants, "state_bits": donor_states,
+            },
+        }
+        payload = bytearray()
+
+        xenon_ff.write_pc_material(
+            payload, material, 0x40000101, [0x40000201])
+
+        expected_header = bytearray(donor_header)
+        struct.pack_into("<4I", expected_header, 84, 0x40000101,
+                         xenon_ff.INLINE, xenon_ff.INLINE, xenon_ff.INLINE)
+        self.assertEqual(payload[:104], expected_header)
+        nested = 104 + len("donor_material") + 1
+        self.assertEqual(payload[nested:nested + 8], donor_texture[:8])
+        self.assertEqual(struct.unpack_from("<I", payload, nested + 8)[0],
+                         0x40000201)
+        self.assertEqual(payload[nested + 12:nested + 44], donor_constants)
+        self.assertEqual(payload[nested + 44:nested + 52], donor_states)
+
     def test_pc_material_state_slots_match_paired_pc_expansion(self):
         source = bytes.fromhex(
-            "020202020202030303ffffffff04ff0205"
-            "0202020202020202030303")
+            "00ff01ff02ffff02"
+            "020202020202030303ffffffff04ff02050202020202020202030303")
+        mapping = {0: 0, 1: 2, 2: 1, 3: 4, 4: 5, 5: 6}
 
-        converted = xenon_ff._convert_material_state_slots(source)
+        converted = xenon_ff._convert_material_state_slots(source, mapping)
 
         self.assertEqual(converted, bytes.fromhex(
-            "02020202020202020202020202030303ffffffff04ff0205"
-            "0202020202020202030303"))
-        self.assertEqual(len(converted), 35)
+            "0001020301ffff0101010101010101010101010101040404"
+            "ffffffff05ff01060101010101010101040404"))
+        self.assertEqual(len(converted), 43)
+
+    def test_pc_material_state_slots_match_two_state_emissive_pair(self):
+        source = bytes.fromhex(
+            "ffffffff000000ff"
+            "ffffffffffffffffff0000ffff01ffffffffffffffffffffffffffff")
+
+        converted = xenon_ff._convert_material_state_slots(
+            source, {0: 0, 1: 1})
+
+        self.assertEqual(converted, bytes.fromhex(
+            "00ffffff00ffff0000000000000000000000000000ffffff"
+            "0000ffff01ffffffff00000000000000ffffff"))
+        self.assertEqual(len(converted), 43)
+
+    def test_pc_world_material_state_slots_match_paired_pc_expansion(self):
+        source = bytes.fromhex(
+            "00ff01ff02ffff02"
+            "020202020202030303ffffffff04ff02050202020202020202030303")
+        mapping = {0: 0, 1: 2, 2: 1, 3: 4, 4: 5, 5: 6}
+
+        converted = xenon_ff._convert_material_state_slots(
+            source, mapping, world_layout=True)
+
+        self.assertEqual(converted, bytes.fromhex(
+            "0001020301ffff01010101010101ffffffffffffff040404"
+            "ffffffff05ff01060101010101010101040404"))
+
+    def test_pc_world_emissive_slots_match_paired_pc_expansion(self):
+        source = bytes.fromhex(
+            "ffffffff000000ff"
+            "ffffffffffffffffff0000ffff01ffffffffffffffffffffffffffff")
+
+        converted = xenon_ff._convert_material_state_slots(
+            source, {0: 0, 1: 1}, world_layout=True)
+
+        self.assertEqual(converted, bytes.fromhex(
+            "ffffffff00ffff0000000000000000000000000000ffffff0000ffff01"
+            "ffffffff00000000000000ffffff"))
 
     def test_pc_material_state_bits_match_paired_pc_expansion(self):
         source = bytes.fromhex(
@@ -244,12 +320,12 @@ class FastfileTests(unittest.TestCase):
             "418912182c000000")
 
         slots = bytes.fromhex(
-            "020202020202030303ffffffff04ff0205"
-            "0202020202020202030303")
+            "00ff01ff02ffff02"
+            "020202020202030303ffffffff04ff02050202020202020202030303")
         self.assertEqual(
             xenon_ff._convert_material_state_slots(slots, mapping).hex(),
-            "01010101010101010101010101040404ffffffff05ff0106"
-            "0101010101010101040404")
+            "0001020301ffff0101010101010101010101010101040404"
+            "ffffffff05ff01060101010101010101040404")
 
     def test_pc_material_serialization_uses_filtered_texture_count(self):
         source = bytearray(96)
@@ -657,6 +733,21 @@ class FastfileTests(unittest.TestCase):
         with self.assertRaisesRegex(xenon_ff.FormatError, "static-model draw"):
             xenon_ff.convert_static_model_draws(bytes(39))
 
+    def test_world_vertex_converts_xenon_normal_and_tangent(self):
+        source = bytes.fromhex(
+            "c3d4800045005000c2400000bf800000ffffffff42550000"
+            "42f600003f5cbc003f4d00000007fc0000000201")
+
+        converted = xenon_ff.convert_world_vertices(source)
+
+        self.assertEqual(converted.hex(),
+            "0080d4c300500045000040c2000080bfffffffff00005542"
+            "0000f64200bc5c3f00004d3f7ffe7f3f007f7f3f")
+
+    def test_world_vertex_conversion_rejects_partial_record(self):
+        with self.assertRaisesRegex(xenon_ff.FormatError, "world-vertex"):
+            xenon_ff.convert_world_vertices(bytes(43))
+
     def test_static_model_draw_relocates_model_pointer(self):
         source = bytes(32) + struct.pack(">I", 0x4000062D) + bytes(4)
 
@@ -1048,7 +1139,7 @@ class FastfileTests(unittest.TestCase):
                          (xenon_ff.INLINE,))
         self.assertEqual(lit_payload[-36:], bytes(36))
 
-    def test_pc_gfx_world_translates_xenon_runtime_tail(self):
+    def test_pc_gfx_world_rejects_unverified_xenon_runtime_tail_layout(self):
         runtime_tail = bytearray(168)
         struct.pack_into(">6I", runtime_tail, 0, 0x3F800000,
                          xenon_ff.INSERT, 0x100, 2, 0x201, 5)
@@ -1072,8 +1163,9 @@ class FastfileTests(unittest.TestCase):
         payload = bytearray()
         xenon_ff.write_pc_gfx_world(payload, asset, 0)
         header = payload[:728]
-        self.assertEqual(struct.unpack_from("<6I", header, 0x230),
-                         (0x3F800000, xenon_ff.INSERT, 0x200, 2, 0x401, 5))
+        self.assertEqual(struct.unpack_from("<4I", header, 0x230),
+                         (0, 0, 0, 0))
+        self.assertEqual(struct.unpack_from("<2I", header, 0x240), (1, 1))
         self.assertEqual(struct.unpack_from("<I", header, 0x248),
                          (xenon_ff.INLINE,))
         self.assertEqual(struct.unpack_from("<3I", header, 0x2CC), (0, 0, 0))
@@ -1089,6 +1181,10 @@ class FastfileTests(unittest.TestCase):
         raw = struct.pack(">6f", -8.0, 4.0, -2.0, 12.0, 10.0, 6.0)
         self.assertEqual(struct.unpack("<6f", xenon_ff._pc_bounds_from_xenon(raw)),
                          (2.0, 7.0, 2.0, 10.0, 3.0, 4.0))
+        float_max = struct.unpack(">f", b"\x7f\x7f\xff\xff")[0]
+        self.assertEqual(xenon_ff._pc_bounds_from_xenon(
+            struct.pack(">6f", float_max, float_max, float_max,
+                        -float_max, -float_max, -float_max)), bytes(24))
         with self.assertRaises(xenon_ff.FormatError):
             xenon_ff._pc_bounds_from_xenon(
                 struct.pack(">6f", 1.0, 0.0, 0.0, -1.0, 0.0, 0.0))
@@ -1216,6 +1312,16 @@ class FastfileTests(unittest.TestCase):
         additional_bias = xenon_ff.PC_CLIP_BLOCK2_CURSOR_BIAS - (-0x104)
 
         self.assertEqual(previous_planned_plane_base + additional_bias, 0xB2C)
+
+    def test_barge_clip_cursor_accounts_for_live_four_byte_skew(self):
+        self.assertEqual(
+            xenon_ff._pc_clip_block2_cursor_bias(
+                "maps/mp/mp_barge.d3dbsp"),
+            xenon_ff.PC_CLIP_BLOCK2_CURSOR_BIAS - 4)
+        self.assertEqual(
+            xenon_ff._pc_clip_block2_cursor_bias(
+                "maps/mp/mp_canals.d3dbsp"),
+            xenon_ff.PC_CLIP_BLOCK2_CURSOR_BIAS)
 
     def test_shared_clip_planes_reject_invalid_sign_mask(self):
         header = bytearray(324)

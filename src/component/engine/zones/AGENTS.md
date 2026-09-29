@@ -17,7 +17,7 @@
 
 `db_link_xasset_entry_stub()` normalizes rawfile names, tracks common and patch zones, and emits `debug_xasset()` diagnostics.
 
-`get_pending_patch_zones()` discovers available override zones, and `load_patch_fastfiles_after_common()` submits them through `game::DB_LoadXAssets()` before refreshing UI data with `gametypes::refresh_ui_gametype_list()`.
+`get_pending_patch_zones()` discovers available override zones, and `load_patch_fastfiles_after_common()` submits them through `game::DB_LoadXAssets()` before refreshing UI data with `gametypes::refresh_ui_gametype_list()`. The DB load preflight also submits an optional `common_xenon.ff` once with override allocation flags before the first multiplayer map, keeping shared PC render assets resident for converted Xenon maps.
 
 ## Behavioral Contracts
 
@@ -27,6 +27,7 @@
 - `is_scaleform_asset_name()` matches `.gfx`, `.swf`, `scaleform`, `mpsysmodeselect`, `mpxbplaylistselect`, `cmsharedplatform`, `gfxfontlib`, `pcsharedlibrary`, or `cmsharedlibrary`.
 - `normalize_rawfile_name()` stores up to `1024` names in `normalized_rawfile_names[1024][256]` using `strncpy_s(..., _TRUNCATE)` and `normalized_rawfile_name_index++ % 1024`.
 - `make_override_zone()` sets `allocFlags = 0x11` and `freeFlags = 0`.
+- `common_xenon.ff` is optional, loads once before the first `mp_*` zone with `allocFlags = 0x11` and `freeFlags = 0`, and reports whether its assets were observed by the linker.
 - `get_asset_name()` returns `"<null>"`, `"<invalid>"`, or `"<unnamed>"` for absent, invalid, or empty asset data.
 - `get_zone_name()` returns `"<none>"` for empty zone names.
 - `create_file_a_stub()` logs `^5Opening Scaleform file %s\n`, `^5Loading Scaleform override %s\n`, and restores failed fallback errors with `SetLastError`.
