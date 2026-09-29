@@ -955,6 +955,22 @@ namespace fastfiles
 
 			const auto* const incoming_name = get_asset_name(entry);
 			const auto type = entry ? static_cast<int>(entry->asset.type) : -1;
+			const auto incoming_zone_index = get_asset_zone_index(entry);
+			const auto* const incoming_zone_name = get_zone_name(incoming_zone_index);
+			const bool common_xenon_world_root = zone_name_equals(incoming_zone_name, "common_xenon")
+				&& (type == game::ASSET_TYPE_CLIPMAP_MP || type == game::ASSET_TYPE_COMWORLD
+					|| type == game::ASSET_TYPE_gameWORLD_MP || type == game::ASSET_TYPE_MAP_ENTS
+					|| type == game::ASSET_TYPE_GFXWORLD);
+			if (common_xenon_world_root)
+			{
+				// The current common_xenon probe is sourced from a complete native PC
+				// map. Keep its render assets resident, but never register its world
+				// roots: QoS permits only one GfxWorld and the requested map owns it.
+				common_xenon_loaded = true;
+				game::Com_Printf(16, "^5[Xenon] ignored common_xenon world root type=%d(%s) name=%s\n",
+					type, asset_type_name(type), incoming_name);
+				return entry;
+			}
 			// Temporary QoS PC 1.1 probe for the generated mp_canals zone. Remove
 			// once native map asset linking and CM_LoadMap have been verified.
 			const bool trace_map_asset = entry && (type == game::ASSET_TYPE_gameWORLD_MP
@@ -989,8 +1005,6 @@ namespace fastfiles
 			auto* const log_entry = linked_entry ? linked_entry : entry;
 			if (log_entry)
 			{
-				const auto incoming_zone_index = get_asset_zone_index(entry);
-				const auto* const incoming_zone_name = get_zone_name(incoming_zone_index);
 				const auto zone_index = get_asset_zone_index(log_entry);
 				const auto* const zone_name = get_zone_name(zone_index);
 				const auto* const linked_name = get_asset_name(log_entry);
