@@ -25,7 +25,7 @@
 
 `REGISTER_COMPONENT(filesystem::component)`, `REGISTER_COMPONENT(gametypes::component)`, and `REGISTER_COMPONENT(gsc::component)` activate component lifecycle integration.
 
-`loaded_gametype_rawfiles`, `loaded_scaleform_rawfiles`, and `loaded_scripts` memoize allocated `game::RawFile` objects for repeated asset lookup.
+`loaded_gametype_rawfiles`, the Scaleform override cache, and `loaded_scripts` memoize allocated `game::RawFile` objects for repeated asset lookup. The rawfile cache containers have process lifetime so component `pre_destroy()` can clear them safely when called from CRT exit.
 
 `gsc::add_function()` and `gsc::add_method()` lowercase names before storing dispatch entries in `scr_functions` and `scr_methods`.
 

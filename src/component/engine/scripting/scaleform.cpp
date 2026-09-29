@@ -17,8 +17,19 @@ namespace scaleform
 {
 	namespace
 	{
-		std::unordered_map<std::string, game::RawFile*> loaded_rawfiles;
-		std::mutex loaded_rawfiles_mutex;
+		struct override_cache
+		{
+			std::mutex mutex;
+			std::unordered_map<std::string, game::RawFile*> rawfiles;
+		};
+
+		override_cache& get_override_cache()
+		{
+			// Component cleanup also runs from CRT exit, after ordinary globals
+			// in this translation unit may have been destroyed.
+			static auto* cache = new override_cache;
+			return *cache;
+		}
 
 		std::string normalize_path(const char* name)
 		{
@@ -55,8 +66,9 @@ namespace scaleform
 
 		game::RawFile* load_override(const std::string& name)
 		{
-			std::lock_guard lock(loaded_rawfiles_mutex);
-			if (const auto it = loaded_rawfiles.find(name); it != loaded_rawfiles.end())
+			auto& cache = get_override_cache();
+			std::lock_guard lock(cache.mutex);
+			if (const auto it = cache.rawfiles.find(name); it != cache.rawfiles.end())
 			{
 				return it->second;
 			}
@@ -81,7 +93,7 @@ namespace scaleform
 				return nullptr;
 			}
 			auto* rawfile = make_rawfile(name, data);
-			loaded_rawfiles.emplace(name, rawfile);
+			cache.rawfiles.emplace(name, rawfile);
 			console::info("[scaleform - override] loaded %s (%u bytes)\n", disk_path.string().c_str(), rawfile->len);
 			return rawfile;
 		}
@@ -96,8 +108,9 @@ namespace scaleform
 
 	void clear_overrides()
 	{
-		std::lock_guard lock(loaded_rawfiles_mutex);
-		loaded_rawfiles.clear();
+		auto& cache = get_override_cache();
+		std::lock_guard lock(cache.mutex);
+		cache.rawfiles.clear();
 	}
 
 }

@@ -17,6 +17,7 @@
 
 #include <unordered_set>
 #include <cstring>
+#include <cmath>
 
 namespace fastfiles
 {
@@ -68,8 +69,10 @@ namespace fastfiles
 		std::unordered_set<std::string> logged_external_assets;
 
 		constexpr float preload_bar_height = 9.0f;
-		float preload_dim_color[4] = {0.0f, 0.0f, 0.0f, 0.35f};
-		float preload_panel_color[4] = {0.0f, 0.0f, 0.0f, 0.78f};
+		float preload_background_color[4] = {0.025f, 0.055f, 0.075f, 1.0f};
+		float preload_glow_color[4] = {0.12f, 0.24f, 0.27f, 0.18f};
+		float preload_strip_color[4] = {0.26f, 0.37f, 0.39f, 0.10f};
+		float preload_panel_color[4] = {0.0f, 0.01f, 0.02f, 0.90f};
 		float preload_bar_back_color[4] = {0.32f, 0.32f, 0.32f, 0.90f};
 		float preload_bar_fill_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 		float preload_text_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -112,14 +115,28 @@ namespace fastfiles
 				return;
 			}
 
+			const auto elapsed_ms = std::max(0LL,
+				steady_time_ms() - common_xenon_preload_started_ms.load(std::memory_order_acquire));
 			game::R_AddCmdDrawStretchPic(0.0f, 0.0f, width, height,
-				0.0f, 0.0f, 0.0f, 0.0f, preload_dim_color, white, 0);
+				0.0f, 0.0f, 0.0f, 0.0f, preload_background_color, white, 0);
+			// Slow light sweeps give the preload its own moving backdrop without
+			// showing interactive Scaleform menu controls behind the load state.
+			for (int i = 0; i < 5; ++i)
+			{
+				const auto travel = width * 1.5f;
+				const auto x = std::fmod(static_cast<float>(elapsed_ms) * (0.012f + i * 0.003f)
+					+ i * width * 0.29f, travel) - width * 0.40f;
+				const auto y = height * (0.12f + i * 0.13f);
+				game::R_AddCmdDrawStretchPic(x, y, width * 0.36f, height * 0.08f,
+					0.0f, 0.0f, 0.0f, 0.0f, preload_glow_color, white, 0);
+				game::R_AddCmdDrawStretchPic(x + width * 0.10f, y + height * 0.035f,
+					width * 0.15f, height * 0.006f,
+					0.0f, 0.0f, 0.0f, 0.0f, preload_strip_color, white, 0);
+			}
 			const auto panel_y = height * 0.80f;
 			game::R_AddCmdDrawStretchPic(0.0f, panel_y, width, height - panel_y,
 				0.0f, 0.0f, 0.0f, 0.0f, preload_panel_color, white, 0);
 
-			const auto elapsed_ms = std::max(0LL,
-				steady_time_ms() - common_xenon_preload_started_ms.load(std::memory_order_acquire));
 			static constexpr int dot_sequence[] = {1, 2, 3, 2};
 			const auto dot_count = dot_sequence[(elapsed_ms / 300) % std::size(dot_sequence)];
 			char label[128]{};
@@ -133,12 +150,9 @@ namespace fastfiles
 			const auto bar_y = height * 0.88f;
 			const auto target_text_height = std::clamp(height * 0.028f, 22.0f, 36.0f);
 			const auto text_scale = target_text_height / static_cast<float>(font->pixelHeight);
-			const auto text_width = static_cast<float>(game::R_TextWidth(
-				label, 0x7FFFFFFF, font)) * text_scale;
-			const auto text_x = std::max(bar_x, bar_x + bar_width - text_width);
 			const auto text_y = bar_y - 16.0f;
 			game::R_AddCmdDrawText(label, 0x7FFFFFFF, font,
-				text_x, text_y, text_scale, text_scale, 0.0f,
+				bar_x, text_y, text_scale, text_scale, 0.0f,
 				preload_text_color, 0);
 			game::R_AddCmdDrawStretchPic(bar_x, bar_y, bar_width,
 				preload_bar_height, 0.0f, 0.0f, 0.0f, 0.0f,

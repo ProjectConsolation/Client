@@ -37,7 +37,13 @@ namespace gametypes
 		constexpr auto UI_GAMETYPE_ALT_COUNT = 0x113D31EC;
 		constexpr auto UI_GAMETYPE_ALT_ENTRIES = 0x113D31F0;
 
-		std::unordered_map<std::string, game::RawFile*> loaded_gametype_rawfiles;
+		std::unordered_map<std::string, game::RawFile*>& loaded_gametype_rawfiles()
+		{
+			// pre_destroy runs during CRT exit, so the cache must outlive the
+			// component registry that clears it.
+			static auto* cache = new std::unordered_map<std::string, game::RawFile*>;
+			return *cache;
+		}
 		bool ui_gametype_list_refreshed = false;
 
 		const char* allocate_menu_string(const std::string& value)
@@ -149,7 +155,7 @@ namespace gametypes
 		game::RawFile* load_custom_gametype_rawfile(const char* name)
 		{
 			const auto normalized_name = normalize_gametype_path(name);
-			if (const auto existing = loaded_gametype_rawfiles.find(normalized_name); existing != loaded_gametype_rawfiles.end())
+			if (const auto existing = loaded_gametype_rawfiles().find(normalized_name); existing != loaded_gametype_rawfiles().end())
 			{
 				return existing->second;
 			}
@@ -162,7 +168,7 @@ namespace gametypes
 			}
 
 			auto* rawfile = make_rawfile(normalized_name, data);
-			loaded_gametype_rawfiles[normalized_name] = rawfile;
+			loaded_gametype_rawfiles()[normalized_name] = rawfile;
 
 			console::info("gametypes: loaded raw fallback %s from %s\n", normalized_name.c_str(), real_path.c_str());
 			return rawfile;
@@ -704,7 +710,7 @@ namespace gametypes
 				void pre_destroy() override
 				{
 					db_find_xasset_header_internal_hook.clear();
-					loaded_gametype_rawfiles.clear();
+					loaded_gametype_rawfiles().clear();
 					scaleform::clear_overrides();
 				ui_gametype_list_refreshed = false;
 			}
