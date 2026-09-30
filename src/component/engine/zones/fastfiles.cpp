@@ -17,7 +17,6 @@
 
 #include <unordered_set>
 #include <cstring>
-#include <cmath>
 
 namespace fastfiles
 {
@@ -34,6 +33,13 @@ namespace fastfiles
 		utils::hook::detour cm_world_init_hook;
 		utils::hook::detour sv_game_init_hook;
 		utils::hook::detour reflection_probe_nearest_hook;
+		utils::hook::detour renderer_cell_job_hook;
+		volatile LONG renderer_cell_jobs = 0;
+		volatile LONG renderer_bulk_surface_marks = 0;
+		volatile LONG renderer_leaf_surface_lists = 0;
+		volatile LONG renderer_last_surface_enabled = 0;
+		volatile LONG renderer_last_cell = 0;
+		volatile LONG renderer_last_view = 0;
 		void* db_create_default_asset_original = nullptr;
 		void* cm_load_map_original = nullptr;
 		void* db_load_xasset_original = nullptr;
@@ -69,10 +75,7 @@ namespace fastfiles
 		std::unordered_set<std::string> logged_external_assets;
 
 		constexpr float preload_bar_height = 9.0f;
-		float preload_background_color[4] = {0.025f, 0.055f, 0.075f, 1.0f};
-		float preload_glow_color[4] = {0.12f, 0.24f, 0.27f, 0.18f};
-		float preload_strip_color[4] = {0.26f, 0.37f, 0.39f, 0.10f};
-		float preload_panel_color[4] = {0.0f, 0.01f, 0.02f, 0.90f};
+		float preload_background_color[4] = {0.0f, 0.0f, 0.0f, 0.90f};
 		float preload_bar_back_color[4] = {0.32f, 0.32f, 0.32f, 0.90f};
 		float preload_bar_fill_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 		float preload_text_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -119,24 +122,6 @@ namespace fastfiles
 				steady_time_ms() - common_xenon_preload_started_ms.load(std::memory_order_acquire));
 			game::R_AddCmdDrawStretchPic(0.0f, 0.0f, width, height,
 				0.0f, 0.0f, 0.0f, 0.0f, preload_background_color, white, 0);
-			// Slow light sweeps give the preload its own moving backdrop without
-			// showing interactive Scaleform menu controls behind the load state.
-			for (int i = 0; i < 5; ++i)
-			{
-				const auto travel = width * 1.5f;
-				const auto x = std::fmod(static_cast<float>(elapsed_ms) * (0.012f + i * 0.003f)
-					+ i * width * 0.29f, travel) - width * 0.40f;
-				const auto y = height * (0.12f + i * 0.13f);
-				game::R_AddCmdDrawStretchPic(x, y, width * 0.36f, height * 0.08f,
-					0.0f, 0.0f, 0.0f, 0.0f, preload_glow_color, white, 0);
-				game::R_AddCmdDrawStretchPic(x + width * 0.10f, y + height * 0.035f,
-					width * 0.15f, height * 0.006f,
-					0.0f, 0.0f, 0.0f, 0.0f, preload_strip_color, white, 0);
-			}
-			const auto panel_y = height * 0.80f;
-			game::R_AddCmdDrawStretchPic(0.0f, panel_y, width, height - panel_y,
-				0.0f, 0.0f, 0.0f, 0.0f, preload_panel_color, white, 0);
-
 			static constexpr int dot_sequence[] = {1, 2, 3, 2};
 			const auto dot_count = dot_sequence[(elapsed_ms / 300) % std::size(dot_sequence)];
 			char label[128]{};
@@ -337,6 +322,40 @@ namespace fastfiles
 			}
 		}
 
+		// Temporary QoS PC 1.1 visibility probe; remove after converted world
+		// submission is verified. Preserve the native thiscall and job contents.
+		int __fastcall renderer_cell_job_stub(unsigned char* const job, void*)
+		{
+			InterlockedIncrement(&renderer_cell_jobs);
+			InterlockedExchange(&renderer_last_surface_enabled, job[12]);
+			InterlockedExchange(&renderer_last_cell,
+				static_cast<LONG>(*reinterpret_cast<const std::uintptr_t*>(job)));
+			InterlockedExchange(&renderer_last_view,
+				static_cast<LONG>(*reinterpret_cast<const unsigned short*>(job + 10)));
+			const auto original = reinterpret_cast<int(__thiscall*)(unsigned char*)>(
+				renderer_cell_job_hook.get_original());
+			return original(job);
+		}
+
+		void report_renderer_visibility_jobs()
+		{
+			static unsigned int samples = 0;
+			if (samples >= 10 || !cg_initialized_address
+				|| !*reinterpret_cast<const int*>(cg_initialized_address))
+			{
+				return;
+			}
+			++samples;
+			game::Com_Printf(16,
+				"^5[world-visibility] cellJobs=%ld bulkMarks=%ld leafLists=%ld lastCell=0x%08X view=%ld surfacesEnabled=%ld\n",
+				InterlockedCompareExchange(&renderer_cell_jobs, 0, 0),
+				InterlockedCompareExchange(&renderer_bulk_surface_marks, 0, 0),
+				InterlockedCompareExchange(&renderer_leaf_surface_lists, 0, 0),
+				static_cast<unsigned int>(InterlockedCompareExchange(&renderer_last_cell, 0, 0)),
+				InterlockedCompareExchange(&renderer_last_view, 0, 0),
+				InterlockedCompareExchange(&renderer_last_surface_enabled, 0, 0));
+		}
+
 		__declspec(naked) void renderer_surface_list_guard_stub()
 		{
 			__asm
@@ -345,6 +364,9 @@ namespace fastfiles
 				// after its TLS list has been released during a Xenon map teardown.
 				// During an active converted map, use the serialized GfxWorld DPVS
 				// remap table when the PC-only TLS alias was never initialized.
+				pushfd
+				lock inc dword ptr[renderer_leaf_surface_lists]
+				popfd
 				mov edx, dword ptr[edi + 1Ch]
 				mov eax, dword ptr[eax + 20h]
 				test eax, eax
@@ -1099,6 +1121,9 @@ namespace fastfiles
 		{
 			__asm
 			{
+				pushfd
+				lock inc dword ptr[renderer_bulk_surface_marks]
+				popfd
 				// QoS PC 1.1 normally remaps the GfxAabbTree's contiguous surface
 				// range through a PC-only uint16 list in TLS. Reduced Xenon worlds
 				// do not serialize that list. A low address here is the null base plus
@@ -1335,6 +1360,10 @@ namespace fastfiles
 			scheduler::loop(draw_common_xenon_preload, scheduler::pipeline::renderer);
 			gfx_world_pointer_address = game::game_offset(0x10C4A354);
 			cg_initialized_address = game::game_offset(0x129FE8E4);
+			// PC sub_103ABCF0 dispatches this job to sub_1036E8B0 with
+			// its pointer in ECX; byte +12 enables surface visibility marking.
+			renderer_cell_job_hook.create(game::game_offset(0x1036E8B0), renderer_cell_job_stub);
+			scheduler::loop(report_renderer_visibility_jobs, scheduler::main, 2000ms);
 			// sub_103A4840 assumes every cell probe index has a matching world
 			// origin array. Generated reduced worlds do not serialize that PC-only
 			// array yet, so preserve native lookup only when the array exists.

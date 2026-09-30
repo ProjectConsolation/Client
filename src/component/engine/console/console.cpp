@@ -231,6 +231,19 @@ namespace console
 			return 7;
 		}
 
+		bool has_bracketed_prefix(const std::string_view message)
+		{
+			if (message.size() < 3 || message.front() != '['
+				|| !std::isalpha(static_cast<unsigned char>(message[1])))
+			{
+				return false;
+			}
+
+			const auto closing = message.find(']');
+			return closing != std::string_view::npos && closing <= 64
+				&& message.find_first_of("\r\n") > closing;
+		}
+
 		std::string build_input_prompt()
 		{
 			std::string revision = VERSION_BUILD;
@@ -293,7 +306,9 @@ namespace console
 			clear_output();
 			set_cursor_pos(0);
 
-			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(type));
+			const auto display_type = type == con_type_info && has_bracketed_prefix(message)
+				? con_type_debug : type;
+			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(display_type));
 			const auto res = invoke_printf("%s", message.data());
 			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_info));
 
@@ -527,6 +542,12 @@ namespace console
 			va_start(ap, fmt);
 			const auto result = format(&ap, fmt);
 			va_end(ap);
+
+			if (has_bracketed_prefix(result))
+			{
+				game::CL_ConsolePrint(0, 6, result.c_str(), 0, 0, 0);
+				return dispatch_message(con_type_info, result);
+			}
 
 			write_log(result);
 			game_console::append_output(result);

@@ -74,6 +74,7 @@ PC_TEXTURE_FOURCC = {
     "DXT4_5": b"DXT5",
     "DXN": b"DXT5",
 }
+PC_EXTERNAL_IMAGES = frozenset({",$identitynormalmap"})
 SND_DRIVER_REVERB_COUNT = 26
 SND_DRIVER_REVERB_SIZE = 52
 PC_COMMON_TECHSETS = (
@@ -231,6 +232,10 @@ def select_pc_techset(source_name, candidates=PC_COMMON_TECHSETS):
     source_comma, source_base, source_features = signature(source_name)
     scored = []
     for candidate in candidates:
+        # Matching texture channels does not establish vertex compatibility.
+        # PC 103819D0 rejects tree/model declarations for world vertex type 3.
+        if not re.match(r"^,?wc_l_sm_[brt]\d+c\d+", candidate):
+            continue
         candidate_comma, candidate_base, candidate_features = signature(candidate)
         if candidate_base is None:
             continue
@@ -268,8 +273,8 @@ def select_pc_material_techset(material_value, candidates=PC_COMMON_TECHSETS):
     else:
         fallback = "wc_l_sm_b0c0"
     if fallback not in candidates:
-        fallback = next((name for name in candidates if not name.startswith(",")),
-                        candidates[0] if candidates else None)
+        fallback = next((name for name in candidates
+                         if re.match(r"^wc_l_sm_[brt]\d+c\d+", name)), None)
     return fallback, "texture_semantic_fallback"
 
 
@@ -290,7 +295,20 @@ def _decode_bc4_block(block):
     return [palette[(indices >> (pixel * 3)) & 7] for pixel in range(16)]
 
 
-def transcode_dxn_to_dxt5(data):
+def _encode_bc4_values(values):
+    high, low = max(values), min(values)
+    palette = [high, low]
+    if high > low:
+        palette.extend(((7 - i) * high + i * low) // 7 for i in range(1, 7))
+    else:
+        palette.extend(((5 - i) * high + i * low) // 5 for i in range(1, 5))
+        palette.extend((0, 255))
+    indices = sum(min(range(8), key=lambda i: abs(palette[i] - value))
+                  << (pixel * 3) for pixel, value in enumerate(values))
+    return bytes((high, low)) + indices.to_bytes(6, "little")
+
+
+def transcode_dxn_to_dxt5(data, pc_normal_slopes=False):
     """Map BC5/DXN normals to DXT5nm (X in alpha, Y in green)."""
     if len(data) % 16:
         raise FormatError("DXN data is not block-aligned")
@@ -298,6 +316,21 @@ def transcode_dxn_to_dxt5(data):
     for offset in range(0, len(data), 16):
         x_block = data[offset:offset + 8]
         green_values = _decode_bc4_block(data[offset + 8:offset + 16])
+        if pc_normal_slopes:
+            # Controlled probe: QoS PC lm_/lp_ SM2 shaders decode alpha/green
+            # as slopes using 4.08*x-2.08 and (126/31)*y-(64/31).
+            # The source BC5 unit-normal interpretation still needs runtime validation.
+            x_values = _decode_bc4_block(x_block)
+            alpha_values, encoded_green = [], []
+            for x, y in zip(x_values, green_values):
+                nx, ny = x * 2 / 255 - 1, y * 2 / 255 - 1
+                nz = math.sqrt(max(1 / (255 * 255), 1 - nx * nx - ny * ny))
+                alpha_values.append(max(0, min(255, round(
+                    (nx / nz + 2.08) * 255 / 4.08))))
+                encoded_green.append(max(0, min(255, round(
+                    (ny / nz + 64 / 31) * 255 / (126 / 31)))))
+            x_block = _encode_bc4_values(alpha_values)
+            green_values = encoded_green
         green0 = max(green_values) * 63 // 255
         green1 = min(green_values) * 63 // 255
         if green0 == green1:
@@ -365,14 +398,95 @@ def untile_xenos_texture(width, height, format_word, tiled, base_pitch=0):
         width, height, gpu_format, native_tiled, base_pitch, False)
 
 
-def untile_xenos_texture_levels(width, height, format_word, tiled, levels):
+def _coarsen_compressed_level(width, height, gpu_format, linear):
+    """Approximate one missing mip by selecting source blocks at half size."""
+    block_width, block_height, block_size, _ = XENOS_TEXTURE_FORMATS[gpu_format]
+    source_width = max(1, _divide_round_up(width, block_width))
+    source_height = max(1, _divide_round_up(height, block_height))
+    next_width = max(1, _divide_round_up(max(1, width // 2), block_width))
+    next_height = max(1, _divide_round_up(max(1, height // 2), block_height))
+    if len(linear) != source_width * source_height * block_size:
+        raise FormatError("invalid decoded Xenos mip size")
+    result = bytearray()
+    for y in range(next_height):
+        for x in range(next_width):
+            source_x = min(source_width - 1, x * 2)
+            source_y = min(source_height - 1, y * 2)
+            start = (source_y * source_width + source_x) * block_size
+            result.extend(linear[start:start + block_size])
+    return bytes(result)
+
+
+def _xenos_packed_mip_offset(width, height, gpu_format, level):
+    # Adapted from Xenia texture_util::GetPackedMipOffset (BSD-3-Clause).
+    # https://github.com/xenia-project/xenia/blob/master/src/xenia/gpu/texture_util.cc
+    width_log = (width - 1).bit_length()
+    height_log = (height - 1).bit_length()
+    first = max(0, min(width_log, height_log) - 4)
+    relative = level - first
+    if relative < 0:
+        raise FormatError("Xenos mip is outside the packed tail")
+    if relative < 3:
+        x, y = ((0, 16 >> relative) if width_log > height_log
+                else (16 >> relative, 0))
+    else:
+        offset = (1 << (max(width_log, height_log) - first)) >> (relative - 2)
+        x, y = ((offset, 0) if width_log > height_log else (0, offset))
+    block_width, block_height, _, _ = XENOS_TEXTURE_FORMATS[gpu_format]
+    return x // block_width, y // block_height
+
+
+def _untile_xenos_packed_level(width, height, format_word, tile, level):
+    gpu_format = format_word & 0x3F
+    first = max(0, min((width - 1).bit_length(),
+                       (height - 1).bit_length()) - 4)
+    layout = _xenos_texture_layout(max(1, width >> first),
+                                   max(1, height >> first), gpu_format)
+    stored_width, block_size = layout[2:4]
+    output = _xenos_texture_layout(max(1, width >> level),
+                                   max(1, height >> level), gpu_format)
+    offset_x, offset_y = _xenos_packed_mip_offset(width, height, gpu_format, level)
+    native = apply_xenos_gpu_endian(tile, (format_word >> 6) & 3)
+    log2_bytes = _xenos_log2_bytes_per_block(block_size)
+    result = bytearray()
+    for y in range(output[1]):
+        row = _xenos_tiled_row_offset(y + offset_y, stored_width, log2_bytes)
+        for x in range(output[0]):
+            address = _xenos_tiled_column_offset(
+                x + offset_x, y + offset_y, log2_bytes, row)
+            if address + block_size > len(native):
+                raise FormatError("Xenos packed mip exceeds its tile allocation")
+            result.extend(native[address:address + block_size])
+    return bytes(result)
+
+
+def _image_has_packed_mips(image_value):
+    words = image_value.get("texture_resource_words", ())
+    if len(words) != 13 or image_value.get("depth", 1) != 1:
+        return False
+    # QoS serializes the six GPU fetch words at resource +28 in GPU byte order.
+    fetch = [int.from_bytes(word.to_bytes(4, "big"), "little")
+             for word in words[7:13]]
+    if ((fetch[5] >> 9) & 3) != 1:
+        return False
+    if ((fetch[2] & 0x1FFF) + 1 != image_value["width"]
+            or ((fetch[2] >> 13) & 0x1FFF) + 1 != image_value["height"]
+            or (fetch[1] & 0xFF) != (int(
+                image_value["load_definition"]["format"], 16) & 0xFF)):
+        raise FormatError("Xenos texture fetch descriptor disagrees with image metadata")
+    # Base-packed tiny textures need separate base/mip-address handling.
+    return bool(fetch[5] & 0x800) and min(image_value["width"],
+                                       image_value["height"]) > 16
+
+
+def untile_xenos_texture_levels(width, height, format_word, tiled, levels,
+                                packed_mips=False):
     """Convert the independently tiled portion of a Xenon mip chain.
 
     Small Xenos mips share a packed mip tail. The QoS PC loader nevertheless
-    expects the full linear chain size, so preserve every independently tiled
-    level and reserve zeroed blocks for tail levels until that packing is
-    decoded. The base level, which controls the visible load screen, is always
-    required and converted exactly.
+    expects the full linear chain size. Preserve independently tiled levels
+    exactly and decode a verified packed tail from its shared tile. Without
+    packing metadata, approximate unavailable levels from the preceding level.
     """
     if levels < 1:
         raise FormatError("Xenos texture has no mip levels")
@@ -380,19 +494,40 @@ def untile_xenos_texture_levels(width, height, format_word, tiled, levels):
     result = bytearray()
     cursor = 0
     decoded_levels = 0
+    previous_level = None
+    packed_tail = False
+    packed_first = (max(0, min((width - 1).bit_length(),
+                               (height - 1).bit_length()) - 4)
+                    if packed_mips else levels)
+    tail_tile = None
     for level in range(levels):
         level_width = max(1, width >> level)
         level_height = max(1, height >> level)
         layout = _xenos_texture_layout(level_width, level_height, gpu_format)
-        linear_size, tiled_size = layout[5], layout[6]
-        if cursor + tiled_size <= len(tiled):
-            result.extend(untile_xenos_texture(
+        tiled_size = layout[6]
+        if level >= packed_first:
+            if tail_tile is None:
+                if cursor + tiled_size > len(tiled):
+                    raise FormatError("missing Xenos packed mip tile")
+                tail_tile = tiled[cursor:cursor + tiled_size]
+            current_level = _untile_xenos_packed_level(
+                width, height, format_word, tail_tile, level)
+            decoded_levels += 1
+        elif not packed_tail and cursor + tiled_size <= len(tiled):
+            current_level = untile_xenos_texture(
                 level_width, level_height, format_word,
-                tiled[cursor:cursor + tiled_size]))
+                tiled[cursor:cursor + tiled_size])
             cursor += tiled_size
             decoded_levels += 1
         else:
-            result.extend(bytes(linear_size))
+            packed_tail = True
+            if previous_level is None:
+                raise FormatError("missing Xenos base texture level")
+            current_level = _coarsen_compressed_level(
+                max(1, width >> (level - 1)),
+                max(1, height >> (level - 1)), gpu_format, previous_level)
+        result.extend(current_level)
+        previous_level = current_level
     return bytes(result), decoded_levels
 
 
@@ -501,7 +636,7 @@ def image(reader, pointer, capture=False):
                 levels = max(1, load[0])
                 linear, decoded_levels = untile_xenos_texture_levels(
                     result["width"], result["height"], format_word,
-                    pixels, levels)
+                    pixels, levels, _image_has_packed_mips(result))
                 base_size = _xenos_texture_layout(
                     result["width"], result["height"],
                     format_word & 0x3F)[5]
@@ -1117,6 +1252,19 @@ def _pc_surface_remap(count):
     return struct.pack(f"<{count}H", *range(count)) if count else b""
 
 
+def _pc_surface_remap_from_xenon(source, count, surface_count):
+    """Preserve the Xenon DPVS surface order used by AABB leaf ranges."""
+    if not source:
+        return _pc_surface_remap(count)
+    if len(source) != count * 2:
+        raise FormatError(
+            "Xbox GfxWorld surface-remap size does not match DPVS count")
+    indices = struct.unpack(f">{count}H", source)
+    if any(index >= surface_count for index in indices):
+        raise FormatError("Xbox GfxWorld surface remap exceeds surface array")
+    return struct.pack(f"<{count}H", *indices)
+
+
 def _pc_bounds_from_xenon(raw, offset=0, context="bounds"):
     """Convert Xenon mins/maxs to the PC Bounds midpoint/half-size form."""
     mins = struct.unpack_from(">3f", raw, offset)
@@ -1495,8 +1643,8 @@ def gfx_map(reader, pointer, capture=False):
     # visibility buffers but sub_821F3900 does not consume archive bytes for them.
     zero_fill_offsets = tuple(range(684, 796, 4)) + (800, 804, 808)
     zero_fill_fields = sum(bool(u32(header, offset)) for offset in zero_fill_offsets)
-    if u32(header, 796):
-        reader.take(static_surface_count * 2)
+    surface_remap = (reader.take(static_surface_count * 2)
+                     if u32(header, 796) else b"")
     if u32(header, 812):
         records = reader.take(u32(header, 352) * 12)
         for offset in range(0, len(records), 12):
@@ -1543,6 +1691,9 @@ def gfx_map(reader, pointer, capture=False):
             "reflection_probes": reflection_probes,
             "lightmaps": lightmaps,
             "sky_start_surfs": sky_start_surfs.hex(),
+            "surface_draw_ranges": [u32(header, offset)
+                                    for offset in (88, 92, 96, 100)],
+            "surface_remap": surface_remap.hex(),
             "vertices": vertices.hex(),
             "vertex_layers": vertex_layers.hex(),
             # Xbox +0x294..+0x338 is the platform counterpart of PC
@@ -2066,6 +2217,32 @@ def convert_xmodel_header(model):
     return bytes(converted)
 
 
+def _renderable_rigid_surface(surface):
+    source = bytes.fromhex(surface["header"])
+    vertices, triangles = u16(source, 2), u16(source, 4)
+    if not vertices or not triangles:
+        return False
+    if any(struct.unpack_from(">h", source, 12 + slot * 2)[0]
+           for slot in range(4)):
+        return False
+    primary = surface.get("pc_vertices")
+    indices = surface.get("indices")
+    rigid = surface.get("rigid_vertices")
+    if primary is None or indices is None or rigid is None:
+        return False
+    if (len(bytes.fromhex(primary)) != vertices * 40
+            or len(bytes.fromhex(indices)) != triangles * 6
+            or len(bytes.fromhex(rigid)) != u32(source, 136) * 8):
+        raise FormatError("rigid XSurface stream sizes disagree with its counts")
+    secondary = surface.get("pc_secondary_vertices")
+    if secondary is not None and len(bytes.fromhex(secondary)) != vertices * 16:
+        raise FormatError("rigid XSurface secondary stream size mismatch")
+    if any(index >= vertices for (index,) in struct.iter_unpack(
+            ">H", bytes.fromhex(indices))):
+        raise FormatError("rigid XSurface triangle index exceeds its vertices")
+    return True
+
+
 def write_pc_xmodel(payload, model):
     payload.extend(convert_xmodel_header(model))
     payload.extend(model["name"].encode() + b"\0")
@@ -2076,16 +2253,29 @@ def write_pc_xmodel(payload, model):
     payload.extend(_captured_bytes(model["part_classification"]))
     payload.extend(_little_endian_words(_captured_bytes(model["base_matrices"])))
 
-    # The map-entry probe keeps XModel identity and bounds, but omits all Xenon
-    # GPU streams until their PC sizes and semantics are verified end to end.
+    # PC 103D36D0 loads all surface roots before their nested GPU streams.
+    # Restore complete rigid surfaces only; shared/skinned streams stay reduced.
     for surface in model["surfaces"]:
-        payload.extend(convert_xsurface_header(surface, include_geometry=False))
+        payload.extend(convert_xsurface_header(
+            surface, include_geometry=_renderable_rigid_surface(surface)))
+    for surface in model["surfaces"]:
+        if _renderable_rigid_surface(surface):
+            write_pc_xsurface_nested(payload, surface)
 
     for _ in model["materials"]:
         payload.extend(struct.pack("<I", INLINE))
     for _ in model["materials"]:
         payload.extend(_pc_external_material())
     payload.extend(_little_endian_words(_captured_bytes(model["bone_info"])))
+
+
+def _complete_pc_material_textures(material_value, images_by_name):
+    """Keep a technique only when every referenced texture has PC image data."""
+    textures = material_value.get("textures", [])
+    if not textures or any(image_value.get("name") not in images_by_name
+                           for image_value in textures):
+        return None
+    return textures
 
 
 def inspect(path, details=False, capture_map=False, allow_partial=False):
@@ -2219,6 +2409,58 @@ def _pc_external_techset(name):
     return bytes(header) + name.encode() + b"\0"
 
 
+def _pc_material_record_at(payload, name, offset):
+    """Validate a PC material whose name starts at a known stream offset."""
+    needle = name.encode("latin-1") + b"\0"
+    header_offset = offset - 104
+    nested = offset + len(needle)
+    if header_offset < 0 or payload[offset:nested] != needle:
+        return None
+    header = payload[header_offset:offset]
+    if len(header) != 104 or u32(header) != INLINE:
+        return None
+    texture_count, constant_count, state_count = header[67:70]
+    if texture_count > 32 or constant_count > 64 or state_count > 64:
+        return None
+    if struct.unpack_from("<I", header, 88)[0] not in (0, INLINE):
+        return None
+
+    textures_end = nested + texture_count * 12
+    textures = payload[nested:textures_end]
+    if len(textures) != texture_count * 12:
+        return None
+    child_offset = textures_end
+    for texture_offset in range(0, len(textures), 12):
+        image_pointer = struct.unpack_from("<I", textures, texture_offset + 8)[0]
+        if image_pointer not in (INLINE, INSERT):
+            continue
+        image_header = payload[child_offset:child_offset + 36]
+        if len(image_header) != 36:
+            return None
+        child_offset += 36
+        if struct.unpack_from("<I", image_header, 32)[0]:
+            name_end = payload.find(b"\0", child_offset)
+            if name_end < 0:
+                return None
+            child_offset = name_end + 1
+        load_pointer = struct.unpack_from("<I", image_header, 4)[0]
+        if load_pointer in (INLINE, INSERT):
+            load = payload[child_offset:child_offset + 16]
+            if len(load) != 16:
+                return None
+            child_offset += 16 + struct.unpack_from("<I", load, 12)[0]
+    constants_end = child_offset + constant_count * 32
+    states_end = constants_end + state_count * 8
+    if states_end > len(payload):
+        return None
+    return {
+        "header": header,
+        "textures": textures,
+        "constants": payload[child_offset:constants_end],
+        "state_bits": payload[constants_end:states_end],
+    }
+
+
 def pc_material_record(payload, name):
     """Find a native PC material and its immediately serialized child arrays."""
     needle = name.encode("latin-1") + b"\0"
@@ -2227,63 +2469,14 @@ def pc_material_record(payload, name):
         offset = payload.find(needle, offset)
         if offset < 0:
             return None
-        header_offset = offset - 104
-        nested = offset + len(needle)
+        record = _pc_material_record_at(payload, name, offset)
         offset += len(needle)
-        if header_offset < 0:
-            continue
-        header = payload[header_offset:nested - len(needle)]
-        if len(header) != 104 or u32(header) != INLINE:
-            continue
-        texture_count, constant_count, state_count = header[67:70]
-        if texture_count > 32 or constant_count > 64 or state_count > 64:
-            continue
-        if struct.unpack_from("<I", header, 88)[0] not in (0, INLINE):
-            continue
-
-        textures_end = nested + texture_count * 12
-        textures = payload[nested:textures_end]
-        if len(textures) != texture_count * 12:
-            continue
-        child_offset = textures_end
-        valid = True
-        for texture_offset in range(0, len(textures), 12):
-            image_pointer = struct.unpack_from("<I", textures, texture_offset + 8)[0]
-            if image_pointer not in (INLINE, INSERT):
-                continue
-            image_header = payload[child_offset:child_offset + 36]
-            if len(image_header) != 36:
-                valid = False
-                break
-            child_offset += 36
-            if struct.unpack_from("<I", image_header, 32)[0]:
-                name_end = payload.find(b"\0", child_offset)
-                if name_end < 0:
-                    valid = False
-                    break
-                child_offset = name_end + 1
-            load_pointer = struct.unpack_from("<I", image_header, 4)[0]
-            if load_pointer in (INLINE, INSERT):
-                load = payload[child_offset:child_offset + 16]
-                if len(load) != 16:
-                    valid = False
-                    break
-                child_offset += 16 + struct.unpack_from("<I", load, 12)[0]
-        if not valid:
-            continue
-        constants_end = child_offset + constant_count * 32
-        states_end = constants_end + state_count * 8
-        if states_end > len(payload):
-            continue
-        return {
-            "header": header,
-            "textures": textures,
-            "constants": payload[child_offset:constants_end],
-            "state_bits": payload[constants_end:states_end],
-        }
+        if record is not None:
+            return record
 
 
-def read_pc_material_donors(path, names, techset_names_out=None):
+def read_pc_material_donors(path, names, techset_names_out=None,
+                            templates_out=None):
     blob = Path(path).read_bytes()
     if len(blob) < 28 or struct.unpack_from("<I", blob)[0] != 470:
         raise FormatError("material donor is not a PC v470 fastfile")
@@ -2351,7 +2544,39 @@ def read_pc_material_donors(path, names, techset_names_out=None):
             continue
         record["techset_name"] = techset_name
         donors[name] = record
+    if templates_out is not None:
+        seen = set(donors)
+        for match in re.finditer(rb"[\x20-\x7e]{2,128}\x00", payload):
+            name = match.group()[:-1].decode("ascii")
+            if name in seen or not ("/" in name or name.startswith("*")):
+                continue
+            record = _pc_material_record_at(payload, name, match.start())
+            if record is None:
+                continue
+            pointer = struct.unpack_from("<I", record["header"], 84)[0]
+            packed_offset = pointer - 0x40000001
+            if (pointer < 0x40000001 or packed_offset < table_base
+                    or (packed_offset - table_base) % 8):
+                continue
+            manifest_index = (packed_offset - table_base) // 8
+            techset_name = techsets_by_index.get(manifest_index)
+            if techset_name is None:
+                continue
+            record["name"] = name
+            record["techset_name"] = techset_name
+            templates_out.append(record)
+            seen.add(name)
     return donors
+
+
+def _material_texture_signature_from_xenon(textures):
+    return tuple(bytes.fromhex(value["definition"])[4:8]
+                 for value in textures)
+
+
+def _material_texture_signature_from_pc(record):
+    return tuple(record["textures"][offset + 4:offset + 8]
+                 for offset in range(0, len(record["textures"]), 12))
 
 
 def write_pc_material(payload, material_value, techset_pointer,
@@ -2364,6 +2589,7 @@ def write_pc_material(payload, material_value, techset_pointer,
         raise FormatError("material is missing a PC-resolvable name or technique set")
 
     donor = material_value.get("pc_material_donor")
+    state_donor = material_value.get("pc_state_donor")
     if donor is not None:
         converted = bytearray(donor["header"])
         state_bits = donor["state_bits"]
@@ -2390,6 +2616,10 @@ def write_pc_material(payload, material_value, techset_pointer,
         world_layout = pc_techset_name.lstrip(",").startswith("wc_")
         converted[24:67] = _convert_material_state_slots(
             source[24:60], state_mapping, world_layout)
+        if state_donor is not None:
+            converted[24:67] = state_donor["header"][24:67]
+            state_bits = state_donor["state_bits"]
+            state_layout_verified = True
         converted[67] = len(image_pointers)
         converted[68:75] = source[61:68]
         converted[69] = len(state_bits) // 8
@@ -2425,6 +2655,15 @@ def write_pc_material(payload, material_value, techset_pointer,
 
 
 def write_pc_image(payload, image_value):
+    if image_value.get("pc_external"):
+        name = image_value.get("name")
+        if name not in PC_EXTERNAL_IMAGES:
+            raise FormatError(f"unverified external PC image {name!r}")
+        header = bytearray(36)
+        struct.pack_into("<I", header, 32, INLINE)
+        payload.extend(header)
+        payload.extend(name.encode() + b"\0")
+        return
     base = image_value.get("pc_mip_chain") or image_value.get("pc_base_level")
     if not base or "data" not in base:
         raise FormatError(f"image {image_value.get('name')!r} has no decoded base level")
@@ -2440,7 +2679,8 @@ def write_pc_image(payload, image_value):
         raise FormatError(f"image {name!r} decoded byte count changed")
 
     if base["format"] == "DXN":
-        data = transcode_dxn_to_dxt5(data)
+        data = transcode_dxn_to_dxt5(
+            data, image_value.get("pc_normal_slope_probe", False))
 
     width = image_value["width"]
     height = image_value["height"]
@@ -2474,7 +2714,8 @@ def _pc_gfx_aabb_header(tree, include_static_model_indexes=False):
     indexes = bytes.fromhex(tree["indexes"])
     children = tree["children"]
     converted = bytearray(_little_endian_words(raw, 0, 32))
-    converted[:24] = _pc_bounds_from_xenon(raw, context="GfxAabbTree")
+    # QoS PC sub_1036DF60/sub_1036DE70 select opposite corners directly
+    # from these six floats; tree nodes retain mins/maxs on both platforms.
     index_count = len(indexes) // 4 if include_static_model_indexes else 0
     struct.pack_into("<4I", converted, 32, index_count,
                      INLINE if index_count else 0, len(children),
@@ -2529,7 +2770,7 @@ def _pc_gfx_cell_header(cell, include_static_models=False,
                         include_empty_tree=False):
     raw = bytes.fromhex(cell["raw"])
     converted = bytearray(_little_endian_words(raw, 0, 24))
-    converted[:24] = _pc_bounds_from_xenon(raw, context="GfxCell")
+    # PC sub_103ABFA0 selects mins/maxs directly before queuing cell jobs.
     cull_groups = bytes.fromhex(cell["cull_groups"])
     # Cell probe bytes index the GfxWorld-wide reflection-probe origin array.
     # That PC array is not serialized yet, so advertising source indices would
@@ -2547,13 +2788,10 @@ def _pc_gfx_cell_header(cell, include_static_models=False,
 
 
 def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
-                              include_empty_tree=False):
+                              include_empty_tree=False, include_model_indexes=False):
     if include_static_models and cell["tree"]:
-        # The tree's surface ranges drive world visibility independently of
-        # its static-model index arrays. Keep the hierarchy but strip those
-        # indices until the PC static-model mark buffers are available.
-        payload.extend(_pc_gfx_aabb_header(cell["tree"], False))
-        _write_pc_gfx_aabb_nested(payload, cell["tree"], False)
+        payload.extend(_pc_gfx_aabb_header(cell["tree"], include_model_indexes))
+        _write_pc_gfx_aabb_nested(payload, cell["tree"], include_model_indexes)
     elif include_empty_tree and cell["tree"]:
         payload.extend(bytes(48))
 
@@ -2571,7 +2809,7 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
                 portal["cell"], include_static_models, include_empty_tree))
             _write_pc_gfx_cell_nested(
                 payload, portal["cell"], include_static_models,
-                include_empty_tree)
+                include_empty_tree, include_model_indexes)
         payload.extend(_little_endian_words(bytes.fromhex(portal["vertices"])))
 
     payload.extend(_little_endian_words(bytes.fromhex(cell["cull_groups"])))
@@ -2613,19 +2851,30 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     if surface_remap_count > surface_count:
         raise FormatError(
             "primary DPVS surface count exceeds GfxWorld surface count")
-    surface_remap = _pc_surface_remap(surface_remap_count)
+    surface_remap = _pc_surface_remap_from_xenon(
+        bytes.fromhex(geometry.get("surface_remap", "")),
+        surface_remap_count, surface_count)
     static_model_count = len(static_draws) // 40
     if len(static_draws) % 40 or len(static_instances) != static_model_count * 32:
         raise FormatError("invalid captured Xbox static-model arrays")
     have_static_models = static_model_count > 0 and static_model_pointers is not None
     if have_static_models and len(static_model_pointers) != static_model_count:
         raise FormatError("invalid relocated static-model pointer array")
-    # Static-model culling is one indivisible PC subsystem, so omit world static
-    # models until its global index and mark buffers are mapped. Cell AABB trees
-    # must still be retained: PC sub_1036E580 walks each tree's contiguous
-    # surface ranges to populate the world-surface visibility list. The client
-    # remaps those ranges directly when the optional PC uint16 table is absent.
-    include_static_models = False
+    # PC 103D8960 allocates the four +584 visibility buffers from +276.
+    # Enable placements and tree model indices together, never indices alone.
+    include_static_models = have_static_models
+    def validate_tree_indexes(tree):
+        if tree is None:
+            return
+        indexes = bytes.fromhex(tree["indexes"])
+        if len(indexes) % 4 or any(index >= static_model_count
+                                 for (index,) in struct.iter_unpack(">I", indexes)):
+            raise FormatError("GfxAabbTree static-model index exceeds placement array")
+        for child in tree["children"]:
+            validate_tree_indexes(child)
+    if include_static_models:
+        for cell in cells:
+            validate_tree_indexes(cell["tree"])
     include_cell_trees = True
     include_empty_cell_trees = False
 
@@ -2645,8 +2894,10 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
                             if material_pointers is not None else INLINE)
         struct.pack_into("<I", pc_surfaces, target + 16, material_pointer)
         pc_surfaces[target + 20:target + 24] = source[44:48]
-        pc_surfaces[target + 24:target + 48] = _pc_bounds_from_xenon(
-            source, 48, f"GfxSurface {index}")
+        # PC sub_1036E2E0 passes these corners to sub_1036E030, which
+        # selects mins/maxs directly using the frustum-plane byte offsets.
+        pc_surfaces[target + 24:target + 48] = _little_endian_words(
+            source[48:72])
 
     pc_vertices = convert_world_vertices(xbox_vertices)
     pc_header = bytearray(728)
@@ -2655,6 +2906,15 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     struct.pack_into("<2I", pc_header, 16, len(nodes) // 2, INLINE if nodes else 0)
     struct.pack_into("<2I", pc_header, 24, len(indices) // 2, INLINE if indices else 0)
     struct.pack_into("<2I", pc_header, 32, surface_count, INLINE if surface_count else 0)
+    # PC 103C7DE5/103C7DF6 pass these half-open ranges to 10391A10.
+    # Xenon keeps the corresponding four scalars at +88..+100.
+    draw_ranges = geometry.get("surface_draw_ranges", [0, surface_count,
+                                                       surface_count, surface_count])
+    if (len(draw_ranges) != 4 or not
+            0 <= draw_ranges[0] <= draw_ranges[1] <= draw_ranges[2]
+            <= draw_ranges[3] <= surface_count):
+        raise FormatError("GfxWorld surface draw ranges exceed the surface array")
+    struct.pack_into("<4I", pc_header, 44, *draw_ranges)
     struct.pack_into("<2I", pc_header, 60, len(sky_start_surfs) // 4,
                      INLINE if sky_start_surfs else 0)
     struct.pack_into("<2I", pc_header, 80, vertex_count, INLINE if vertex_count else 0)
@@ -2742,7 +3002,8 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
             cell, include_cell_trees, include_empty_cell_trees))
     for cell in cells:
         _write_pc_gfx_cell_nested(
-            payload, cell, include_cell_trees, include_empty_cell_trees)
+            payload, cell, include_cell_trees, include_empty_cell_trees,
+            include_static_models)
     for lightmap in lightmaps:
         pair = lightmap.get("images", [])
         if len(pair) != 2:
@@ -3155,8 +3416,8 @@ def resolve_material_image_references(materials):
 
     Packed image values address an earlier 12-byte MaterialTextureDef image
     field. The definition prefix identifies the matching semantic/sampler slot;
-    references are resolved only backward, and a reference whose first use has
-    no decoded predecessor is kept external (normally an image from common_mp).
+    references are resolved only backward. Callers must include earlier XModel
+    and top-level materials before GfxWorld materials in stream order.
     """
     decoded_slots = []
     resolved = {}
@@ -3204,6 +3465,19 @@ def resolve_material_image_references(materials):
     }
 
 
+def materials_preceding_gfx_world(assets, gfx_world):
+    """Collect material image sources serialized before the GfxWorld root."""
+    preceding = []
+    for asset in assets:
+        if asset is gfx_world:
+            return preceding
+        if asset["type"] == "xmodel":
+            preceding.extend(asset.get("materials", []))
+        elif asset["type"] == "material":
+            preceding.append(asset)
+    raise FormatError("GfxWorld is absent from its asset stream")
+
+
 def _pc_map_assets(models, techset_names, images, materials, rawfiles,
                    include_materials):
     # QoS PC's image-pointer loader (0x103D45B0) immediately dereferences a
@@ -3222,7 +3496,8 @@ def _pc_map_assets(models, techset_names, images, materials, rawfiles,
 
 
 def build_pc_map_probe(path, include_images=False, include_materials=False,
-                       diagnostics=None, pc_material_donor=None):
+                       diagnostics=None, pc_material_donor=None,
+                       flatten_world_culling=False, normal_slope_probe=False):
     """Build a reduced PC zone for testing map and world deserialization.
 
     QoS PC mp_barge.ff confirms that PC and Xenon both use version 470 and the
@@ -3230,6 +3505,20 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     map roots as ComWorld, GfxWorld, GameWorldMp, then clipMap.
     """
     report = inspect(path, True, True)
+    if normal_slope_probe:
+        def mark_normal_images(value):
+            if isinstance(value, dict):
+                decoded = value.get("pc_mip_chain") or value.get("pc_base_level")
+                if isinstance(decoded, dict) and decoded.get("format") == "DXN":
+                    value["pc_normal_slope_probe"] = True
+                for child in value.values():
+                    mark_normal_images(child)
+            elif isinstance(value, list):
+                for child in value:
+                    mark_normal_images(child)
+        mark_normal_images(report)
+        if diagnostics is not None:
+            diagnostics["normal_encoding_probe"] = "BC5 unit XY to QoS PC slopes"
 
     def one(kind):
         matches = [asset for asset in report["assets"] if asset["type"] == kind]
@@ -3241,6 +3530,11 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     game_world = one("game_map_mp")
     clip_map = one("col_map_mp")
     gfx_world = one("gfx_map")
+    if flatten_world_culling:
+        cells = gfx_world["geometry"]["cells"]
+        if len(cells) != 1 or not cells[0].get("tree"):
+            raise FormatError("flattened culling probe requires one rooted GfxCell")
+        cells[0]["tree"]["children"] = []
     _bind_shared_clip_planes(clip_map, gfx_world)
     map_ents = clip_map.get("map_ents")
     if not map_ents or not map_ents.get("entity_string"):
@@ -3291,15 +3585,22 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
         and "data" in asset
     ]
     include_images = include_images or include_materials
+    preceding_materials = materials_preceding_gfx_world(
+        report["assets"], gfx_world)
     material_image_report = resolve_material_image_references(
-        gfx_world["geometry"]["surface_materials"])
+        preceding_materials + gfx_world["geometry"]["surface_materials"])
+    material_image_report["preceding_material_count"] = len(preceding_materials)
     images_by_name = {}
     if include_images:
         def keep_image(image_value):
-            if (image_value and isinstance(image_value.get("name"), str)
-                    and "pc_base_level" in image_value
-                    and image_value["pc_base_level"]["format"] in PC_TEXTURE_FOURCC):
-                images_by_name.setdefault(image_value["name"], image_value)
+            if not image_value or not isinstance(image_value.get("name"), str):
+                return
+            name = image_value["name"]
+            if name in PC_EXTERNAL_IMAGES:
+                images_by_name.setdefault(name, {"name": name, "pc_external": True})
+            elif ("pc_base_level" in image_value
+                  and image_value["pc_base_level"]["format"] in PC_TEXTURE_FOURCC):
+                images_by_name.setdefault(name, image_value)
 
         for material_value in gfx_world["geometry"]["surface_materials"]:
             for image_value in material_value.get("textures", []):
@@ -3311,6 +3612,8 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                             image_value.setdefault(
                                 "pc_semantic", bytes.fromhex(definition)[7])
                         keep_image(image_value)
+                else:
+                    keep_image(image_value)
         for probe in gfx_world["geometry"].get("reflection_probes", []):
             keep_image(probe.get("image"))
         for lightmap in gfx_world["geometry"].get("lightmaps", []):
@@ -3328,9 +3631,13 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     techset_mappings = Counter()
     material_mappings = Counter()
     unverified_state_layouts = Counter()
+    unverified_state_materials = []
     donor_materials = {}
+    donor_templates = []
     donor_techset_names = []
     donor_rejections = Counter()
+    incomplete_materials = Counter()
+    incomplete_material_ids = set()
     donor_names = set()
     if include_materials and pc_material_donor is not None:
         donor_names = {
@@ -3339,7 +3646,8 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
             if isinstance(value.get("name"), str)
         }
         donor_materials = read_pc_material_donors(
-            pc_material_donor, donor_names, donor_techset_names)
+            pc_material_donor, donor_names, donor_techset_names,
+            donor_templates)
     pc_techset_candidates = tuple(dict.fromkeys(
         (*PC_COMMON_TECHSETS, *donor_techset_names)))
     if include_materials:
@@ -3349,13 +3657,14 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                 source_techset_name = material_value.get("techset_name", "")
                 pc_techset_name, mapping_reason = select_pc_material_techset(
                     material_value, pc_techset_candidates)
-                textures = [
-                    image_value for image_value in material_value.get("textures", [])
-                    if image_value.get("name") in images_by_name
-                ]
+                textures = _complete_pc_material_textures(
+                    material_value, images_by_name)
+                if textures is None and material_value.get("textures"):
+                    incomplete_materials[material_value.get("name", "<unnamed>")] += 1
+                    incomplete_material_ids.add(source_identity)
                 convertible = ("header" in material_value
                                and pc_techset_name is not None
-                               and bool(textures))
+                               and textures is not None)
                 converted = None
                 if convertible:
                     converted = dict(material_value)
@@ -3378,6 +3687,38 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                             mapping_reason = "native_pc_donor"
                         else:
                             donor_rejections[converted.get("name", "<unnamed>")] += 1
+                    source_state_count = len(bytes.fromhex(
+                        converted.get("state_bits", ""))) // 8
+                    if ("pc_material_donor" not in converted
+                            and source_state_count in (3, 4)):
+                        signature = _material_texture_signature_from_xenon(textures)
+                        state_donor = next((candidate for candidate in donor_templates
+                            if candidate["techset_name"].lstrip(",")
+                                == pc_techset_name.lstrip(",")
+                            and candidate["header"][67] == len(textures)
+                            and _material_texture_signature_from_pc(candidate)
+                                == signature), None)
+                        state_template_reason = "native_pc_state_template"
+                        if state_donor is None:
+                            state_donor = next((candidate
+                                for candidate in donor_templates
+                                if candidate["techset_name"].lstrip(",")
+                                    == pc_techset_name.lstrip(",")),
+                                None)
+                            state_template_reason = (
+                                "native_pc_techset_state_template")
+                        if (state_donor is None
+                                and pc_techset_name.lstrip(",").endswith("p0")):
+                            compatible_name = pc_techset_name.lstrip(",")[:-2]
+                            state_donor = next((candidate
+                                for candidate in donor_templates
+                                if candidate["techset_name"].lstrip(",")
+                                    == compatible_name), None)
+                            state_template_reason = (
+                                "native_pc_compatible_state_template")
+                        if state_donor is not None:
+                            converted["pc_state_donor"] = state_donor
+                            mapping_reason = state_template_reason
                     unique_materials.append(converted)
                     techsets_by_name.setdefault(pc_techset_name, converted)
                 if pc_techset_name is not None:
@@ -3468,6 +3809,11 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                 source_count = len(bytes.fromhex(
                     material_value.get("state_bits", ""))) // 8
                 unverified_state_layouts[source_count] += 1
+                unverified_state_materials.append({
+                    "material": material_value.get("name", "<unnamed>"),
+                    "xenon_state_count": source_count,
+                    "pc_techset": material_value.get("pc_techset_name"),
+                })
         surface_material_pointers = [
             (material_pointers[id(material_value)]
              if material_value is not None else fallback_material_pointer)
@@ -3511,6 +3857,13 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     # Native PC and Xenon QoS fastfiles pad the zlib stream to 32 bytes.
     result.extend(bytes((-len(result)) % 32))
     if diagnostics is not None:
+        diagnostics["material_image_resolution"] = material_image_report
+        diagnostics["incomplete_texture_surface_count"] = sum(
+            id(material_value) in incomplete_material_ids for material_value
+            in gfx_world["geometry"]["surface_materials"])
+        diagnostics["incomplete_texture_materials"] = [
+            {"material": name, "definitions": count}
+            for name, count in sorted(incomplete_materials.items())]
         diagnostics["techset_mappings"] = [
             {"source": source, "pc": pc, "exact": source == pc,
              "materials": count}
@@ -3526,12 +3879,16 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
             {"xenon_state_count": count, "materials": materials}
             for count, materials in sorted(unverified_state_layouts.items())
         ]
+        diagnostics["unverified_state_materials"] = unverified_state_materials
         if pc_material_donor is not None:
             diagnostics["pc_material_donor"] = str(pc_material_donor)
             diagnostics["pc_material_donor_matches"] = sum(
                 "pc_material_donor" in value for value in unique_materials)
             diagnostics["pc_material_donor_candidates"] = len(donor_materials)
             diagnostics["pc_techset_donor_candidates"] = len(donor_techset_names)
+            diagnostics["pc_state_template_candidates"] = len(donor_templates)
+            diagnostics["pc_state_template_matches"] = sum(
+                "pc_state_donor" in value for value in unique_materials)
             diagnostics["pc_material_donor_rejections"] = [
                 {"material": name, "instances": count}
                 for name, count in sorted(donor_rejections.items())
@@ -3666,6 +4023,10 @@ def main():
                         help="bind directly serialized world materials to converted images")
     parser.add_argument("--pc-material-donor", type=Path,
                         help="reuse same-name native PC material data from this v470 zone")
+    parser.add_argument("--flatten-world-culling", action="store_true",
+                        help="diagnostic: submit the one-cell world from its root AABB")
+    parser.add_argument("--normal-slope-probe", action="store_true",
+                        help="diagnostic: re-encode BC5 unit normals for the QoS PC slope decode")
     parser.add_argument("--texture-summary", action="store_true",
                         help="validate captured GfxWorld base textures without emitting a zone")
     args = parser.parse_args()
@@ -3690,12 +4051,13 @@ def main():
             diagnostics = {}
             args.convert_map_probe.write_bytes(build_pc_map_probe(
                 args.files[0], args.include_images, args.include_materials,
-                diagnostics, args.pc_material_donor))
+                diagnostics, args.pc_material_donor,
+                args.flatten_world_culling, args.normal_slope_probe))
             result = {"input": str(args.files[0]),
                       "output": str(args.convert_map_probe),
                       "bytes": args.convert_map_probe.stat().st_size,
                       **diagnostics}
-            mappings_directory = Path(__file__).resolve().parent / ".work" / "reports"
+            mappings_directory = Path(__file__).resolve().parents[1] / ".work" / "reports"
             mappings_directory.mkdir(parents=True, exist_ok=True)
             mappings_path = mappings_directory / (
                 args.convert_map_probe.name + ".mappings.json")

@@ -73,6 +73,61 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(decoded_levels, 2)
         self.assertEqual(restored, b"".join(levels))
 
+    def test_xenos_missing_mip_tail_reuses_decoded_blocks(self):
+        base = bytes([0x31]) * xenon_ff._xenos_texture_layout(64, 16, 0x12)[5]
+        second = b"".join(bytes([index + 1]) * 8 for index in range(16))
+        tiled = (xenon_ff.tile_xenos_texture(64, 16, 0x12, base)
+                 + xenon_ff.tile_xenos_texture(32, 8, 0x12, second))
+
+        restored, decoded_levels = xenon_ff.untile_xenos_texture_levels(
+            64, 16, 0x12, tiled, 3)
+
+        expected_tail = b"".join(bytes([index + 1]) * 8
+                                 for index in (0, 2, 4, 6))
+        self.assertEqual(decoded_levels, 2)
+        self.assertEqual(restored, base + second + expected_tail)
+
+    def test_xenos_mip_chain_requires_base_level(self):
+        with self.assertRaisesRegex(xenon_ff.FormatError, "missing Xenos base"):
+            xenon_ff.untile_xenos_texture_levels(64, 16, 0x12, b"", 2)
+
+    def test_xenos_packed_mips_decode_shared_tile_regions(self):
+        base = bytes([0x31]) * 2048
+        second = bytes([0x42]) * 512
+        tail = bytearray(32 * 32 * 8)
+        expected = [base, second]
+        regions = ((4, 0, 4), (2, 0, 2), (1, 0, 1),
+                   (0, 2, 1), (0, 1, 1))
+        for level, (x, y, side) in enumerate(regions, 2):
+            block = bytes([0x50 + level]) * 8
+            expected.append(block * side * side)
+            for row in range(side):
+                for column in range(side):
+                    start = ((y + row) * 32 + x + column) * 8
+                    tail[start:start + 8] = block
+        tiled = (xenon_ff.tile_xenos_texture(64, 64, 0x12, base, endian=1)
+                 + xenon_ff.tile_xenos_texture(32, 32, 0x12, second, endian=1)
+                 + xenon_ff.tile_xenos_texture(128, 128, 0x12, tail, endian=1))
+
+        restored, decoded = xenon_ff.untile_xenos_texture_levels(
+            64, 64, 0x52, tiled, 7, packed_mips=True)
+
+        self.assertEqual(decoded, 7)
+        self.assertEqual(restored, b"".join(expected))
+
+    def test_xenos_packed_mip_descriptor_matches_observed_concrete(self):
+        image = {
+            "width": 512, "height": 128, "depth": 1,
+            "load_definition": {"format": "0x1a200152"},
+            "texture_resource_words": [0] * 7 + [
+                33554564, 1375731712, 4292939520, 269287424,
+                1073872896, 9043968],
+        }
+        self.assertTrue(xenon_ff._image_has_packed_mips(image))
+        image["width"] = 256
+        with self.assertRaisesRegex(xenon_ff.FormatError, "descriptor disagrees"):
+            xenon_ff._image_has_packed_mips(image)
+
     def test_xenos_texture_rejects_unknown_format(self):
         with self.assertRaisesRegex(xenon_ff.FormatError, "unsupported Xenos"):
             xenon_ff.untile_xenos_texture(64, 64, 0x2F, bytes(4096))
@@ -147,6 +202,24 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(
             struct.unpack_from("<2B3H4sI", payload, load_offset)[5], b"DXT5")
         self.assertEqual(len(payload[load_offset + 16:]), 16)
+
+    def test_pc_normal_slope_probe_encodes_flat_normal(self):
+        block = bytes((128, 128)) + bytes(6)
+        converted = xenon_ff.transcode_dxn_to_dxt5(block * 2, True)
+        self.assertEqual(xenon_ff._decode_bc4_block(converted[:8]), [130] * 16)
+        self.assertEqual(struct.unpack_from('<H', converted, 8)[0] >> 5, 33)
+        self.assertEqual(struct.unpack_from('<H', converted, 10)[0] >> 5, 32)
+        self.assertEqual(struct.unpack_from('<I', converted, 12)[0], 0x55555555)
+
+    def test_pc_normal_slope_probe_preserves_default_path(self):
+        block = bytes((191, 191)) + bytes(6)
+        flat = bytes((128, 128)) + bytes(6)
+        original = xenon_ff.transcode_dxn_to_dxt5(block + flat)
+        corrected = xenon_ff.transcode_dxn_to_dxt5(block + flat, True)
+        self.assertEqual(original[:8], block)
+        self.assertEqual(xenon_ff._decode_bc4_block(corrected[:8]), [166] * 16)
+        with self.assertRaises(xenon_ff.FormatError):
+            xenon_ff.transcode_dxn_to_dxt5(bytes(15), True)
 
     def test_pc_image_serialization_preserves_lightmap_metadata(self):
         image = {
@@ -340,6 +413,30 @@ class FastfileTests(unittest.TestCase):
 
         self.assertEqual(payload[67], 0)
 
+    def test_incomplete_material_uses_fallback_instead_of_dropping_slots(self):
+        color = {"name": "color"}
+        normal = {"reference": "0x400815d5"}
+        material = {"textures": [color, normal]}
+        self.assertIsNone(xenon_ff._complete_pc_material_textures(
+            material, {"color": color}))
+        self.assertEqual(xenon_ff._complete_pc_material_textures(
+            material, {"color": color, "normal": normal}), None)
+        normal["name"] = "normal"
+        self.assertEqual(xenon_ff._complete_pc_material_textures(
+            material, {"color": color, "normal": normal}), [color, normal])
+
+    def test_verified_external_image_serializes_name_without_pixels(self):
+        payload = bytearray()
+        xenon_ff.write_pc_image(payload, {
+            "name": ",$identitynormalmap", "pc_external": True})
+        self.assertEqual(len(payload), 36 + len(",$identitynormalmap") + 1)
+        self.assertEqual(struct.unpack_from("<I", payload, 32)[0],
+                         xenon_ff.INLINE)
+        self.assertEqual(payload[36:], b",$identitynormalmap\0")
+        with self.assertRaises(xenon_ff.FormatError):
+            xenon_ff.write_pc_image(bytearray(), {
+                "name": ",unverified", "pc_external": True})
+
     def test_pc_load_zone_preserves_2d_materials_images_and_rawfile(self):
         source = bytearray(96)
         source[16:20] = bytes.fromhex("002b0101")
@@ -448,6 +545,13 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(selected, "wc_l_sm_b0c0n0s0p0")
         self.assertEqual(reason, "channel_signature")
 
+    def test_world_techset_mapping_excludes_model_tree_candidates(self):
+        candidates = ("mc_l_hsm_tree_t0c0n0s0", "wc_l_sm_b0c0n0s0p0")
+        self.assertEqual(xenon_ff.select_pc_techset(
+            "wc_l_sm_t0c0d0n0s0", candidates), "wc_l_sm_b0c0n0s0p0")
+        self.assertIsNone(xenon_ff.select_pc_techset(
+            "wc_l_sm_t0c0d0n0s0", candidates[:1]))
+
     def test_pc_external_techset_always_uses_external_asset_marker(self):
         header_size = xenon_ff.PC_LAYOUTS["techset"][1]
 
@@ -553,6 +657,28 @@ class FastfileTests(unittest.TestCase):
 
         self.assertNotIn("name", materials[0]["textures"][0])
         self.assertEqual(report["external_image_references"], ["0x4008184d"])
+
+    def test_gfx_material_resolves_image_from_earlier_xmodel_material(self):
+        definition = bytes.fromhex("34ecccb373700b08ffffffff").hex()
+        decoded = {"name": "shared_s", "definition": definition,
+                   "pc_base_level": {"format": "DXT1"}}
+        model = {"type": "xmodel", "materials": [
+            {"textures": [decoded]}]}
+        world = {"type": "gfx_map", "geometry": {"surface_materials": [
+            {"textures": [{"definition": definition,
+                            "reference": "0x400815d5"}]}]}}
+        later = {"type": "material", "textures": [
+            {"name": "too_late", "definition": definition}]}
+
+        preceding = xenon_ff.materials_preceding_gfx_world(
+            [model, world, later], world)
+        report = xenon_ff.resolve_material_image_references(
+            preceding + world["geometry"]["surface_materials"])
+
+        self.assertEqual(len(preceding), 1)
+        self.assertEqual(world["geometry"]["surface_materials"][0]
+                         ["textures"][0]["name"], "shared_s")
+        self.assertEqual(report["external_image_references"], [])
 
     def test_xsurface_vertex_stream_conversion(self):
         primary = struct.pack(">4f", 1.0, 2.0, 3.0, -1.0)
@@ -707,6 +833,27 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", payload, material_array_offset)[0],
                          xenon_ff.INLINE)
 
+    def test_complete_rigid_surface_geometry_validation(self):
+        header = bytearray(200)
+        struct.pack_into(">2H", header, 2, 3, 1)
+        struct.pack_into(">I", header, 136, 1)
+        surface = {"header": header.hex(), "pc_vertices": bytes(120).hex(),
+                   "pc_secondary_vertices": None, "indices": "000000010002",
+                   "rigid_vertices": bytes(8).hex(), "blend_indices": None,
+                   "blend_vertices": None}
+        self.assertTrue(xenon_ff._renderable_rigid_surface(surface))
+        converted = xenon_ff.convert_xsurface_header(surface)
+        self.assertEqual(struct.unpack_from("<2H", converted, 2), (3, 1))
+        payload = bytearray()
+        xenon_ff.write_pc_xsurface_nested(payload, surface)
+        self.assertEqual(len(payload), 120 + 8 + 6)
+        self.assertEqual(payload[-6:], struct.pack("<3H", 0, 1, 2))
+        surface["indices"] = "000000010003"
+        with self.assertRaises(xenon_ff.FormatError):
+            xenon_ff._renderable_rigid_surface(surface)
+        surface["indices"] = None
+        self.assertFalse(xenon_ff._renderable_rigid_surface(surface))
+
     def test_static_model_draw_conversion(self):
         source = (struct.pack(">4f", 1500.0, 64.0, 1604.0, -48.0)
                   + struct.pack(">3I", 0x0007FC00, 0x00000201, 0x1FF00000)
@@ -825,7 +972,7 @@ class FastfileTests(unittest.TestCase):
                 "cells": [{
                     "raw": cell_raw.hex(),
                     "tree": {"raw": tree_raw.hex(),
-                             "indexes": struct.pack(">I", 54).hex(),
+                             "indexes": struct.pack(">I", 0).hex(),
                              "children": []},
                     "portals": [],
                     "cull_groups": "",
@@ -859,8 +1006,8 @@ class FastfileTests(unittest.TestCase):
         self.assertIn(struct.pack("<4f4B", 1.0, 2.0, 3.0, 4.0,
                                   5, 6, 7, 8), payload)
         self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
-        self.assertIn(struct.pack("<6f", 19.5, 20.5, 21.5,
-                                  1.5, 1.5, 1.5), payload)
+        self.assertIn(struct.pack("<6f", 18.0, 19.0, 20.0,
+                                  21.0, 22.0, 23.0), payload)
         self.assertIn(struct.pack("<11I", *range(24, 35)), payload)
         self.assertIn(struct.pack("<42I", *range(39, 81)), payload)
         self.assertIn(xenon_ff._pc_dpvs_worlds(
@@ -908,6 +1055,20 @@ class FastfileTests(unittest.TestCase):
                       shared_payload)
         self.assertIn(struct.pack("<2I", 0x40002009, 0x40002011),
                       shared_payload)
+
+    def test_pc_gfx_world_surface_draw_ranges(self):
+        asset = {"world_name": "maps/mp/test.d3dbsp", "name": "mp_test",
+                 "geometry": {"planes": "", "nodes": "", "indices": "",
+                              "surfaces": bytes(3 * 72).hex(),
+                              "brush_models": "", "dpvs_worlds": "", "sky_start_surfs": "",
+                              "vertices": "", "vertex_layers": "", "cells": [],
+                              "surface_draw_ranges": [0, 2, 2, 3]}}
+        payload = bytearray()
+        xenon_ff.write_pc_gfx_world(payload, asset, 0)
+        self.assertEqual(struct.unpack_from("<4I", payload, 44), (0, 2, 2, 3))
+        asset["geometry"]["surface_draw_ranges"] = [0, 2, 2, 4]
+        with self.assertRaises(xenon_ff.FormatError):
+            xenon_ff.write_pc_gfx_world(bytearray(), asset, 0)
 
     def test_rawfile_byte_content_is_not_swapped(self):
         payload = struct.pack(">4I", 0, 0, 1, xenon_ff.INLINE)
@@ -1176,6 +1337,32 @@ class FastfileTests(unittest.TestCase):
                          struct.pack("<4H", 0, 1, 2, 3))
         with self.assertRaises(xenon_ff.FormatError):
             xenon_ff._pc_surface_remap(0x10001)
+
+    def test_pc_surface_remap_preserves_xenon_dpvs_order(self):
+        source = struct.pack(">4H", 3, 1, 0, 2)
+        self.assertEqual(
+            xenon_ff._pc_surface_remap_from_xenon(source, 4, 4),
+            struct.pack("<4H", 3, 1, 0, 2))
+        with self.assertRaisesRegex(xenon_ff.FormatError, "size"):
+            xenon_ff._pc_surface_remap_from_xenon(source[:-2], 4, 4)
+        with self.assertRaisesRegex(xenon_ff.FormatError, "surface array"):
+            xenon_ff._pc_surface_remap_from_xenon(source, 4, 3)
+
+    def test_pc_aabb_tree_preserves_min_max_corners(self):
+        raw = struct.pack(">6f6I", -10, -20, -30, 40, 50, 60,
+                          1, 0, 0, 0, 0, 0)
+        tree = {"raw": raw.hex(), "indexes": "", "children": []}
+        header = xenon_ff._pc_gfx_aabb_header(tree)
+        self.assertEqual(struct.unpack_from("<6f", header),
+                         (-10, -20, -30, 40, 50, 60))
+
+    def test_pc_cell_preserves_min_max_corners(self):
+        raw = struct.pack(">6f", -10, -20, -30, 40, 50, 60) + bytes(28)
+        cell = {"raw": raw.hex(), "tree": None, "cull_groups": "",
+                "portals": []}
+        header = xenon_ff._pc_gfx_cell_header(cell)
+        self.assertEqual(struct.unpack_from("<6f", header),
+                         (-10, -20, -30, 40, 50, 60))
 
     def test_pc_bounds_convert_min_max_to_midpoint_half_size(self):
         raw = struct.pack(">6f", -8.0, 4.0, -2.0, 12.0, 10.0, 6.0)

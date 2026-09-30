@@ -75,7 +75,8 @@ namespace command
 
 				const auto command_name = arguments[index++].substr(1);
 				const auto bootstrap = is_bootstrap_switch(command_name);
-				std::string command_line = command_name;
+				std::string command_line = utils::string::to_lower(command_name) == "name"
+					? "seta name" : command_name;
 				while (index < arguments.size() && !is_launch_command(arguments[index]))
 				{
 					command_line.push_back(' ');

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
@@ -488,9 +489,13 @@ namespace
 	std::string offline_name()
 	{
 		const auto requested_name = command_line_name();
-		if (!requested_name.empty())
+		static std::atomic<bool> first_lookup{true};
+		if (first_lookup.exchange(false))
 		{
-			return requested_name;
+			if (!requested_name.empty())
+			{
+				return requested_name;
+			}
 		}
 
 		if (auto* const name = find_dvar("name"); name && name->type == 7 && name->current.string && *name->current.string)
@@ -498,7 +503,7 @@ namespace
 			return name->current.string;
 		}
 
-		return "Player";
+		return requested_name.empty() ? "Player" : requested_name;
 	}
 
 	void sync_engine_name(const std::string& name)
