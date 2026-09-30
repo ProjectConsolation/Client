@@ -647,6 +647,48 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(resolved["resolved_reference"], "0x40500001")
         self.assertEqual(report["resolved_image_references"], 1)
 
+    def test_alpha_test_material_requests_native_pc_state_template(self):
+        self.assertTrue(xenon_ff.requires_pc_state_template("wc_l_sm_t0c0", 5))
+        self.assertTrue(xenon_ff.requires_pc_state_template(",wc_l_sm_t0c0n0", 6))
+        self.assertFalse(xenon_ff.requires_pc_state_template("wc_l_sm_r0c0", 5))
+        self.assertFalse(xenon_ff.requires_pc_state_template("wc_l_sm_t0c0", 2))
+
+    def test_canals_cobble_reference_does_not_select_wood_normal(self):
+        definition = "59d30d0f6e700b05ffffffff"
+        materials = [
+            {"textures": [{"name": "gt_cobble_stonegrnd_02_n",
+                           "definition": definition}]},
+            {"textures": [{"name": "gt_wood_door03_n",
+                           "definition": definition}]},
+            {"name": "wc/gt_cobble_stonegrnd_02_out", "textures": [
+                {"reference": "0x40538de9", "definition": definition}]},
+        ]
+        xenon_ff.resolve_material_image_references(materials)
+        self.assertEqual(materials[2]["textures"][0]["name"],
+                         "gt_cobble_stonegrnd_02_n")
+
+    def test_material_image_family_beats_unrelated_sampler_match(self):
+        definition = "59d30d0f6e700b05ffffffff"
+        materials = [
+            {"textures": [{"name": "gt_concrete_generic02_n", "definition": definition}]},
+            {"textures": [{"name": "gt_wood_door03_n", "definition": definition}]},
+            {"name": "wc/gt_concrete_generic02_lite", "textures": [
+                {"reference": "0x405387a5", "definition": definition}]},
+        ]
+        report = xenon_ff.resolve_material_image_references(materials)
+        self.assertEqual(materials[2]["textures"][0]["name"], "gt_concrete_generic02_n")
+        self.assertEqual(len(report["provisional_family_mappings"]), 1)
+
+    def test_material_image_family_requires_token_boundary(self):
+        definition = "59d30d0f6e700b05ffffffff"
+        materials = [
+            {"textures": [{"name": "gt_concrete_generic_n", "definition": definition}]},
+            {"name": "wc/gt_concrete_generic02_lite", "textures": [
+                {"reference": "0x405387a5", "definition": definition}]},
+        ]
+        report = xenon_ff.resolve_material_image_references(materials)
+        self.assertEqual(report["provisional_family_mappings"], [])
+
     def test_material_image_first_external_reference_stays_external(self):
         definition = bytes.fromhex("34ecccb373700b08ffffffff")
         materials = [{"textures": [{

@@ -1375,6 +1375,12 @@ def _convert_material_state_bits(raw):
     return b"".join(records), mapping, len(records) in (0, 2)
 
 
+def requires_pc_state_template(techset_name, source_state_count):
+    alpha_test = re.search(r"(?:^|_)t[0-9]", techset_name.lstrip(",")) is not None
+    return (source_state_count in (3, 4)
+            or (alpha_test and source_state_count in (5, 6)))
+
+
 def write_pc_com_world(payload, asset):
     header = _little_endian_words(bytes.fromhex(asset["header"]))
     lights = asset["primary_lights"]
@@ -3424,6 +3430,68 @@ def resolve_material_image_references(materials):
     external = set()
     visited = set()
     resolved_count = 0
+    family_mappings = []
+
+    # Canals comparison probe: these variants share the explicitly serialized
+    # cobblestone texture family. Generic sampler hashes also match unrelated
+    # wood-door slots, so they are not sufficient evidence of image identity.
+    family_images = {}
+    for material_value in materials:
+        for texture in material_value.get("textures", []):
+            if texture.get("name") is not None:
+                family_images.setdefault(texture["name"], texture)
+    canals_cobble_slots = {
+        "0x40538ddd": "~gt_cobble_stonegrnd_02_s-g&$~3d30c20d",
+        "0x40538de9": "gt_cobble_stonegrnd_02_n",
+        "0x40538df5": "gt_cobble_stonegrnd_02_c",
+    }
+    if any(value.get("name") == "wc/gt_cobble_stonegrnd_02_out"
+           for value in materials):
+        for reference, name in canals_cobble_slots.items():
+            if name in family_images:
+                resolved[reference] = family_images[name]
+
+    # Provisional family matching precedes the legacy sampler-only fallback.
+    # Require complete underscore-delimited roots and reject conflicting names
+    # for a shared packed pointer rather than choosing the last loaded image.
+    family_candidates = {}
+    for name, texture in family_images.items():
+        definition = texture.get("definition")
+        if not definition:
+            continue
+        root = name.lstrip("~").split("-g&", 1)[0]
+        root = re.sub(r"_[cns]$", "", root)
+        if len(root) < 8 or "_" not in root:
+            continue
+        prefix = bytes.fromhex(definition)[:8]
+        family_candidates.setdefault(prefix, []).append((root, name, texture))
+    proposals = {}
+    seen_materials = set()
+    for material_value in materials:
+        if id(material_value) in seen_materials:
+            continue
+        seen_materials.add(id(material_value))
+        material_name = material_value.get("name", "").split("/", 1)[-1]
+        for texture in material_value.get("textures", []):
+            reference, definition = texture.get("reference"), texture.get("definition")
+            if reference is None or not definition:
+                continue
+            matches = [(root, name, value) for root, name, value in
+                       family_candidates.get(bytes.fromhex(definition)[:8], [])
+                       if material_name == root or material_name.startswith(root + "_")]
+            if not matches:
+                continue
+            longest = max(len(root) for root, _, _ in matches)
+            names = {name: value for root, name, value in matches if len(root) == longest}
+            if len(names) == 1:
+                proposals.setdefault(reference, {}).update(names)
+    for reference, names in proposals.items():
+        if len(names) != 1 or reference in resolved:
+            continue
+        name, target = next(iter(names.items()))
+        resolved[reference] = target
+        family_mappings.append({"reference": reference, "image": name,
+                                "reason": "provisional_material_name_family"})
 
     for material_value in materials:
         identity = id(material_value)
@@ -3462,6 +3530,7 @@ def resolve_material_image_references(materials):
         "resolved_texture_slots": resolved_count,
         "resolved_image_references": len(resolved),
         "external_image_references": sorted(external),
+        "provisional_family_mappings": family_mappings,
     }
 
 
@@ -3689,8 +3758,12 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                             donor_rejections[converted.get("name", "<unnamed>")] += 1
                     source_state_count = len(bytes.fromhex(
                         converted.get("state_bits", ""))) // 8
+                    # Native PC Barge wc_l_sm_t0c0 has seven state records.
+                    # Canals glass uses five on Xenon; generic expansion only
+                    # makes six and misindexes this alpha-test technique family.
                     if ("pc_material_donor" not in converted
-                            and source_state_count in (3, 4)):
+                            and requires_pc_state_template(
+                                pc_techset_name, source_state_count)):
                         signature = _material_texture_signature_from_xenon(textures)
                         state_donor = next((candidate for candidate in donor_templates
                             if candidate["techset_name"].lstrip(",")
