@@ -248,6 +248,37 @@ def select_pc_techset(source_name, candidates=PC_COMMON_TECHSETS):
     return min(scored)[2] if scored else None
 
 
+def extract_pc_secondary_layer_vertices(vertices, layers, first_vertex,
+                                        layer_offset, local_indices, stride):
+    """Clone referenced PC vertices and promote a verified Xenon layer's UVs.
+
+    Paired QoS Barge triangles establish float2 UVs at offset zero in 8-byte
+    sign records and 12-byte swl_n1 decal records. The caller must establish
+    the layout and blend contract; this does not enable layer splitting.
+    """
+    if stride not in (8, 12):
+        raise FormatError("unverified secondary layer stride")
+    if len(vertices) % 44 or first_vertex < 0 or layer_offset < 0:
+        raise FormatError("invalid secondary layer vertex range")
+    remap = {}
+    output = bytearray()
+    indices = []
+    for local_index in local_indices:
+        if local_index < 0:
+            raise FormatError("negative secondary layer index")
+        if local_index not in remap:
+            start = (first_vertex + local_index) * 44
+            uv_start = layer_offset + local_index * stride
+            if start + 44 > len(vertices) or uv_start + stride > len(layers):
+                raise FormatError("secondary layer index outside captured data")
+            vertex = bytearray(vertices[start:start + 44])
+            vertex[20:28] = _little_endian_words(layers[uv_start:uv_start + 8])
+            remap[local_index] = len(output) // 44
+            output.extend(vertex)
+        indices.append(remap[local_index])
+    return bytes(output), indices
+
+
 def select_pc_material_techset(material_value, candidates=PC_COMMON_TECHSETS):
     """Select a verified PC techset and explain any provisional substitution."""
     source_name = material_value.get("techset_name", "")
@@ -275,7 +306,9 @@ def select_pc_material_techset(material_value, candidates=PC_COMMON_TECHSETS):
     if fallback not in candidates:
         fallback = next((name for name in candidates
                          if re.match(r"^wc_l_sm_[brt]\d+c\d+", name)), None)
-    return fallback, "texture_semantic_fallback"
+    layered = re.search(r"(?:^|_)b[1-9][0-9]*c[1-9][0-9]*", source_name)
+    return fallback, ("layered_material_collapse" if layered
+                      else "texture_semantic_fallback")
 
 
 def _decode_bc4_block(block):
@@ -479,6 +512,18 @@ def _image_has_packed_mips(image_value):
                                        image_value["height"]) > 16
 
 
+def untile_xenos_cubemap_base(width, height, format_word, tiled, levels):
+    """Preserve six independently tiled faces of a single-level QoS cubemap."""
+    if levels != 1 or width != height:
+        raise FormatError("unverified Xenon cubemap mip layout")
+    face_size = _xenos_texture_layout(width, height, format_word & 0x3F)[6]
+    if len(tiled) != face_size * 6:
+        raise FormatError("Xenon cubemap does not contain six complete faces")
+    return b"".join(untile_xenos_texture(
+        width, height, format_word, tiled[offset:offset + face_size])
+        for offset in range(0, len(tiled), face_size))
+
+
 def untile_xenos_texture_levels(width, height, format_word, tiled, levels,
                                 packed_mips=False):
     """Convert the independently tiled portion of a Xenon mip chain.
@@ -634,12 +679,20 @@ def image(reader, pointer, capture=False):
         if capture and pixels:
             try:
                 levels = max(1, load[0])
-                linear, decoded_levels = untile_xenos_texture_levels(
-                    result["width"], result["height"], format_word,
-                    pixels, levels, _image_has_packed_mips(result))
+                is_cube = bool(load[1] & 4)
+                if is_cube:
+                    linear = untile_xenos_cubemap_base(
+                        result["width"], result["height"], format_word, pixels, levels)
+                    decoded_levels = 1
+                    result["pc_map_type"] = 5
+                    result["pc_load_flags"] = (1, 6)
+                else:
+                    linear, decoded_levels = untile_xenos_texture_levels(
+                        result["width"], result["height"], format_word,
+                        pixels, levels, _image_has_packed_mips(result))
                 base_size = _xenos_texture_layout(
                     result["width"], result["height"],
-                    format_word & 0x3F)[5]
+                    format_word & 0x3F)[5] * (6 if is_cube else 1)
                 result["pc_base_level"] = {
                     "format": XENOS_TEXTURE_FORMATS[format_word & 0x3F][3],
                     "bytes": base_size,
@@ -2249,7 +2302,9 @@ def _renderable_rigid_surface(surface):
     return True
 
 
-def write_pc_xmodel(payload, model):
+def write_pc_xmodel(payload, model, material_pointers=None):
+    if material_pointers is not None and len(material_pointers) != len(model["materials"]):
+        raise FormatError("model material pointer count mismatch")
     payload.extend(convert_xmodel_header(model))
     payload.extend(model["name"].encode() + b"\0")
     payload.extend(_little_endian_u16_array(_captured_bytes(model["bone_names"])))
@@ -2268,10 +2323,12 @@ def write_pc_xmodel(payload, model):
         if _renderable_rigid_surface(surface):
             write_pc_xsurface_nested(payload, surface)
 
-    for _ in model["materials"]:
-        payload.extend(struct.pack("<I", INLINE))
-    for _ in model["materials"]:
-        payload.extend(_pc_external_material())
+    for index, _ in enumerate(model["materials"]):
+        payload.extend(struct.pack("<I", material_pointers[index]
+                                   if material_pointers is not None else INLINE))
+    if material_pointers is None:
+        for _ in model["materials"]:
+            payload.extend(_pc_external_material())
     payload.extend(_little_endian_words(_captured_bytes(model["bone_info"])))
 
 
@@ -2365,13 +2422,29 @@ def inspect(path, details=False, capture_map=False, allow_partial=False):
             asset["geometry"]["asset_table_block2_offset"] = (
                 hex(table_base) if table_base is not None else None)
             if table_base is not None:
-                for material_value in asset["geometry"]["surface_materials"]:
+                material_values = asset["geometry"]["surface_materials"] + [
+                    value for model_asset in assets if model_asset["type"] == "xmodel"
+                    for value in model_asset.get("materials", [])
+                    if "header" in value]
+                world_material_ids = {id(value) for value in asset["geometry"]["surface_materials"]}
+                for material_value in material_values:
+                    if "techset" in material_value:
+                        material_value["techset_name"] = material_value["techset"].get("name")
+                        continue
                     reference = material_value.get("techset_reference")
                     if reference is None:
                         continue
                     pointer = int(reference, 16)
                     encoded = pointer - 1
                     offset = encoded & 0x1FFFFFFF
+                    if id(material_value) not in world_material_ids:
+                        delta = offset - table_base
+                        if (pointer <= 0 or encoded >> 29 != 2 or delta < 0
+                                or delta % 8 or delta // 8 >= len(entries)
+                                or entries[delta // 8][0] != 8):
+                            # Model materials can alias an earlier inline techset;
+                            # leave these unresolved rather than inventing a name.
+                            continue
                     if pointer <= 0 or encoded >> 29 != 2 or offset < table_base:
                         raise FormatError("material technique reference is not in the asset table")
                     delta = offset - table_base
@@ -2436,7 +2509,9 @@ def _pc_material_record_at(payload, name, offset):
     if len(textures) != texture_count * 12:
         return None
     child_offset = textures_end
+    image_names = []
     for texture_offset in range(0, len(textures), 12):
+        image_names.append(None)
         image_pointer = struct.unpack_from("<I", textures, texture_offset + 8)[0]
         if image_pointer not in (INLINE, INSERT):
             continue
@@ -2448,6 +2523,7 @@ def _pc_material_record_at(payload, name, offset):
             name_end = payload.find(b"\0", child_offset)
             if name_end < 0:
                 return None
+            image_names[-1] = payload[child_offset:name_end].decode('latin-1')
             child_offset = name_end + 1
         load_pointer = struct.unpack_from("<I", image_header, 4)[0]
         if load_pointer in (INLINE, INSERT):
@@ -2464,6 +2540,8 @@ def _pc_material_record_at(payload, name, offset):
         "textures": textures,
         "constants": payload[child_offset:constants_end],
         "state_bits": payload[constants_end:states_end],
+        "end_offset": states_end,
+        "inline_image_names": image_names,
     }
 
 
@@ -2481,8 +2559,31 @@ def pc_material_record(payload, name):
             return record
 
 
-def read_pc_material_donors(path, names, techset_names_out=None,
-                            templates_out=None):
+def read_pc_material_donor_zones(paths, names, techsets, templates):
+    """Retain ordered native candidates; never overwrite an earlier donor."""
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    candidates = {}
+    for path in paths:
+        donors = read_pc_material_donors(path, names, techsets, templates)
+        for name, record in donors.items():
+            record = dict(record, donor_zone=str(path))
+            candidates.setdefault(name, []).append(record)
+    return candidates
+
+
+def select_pc_material_donor(textures, candidates):
+    source_prefixes = b"".join(
+        struct.pack("<I", u32(bytes.fromhex(value["definition"])))
+        + bytes.fromhex(value["definition"])[4:8] for value in textures)
+    return next((candidate for candidate in candidates
+                 if candidate["header"][67] == len(textures)
+                 and source_prefixes == b"".join(
+                     candidate["textures"][offset:offset + 8]
+                     for offset in range(0, len(candidate["textures"]), 12))), None)
+
+
+def _read_pc_zone_payload(path):
     blob = Path(path).read_bytes()
     if len(blob) < 28 or struct.unpack_from("<I", blob)[0] != 470:
         raise FormatError("material donor is not a PC v470 fastfile")
@@ -2493,10 +2594,122 @@ def read_pc_material_donors(path, names, techset_names_out=None,
         raise FormatError(f"invalid PC material donor: {error}") from error
     if len(payload) != declared_size:
         raise FormatError("PC material donor payload size does not match its header")
+    return payload
+
+
+def pc_image_record_at(payload, name, name_offset):
+    """Validate an inline native PC compressed image without guessing pointers."""
+    start = name_offset - 36
+    if start < 0 or payload[name_offset:name_offset + len(name) + 1] != name.encode() + b"\0":
+        return None
+    header = payload[start:name_offset]
+    map_type, load_pointer = struct.unpack_from("<2I", header)
+    if (map_type not in (3, 5) or load_pointer not in (INLINE, INSERT)
+            or struct.unpack_from("<I", header, 32)[0] != INLINE):
+        return None
+    width, height, depth = struct.unpack_from("<3H", header, 24)
+    if not (0 < width <= 4096 and 0 < height <= 4096 and depth == 1):
+        return None
+    load_start = name_offset + len(name) + 1
+    if load_start + 16 > len(payload):
+        return None
+    levels, flags, load_width, load_height, load_depth, fourcc, size = struct.unpack_from(
+        "<2B3H4sI", payload, load_start)
+    if ((load_width, load_height, load_depth) != (width, height, depth)
+            or fourcc not in (b"DXT1", b"DXT3", b"DXT5") or flags & ~7
+            or bool(flags & 4) != (map_type == 5) or levels > 13):
+        return None
+    if map_type == 5 and width != height:
+        return None
+    count = levels or (1 if flags & 2 else max(width, height).bit_length())
+    block_size = 8 if fourcc == b"DXT1" else 16
+    expected = sum(_divide_round_up(max(1, width >> level), 4)
+                   * _divide_round_up(max(1, height >> level), 4) * block_size
+                   for level in range(count)) * (6 if map_type == 5 else 1)
+    end = load_start + 16 + size
+    if (size != expected or end > len(payload)
+            or struct.unpack_from("<2I", header, 16) != (size, size)):
+        return None
+    data = payload[load_start + 16:end]
+    return {"name": name, "width": width, "height": height, "depth": depth,
+            "map_type": map_type, "semantic": header[11], "fourcc": fourcc.decode(),
+            "pixel_sha256": hashlib.sha256(data).hexdigest(),
+            "serialized": payload[start:end]}
+
+
+def scan_pc_zone_directory(directory, image_values, material_names, excluded=()):
+    """Audit every PC zone, retaining only independently validated candidates."""
+    image_candidates, material_candidates, techsets = {}, {}, []
+    audit = {"zones": [], "image_matches": [], "image_conflicts": []}
+    names = {value["name"] for value in image_values if not value.get("pc_external")}
+    pattern = (re.compile(b"(?:" + b"|".join(re.escape(name.encode())
+               for name in sorted(names, key=len, reverse=True)) + b")\0") if names else None)
+    for path in sorted(Path(directory).glob("*.ff")):
+        if path.name in excluded:
+            audit["zones"].append({"zone": str(path), "excluded": True})
+            continue
+        entry = {"zone": str(path), "images": 0, "materials": 0}
+        audit["zones"].append(entry)
+        try:
+            payload = _read_pc_zone_payload(path)
+        except (OSError, FormatError) as error:
+            entry["error"] = str(error)
+            continue
+        if pattern:
+            for match in pattern.finditer(payload):
+                name = match.group()[:-1].decode()
+                record = pc_image_record_at(payload, name, match.start())
+                if record:
+                    record["donor_zone"] = str(path)
+                    image_candidates.setdefault(name, []).append(record)
+                    entry["images"] += 1
+        zone_techsets = []
+        try:
+            donors = read_pc_material_donors(path, material_names, zone_techsets,
+                                            validated_payload=payload)
+        except FormatError as error:
+            entry["material_error"] = str(error)
+            continue
+        techsets.extend(zone_techsets)
+        entry["materials"] = len(donors)
+        for name, record in donors.items():
+            material_candidates.setdefault(name, []).append(dict(record, donor_zone=str(path)))
+    for image_value in image_values:
+        base = image_value.get("pc_base_level", {})
+        expected_fourcc = PC_TEXTURE_FOURCC.get(base.get("format"), b"").decode()
+        candidates = [record for record in image_candidates.get(image_value["name"], [])
+                      if (record["width"], record["height"], record["depth"],
+                          record["map_type"], record["semantic"], record["fourcc"])
+                      == (image_value.get("width"), image_value.get("height"),
+                          image_value.get("depth"), image_value.get("pc_map_type", 3),
+                          image_value.get("pc_semantic", 2), expected_fourcc)]
+        hashes = {record["pixel_sha256"] for record in candidates}
+        if len(hashes) > 1:
+            audit["image_conflicts"].append({"image": image_value["name"],
+                "zones": [record["donor_zone"] for record in candidates]})
+        elif candidates:
+            image_value["pc_image_donor"] = candidates[0]
+            audit["image_matches"].append({"image": image_value["name"],
+                "zone": candidates[0]["donor_zone"], "pixel_sha256": candidates[0]["pixel_sha256"]})
+    return material_candidates, techsets, audit
+
+
+def read_pc_material_donors(path, names, techset_names_out=None,
+                            templates_out=None, validated_payload=None):
+    payload = (_read_pc_zone_payload(path) if validated_payload is None
+               else validated_payload)
 
     script_string_count, _, asset_count, _ = struct.unpack_from("<4I", payload)
     table_offset = 16 + script_string_count * 4
-    for _ in range(script_string_count):
+    if table_offset > len(payload):
+        raise FormatError("PC material donor has a truncated script-string table")
+    script_pointers = struct.unpack_from(f"<{script_string_count}I", payload, 16)
+    for pointer in script_pointers:
+        # Native SP zones include a null script-string slot with no nested bytes.
+        if pointer == 0:
+            continue
+        if pointer != INLINE:
+            raise FormatError("unverified PC script-string pointer")
         table_offset = payload.find(b"\0", table_offset) + 1
         if table_offset == 0:
             raise FormatError("PC material donor has an unterminated script string")
@@ -2505,6 +2718,9 @@ def read_pc_material_donors(path, names, techset_names_out=None,
         raise FormatError("PC material donor has a truncated asset table")
     entries = list(struct.iter_unpack(
         "<2I", payload[table_offset:table_end]))
+    if any(kind >= len(PC_ASSET_NAMES) or pointer not in (INLINE, INSERT)
+           for kind, pointer in entries):
+        raise FormatError("invalid PC material donor manifest entries")
     techset_indices = [index for index, entry in enumerate(entries)
                        if entry[0] == 7]
 
@@ -2528,15 +2744,22 @@ def read_pc_material_donors(path, names, techset_names_out=None,
         root_offset += 4
     if len(techset_roots) != len(techset_indices):
         raise FormatError(
-            "PC material donor technique roots do not match its manifest")
+            "PC material donor techset roots do not match its manifest")
     if techset_names_out is not None:
         techset_names_out.extend(techset_roots)
     techsets_by_index = dict(zip(techset_indices, techset_roots))
-    table_base = table_offset - 11
+    # Native Gettler/Italia aliases land on the 4-byte-aligned block-2 table,
+    # not its unaligned serialized byte offset after the runtime prefix.
+    table_base = (table_offset - 11 + 3) & ~3
 
     donors = {}
-    for name in names:
-        record = pc_material_record(payload, name)
+    name_pattern = (re.compile(b"(?:" + b"|".join(re.escape(name.encode("latin-1"))
+                    for name in sorted(names, key=len, reverse=True)) + b")\0") if names else None)
+    for match in name_pattern.finditer(payload) if name_pattern else ():
+        name = match.group()[:-1].decode("latin-1")
+        if name in donors:
+            continue
+        record = _pc_material_record_at(payload, name, match.start())
         if record is None:
             continue
         pointer = struct.unpack_from("<I", record["header"], 84)[0]
@@ -2592,7 +2815,7 @@ def write_pc_material(payload, material_value, techset_pointer,
         raise FormatError("invalid captured Xbox material")
     name = material_value.get("name")
     if not isinstance(name, str) or not isinstance(material_value.get("techset_name"), str):
-        raise FormatError("material is missing a PC-resolvable name or technique set")
+        raise FormatError("material is missing a PC-resolvable name or techset")
 
     donor = material_value.get("pc_material_donor")
     state_donor = material_value.get("pc_state_donor")
@@ -2661,6 +2884,14 @@ def write_pc_material(payload, material_value, techset_pointer,
 
 
 def write_pc_image(payload, image_value):
+    if "pc_image_donor" in image_value:
+        record = image_value["pc_image_donor"]
+        serialized = record["serialized"]
+        checked = pc_image_record_at(serialized, image_value["name"], 36)
+        if checked is None or checked["pixel_sha256"] != record["pixel_sha256"]:
+            raise FormatError("native PC image donor failed revalidation")
+        payload.extend(serialized)
+        return
     if image_value.get("pc_external"):
         name = image_value.get("name")
         if name not in PC_EXTERNAL_IMAGES:
@@ -2692,8 +2923,17 @@ def write_pc_image(payload, image_value):
     height = image_value["height"]
     depth = max(1, image_value["depth"])
     header = bytearray(36)
-    struct.pack_into("<2I", header, 0, 3, INSERT)
-    header[10] = image_value.get("pc_no_picmip", 0)
+    # QoS PC eco_hotel/mp_italia sp_bog_ft: map type 5, flags 6, six faces.
+    map_type = image_value.get("pc_map_type", 3)
+    if map_type not in (3, 5):
+        raise FormatError(f"unverified PC image map type {map_type}")
+    if map_type == 5:
+        block_size = 8 if base["format"] == "DXT1" else 16
+        expected = _divide_round_up(width, 4) * _divide_round_up(height, 4) * block_size * 6
+        if width != height or depth != 1 or len(data) != expected:
+            raise FormatError("PC cubemap requires six complete single-level faces")
+    struct.pack_into("<2I", header, 0, map_type, INSERT)
+    header[10] = image_value.get("pc_no_picmip", 1 if map_type == 5 else 0)
     header[11] = image_value.get("pc_semantic", 2)
     struct.pack_into("<2I", header, 16, len(data), len(data))
     struct.pack_into("<3H", header, 24, width, height, depth)
@@ -2701,7 +2941,7 @@ def write_pc_image(payload, image_value):
     struct.pack_into("<I", header, 32, INLINE)
     payload.extend(header)
     payload.extend(name.encode() + b"\0")
-    load_flags = image_value.get("pc_load_flags", (0, 0))
+    load_flags = image_value.get("pc_load_flags", (1, 6) if map_type == 5 else (0, 0))
     payload.extend(struct.pack("<2B3H4sI", load_flags[0], load_flags[1],
                                width, height, depth,
                                fourcc, len(data)))
@@ -3554,19 +3794,20 @@ def _pc_map_assets(models, techset_names, images, materials, rawfiles,
     # materials that consume their table cells; forward references retain the
     # table's INLINE marker and render white.
     return ([(12, "clip")]
-            + [(5, model) for model in models]
             + [(7, name) for name in techset_names]
             + [(8, image_value) for image_value in images]
             + ([(6, None)] + [(6, material_value)
                               for material_value in materials]
                if include_materials else [])
+            + [(5, model) for model in models]
             + [(13, "com"), (17, "gfx"), (15, "game")]
             + [(32, rawfile) for rawfile in rawfiles])
 
 
 def build_pc_map_probe(path, include_images=False, include_materials=False,
                        diagnostics=None, pc_material_donor=None,
-                       flatten_world_culling=False, normal_slope_probe=False):
+                       flatten_world_culling=False, normal_slope_probe=False,
+                       pc_donor_directory=None, pc_donor_exclude=()):
     """Build a reduced PC zone for testing map and world deserialization.
 
     QoS PC mp_barge.ff confirms that PC and Xenon both use version 470 and the
@@ -3656,6 +3897,10 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     include_images = include_images or include_materials
     preceding_materials = materials_preceding_gfx_world(
         report["assets"], gfx_world)
+    model_materials = [value for model in models for value in model["materials"]
+                       if "header" in value]
+    model_material_ids = {id(value) for value in model_materials}
+    material_values = gfx_world["geometry"]["surface_materials"] + model_materials
     material_image_report = resolve_material_image_references(
         preceding_materials + gfx_world["geometry"]["surface_materials"])
     material_image_report["preceding_material_count"] = len(preceding_materials)
@@ -3671,7 +3916,7 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                   and image_value["pc_base_level"]["format"] in PC_TEXTURE_FOURCC):
                 images_by_name.setdefault(name, image_value)
 
-        for material_value in gfx_world["geometry"]["surface_materials"]:
+        for material_value in material_values:
             for image_value in material_value.get("textures", []):
                 if "pc_base_level" in image_value:
                     base = image_value["pc_base_level"]
@@ -3711,21 +3956,43 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     if include_materials and pc_material_donor is not None:
         donor_names = {
             value.get("name")
-            for value in gfx_world["geometry"]["surface_materials"]
+            for value in material_values
             if isinstance(value.get("name"), str)
         }
-        donor_materials = read_pc_material_donors(
+        donor_materials = read_pc_material_donor_zones(
             pc_material_donor, donor_names, donor_techset_names,
             donor_templates)
+    directory_audit = None
+    if pc_donor_directory is not None:
+        names = {value.get("name") for value in material_values
+                 if isinstance(value.get("name"), str)}
+        directory_materials, directory_techsets, directory_audit = scan_pc_zone_directory(
+            pc_donor_directory, images, names, pc_donor_exclude)
+        available = {name.lstrip(",") for name in (*PC_COMMON_TECHSETS, *donor_techset_names)}
+        directory_audit["catalogued_techset_count"] = len(set(directory_techsets))
+        directory_audit["unavailable_material_techsets"] = []
+        for name, records in directory_materials.items():
+            for record in records:
+                if record["techset_name"].lstrip(",") in available:
+                    donor_materials.setdefault(name, []).append(record)
+                else:
+                    directory_audit["unavailable_material_techsets"].append({
+                        "material": name, "techset": record["techset_name"],
+                        "zone": record["donor_zone"]})
     pc_techset_candidates = tuple(dict.fromkeys(
         (*PC_COMMON_TECHSETS, *donor_techset_names)))
     if include_materials:
-        for material_value in gfx_world["geometry"]["surface_materials"]:
+        for material_value in material_values:
             source_identity = id(material_value)
             if source_identity not in converted_by_source:
                 source_techset_name = material_value.get("techset_name", "")
                 pc_techset_name, mapping_reason = select_pc_material_techset(
                     material_value, pc_techset_candidates)
+                if source_identity in model_material_ids:
+                    source_name = material_value.get("techset_name")
+                    pc_techset_name = (source_name if source_name in pc_techset_candidates
+                                      else None)
+                    mapping_reason = "exact_model_techset" if pc_techset_name else "unsupported_model_techset"
                 textures = _complete_pc_material_textures(
                     material_value, images_by_name)
                 if textures is None and material_value.get("textures"):
@@ -3739,17 +4006,10 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                     converted = dict(material_value)
                     converted["textures"] = textures
                     converted["pc_techset_name"] = pc_techset_name
-                    donor = donor_materials.get(converted.get("name"))
-                    if donor is not None:
-                        source_prefixes = b"".join(
-                            struct.pack("<I", u32(bytes.fromhex(value["definition"])))
-                            + bytes.fromhex(value["definition"])[4:8]
-                            for value in textures)
-                        donor_prefixes = b"".join(
-                            donor["textures"][offset:offset + 8]
-                            for offset in range(0, len(donor["textures"]), 12))
-                        if (donor["header"][67] == len(textures)
-                                and source_prefixes == donor_prefixes):
+                    donor_candidates = donor_materials.get(converted.get("name"), [])
+                    if donor_candidates:
+                        donor = select_pc_material_donor(textures, donor_candidates)
+                        if donor is not None:
                             converted["pc_material_donor"] = donor
                             pc_techset_name = donor["techset_name"]
                             converted["pc_techset_name"] = pc_techset_name
@@ -3801,7 +4061,8 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                                        mapping_reason)] += 1
                 converted_by_source[source_identity] = converted
             converted = converted_by_source[source_identity]
-            convertible_materials.append(converted)
+        convertible_materials = [converted_by_source[id(value)]
+                                 for value in gfx_world["geometry"]["surface_materials"]]
     gfx_world["geometry"]["material_image_resolution"] = material_image_report
     techset_names = list(techsets_by_name)
     assets = _pc_map_assets(models, techset_names, images, unique_materials,
@@ -3826,10 +4087,8 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     if source_table_base and asset_table_base != inferred_table_base:
         raise FormatError(
             "generated script-string layout changed the verified block-2 table base")
-    destination_indices = {
-        model["manifest_index"]: destination_index + 1
-        for destination_index, model in enumerate(models)
-    }
+    destination_indices = {model["manifest_index"]: index
+                           for index, (kind, model) in enumerate(assets) if kind == 5}
     gfx_world["geometry"]["pc_static_model_pointers"] = [
         0x40000001 + asset_table_base + destination_indices[source_index] * 8
         for source_index in gfx_world["geometry"]["static_model_asset_indices"]
@@ -3838,9 +4097,6 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     block2_cursor = asset_table_base + len(assets) * 8
     clip_block2_end = write_pc_clip_map(
         payload, clip_map, block2_cursor, clip_name, entity_string, entity_name)
-
-    for model in models:
-        write_pc_xmodel(payload, model)
 
     for name in techset_names:
         payload.extend(_pc_external_techset(name))
@@ -3893,6 +4149,12 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
             for material_value in convertible_materials
         ]
 
+    for model in models:
+        pointers = ([material_pointers.get(id(converted_by_source.get(id(value))),
+                                         fallback_material_pointer)
+                     for value in model["materials"]] if include_materials else None)
+        write_pc_xmodel(payload, model, pointers)
+
     write_pc_com_world(payload, com_world)
 
     write_pc_gfx_world(payload, gfx_world, len(com_world["primary_lights"]),
@@ -3930,7 +4192,44 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     # Native PC and Xenon QoS fastfiles pad the zlib stream to 32 bytes.
     result.extend(bytes((-len(result)) % 32))
     if diagnostics is not None:
+        if directory_audit is not None:
+            diagnostics["pc_directory_audit"] = directory_audit
         diagnostics["material_image_resolution"] = material_image_report
+        # Successful loading is not full asset coverage. Keep omissions visible
+        # in the same report as material substitutions instead of hiding them.
+        emitted_source_types = {
+            "techset", "xmodel", "com_map", "gfx_map", "game_map_mp",
+            "col_map_mp", "rawfile", "material",
+        }
+        diagnostics["completion_audit"] = {
+            "world_surfaces": gfx_world["surface_count"],
+            "static_model_placements": len(bytes.fromhex(
+                gfx_world["geometry"].get("static_model_draws", ""))) // 40,
+            "source_xmodels": len(models),
+            "renderable_model_surfaces": sum(_renderable_rigid_surface(surface)
+                for model in models for surface in model["surfaces"]),
+            "model_material_slots": sum(len(model["materials"]) for model in models),
+            "converted_model_material_slots": sum(
+                converted_by_source.get(id(value)) is not None
+                for model in models for value in model["materials"]),
+            "fallback_model_materials": sorted({value.get("name", value.get("reference", "<unnamed>"))
+                for model in models for value in model["materials"]
+                if converted_by_source.get(id(value)) is None}),
+            "layered_material_fallbacks": [
+                {"material": material, "source_techset": source,
+                 "pc_techset": pc, "reason": reason}
+                for material, source, pc, reason in sorted(material_mappings)
+                if material.startswith("*") and source != pc
+            ],
+            "non_emitted_asset_types": {
+                kind: count for kind, count in report["asset_counts"].items()
+                if kind not in emitted_source_types
+            },
+            "provisional_image_family_count": len(material_image_report.get(
+                "provisional_family_mappings", [])),
+            "vertex_layer_bytes": len(bytes.fromhex(
+                gfx_world["geometry"].get("vertex_layers", ""))),
+        }
         diagnostics["incomplete_texture_surface_count"] = sum(
             id(material_value) in incomplete_material_ids for material_value
             in gfx_world["geometry"]["surface_materials"])
@@ -3955,6 +4254,14 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
         diagnostics["unverified_state_materials"] = unverified_state_materials
         if pc_material_donor is not None:
             diagnostics["pc_material_donor"] = str(pc_material_donor)
+            diagnostics["pc_material_donor_zones"] = [str(path) for path in (
+                [pc_material_donor] if isinstance(pc_material_donor, (str, Path))
+                else pc_material_donor)]
+            diagnostics["pc_material_donor_sources"] = [
+                {"material": value.get("name"),
+                 "zone": value["pc_material_donor"].get("donor_zone"),
+                 "techset": value["pc_techset_name"]}
+                for value in unique_materials if "pc_material_donor" in value]
             diagnostics["pc_material_donor_matches"] = sum(
                 "pc_material_donor" in value for value in unique_materials)
             diagnostics["pc_material_donor_candidates"] = len(donor_materials)
@@ -4094,8 +4401,12 @@ def main():
                         help="include decoded base-level images in a converted map probe")
     parser.add_argument("--include-materials", action="store_true",
                         help="bind directly serialized world materials to converted images")
-    parser.add_argument("--pc-material-donor", type=Path,
-                        help="reuse same-name native PC material data from this v470 zone")
+    parser.add_argument("--pc-material-donor", type=Path, action="append",
+                        help="reuse native PC material data; repeat for multiple v470 zones")
+    parser.add_argument("--pc-donor-directory", type=Path,
+                        help="audit all PC zones for exact native image and material matches")
+    parser.add_argument("--pc-donor-exclude", action="append", default=[],
+                        help="exclude a generated zone filename from the native donor audit")
     parser.add_argument("--flatten-world-culling", action="store_true",
                         help="diagnostic: submit the one-cell world from its root AABB")
     parser.add_argument("--normal-slope-probe", action="store_true",
@@ -4125,7 +4436,8 @@ def main():
             args.convert_map_probe.write_bytes(build_pc_map_probe(
                 args.files[0], args.include_images, args.include_materials,
                 diagnostics, args.pc_material_donor,
-                args.flatten_world_culling, args.normal_slope_probe))
+                args.flatten_world_culling, args.normal_slope_probe,
+                args.pc_donor_directory, args.pc_donor_exclude))
             result = {"input": str(args.files[0]),
                       "output": str(args.convert_map_probe),
                       "bytes": args.convert_map_probe.stat().st_size,

@@ -9,6 +9,136 @@ import xenon_ff
 
 
 class FastfileTests(unittest.TestCase):
+    def test_pc_donor_manifest_skips_null_script_strings(self):
+        payload = bytearray(struct.pack("<4I", 2, xenon_ff.INLINE, 1, xenon_ff.INLINE))
+        payload.extend(struct.pack("<2I", 0, xenon_ff.INLINE))
+        payload.extend(b"bone\0")
+        payload.extend(struct.pack("<2I", 7, xenon_ff.INLINE))
+        root = bytearray(184)
+        struct.pack_into("<I", root, 0, xenon_ff.INLINE)
+        payload.extend(root + b"wc_test\0")
+        material = bytearray(104)
+        struct.pack_into("<I", material, 0, xenon_ff.INLINE)
+        struct.pack_into("<I", material, 84, 0x40000015)
+        payload.extend(material + b"test_material\0")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "donor.ff"
+            path.write_bytes(struct.pack("<7I", 470, len(payload), 0, 0, 0, 0, 0)
+                             + zlib.compress(payload))
+            techsets = []
+            self.assertEqual(xenon_ff.read_pc_material_donors(path, set(), techsets), {})
+            self.assertEqual(techsets, ["wc_test"])
+            donors = xenon_ff.read_pc_material_donors(path, {"test_material"})
+            self.assertEqual(donors["test_material"]["techset_name"], "wc_test")
+
+    def test_native_pc_image_record_rejects_bad_sizes(self):
+        image = {"name": "normal", "width": 4, "height": 4, "depth": 1,
+                 "pc_semantic": 5, "pc_load_flags": (1, 2),
+                 "pc_base_level": {"format": "DXT4_5", "bytes": 16, "data": bytes(16).hex()}}
+        payload = bytearray()
+        xenon_ff.write_pc_image(payload, image)
+        record = xenon_ff.pc_image_record_at(payload, "normal", 36)
+        self.assertIsNotNone(record)
+        self.assertEqual(record["semantic"], 5)
+        image["pc_image_donor"] = record
+        emitted = bytearray()
+        xenon_ff.write_pc_image(emitted, image)
+        self.assertEqual(payload, emitted)
+        damaged = bytearray(payload)
+        struct.pack_into("<I", damaged, 16, 17)
+        self.assertIsNone(xenon_ff.pc_image_record_at(damaged, "normal", 36))
+        self.assertIsNone(xenon_ff.pc_image_record_at(payload[:-1], "normal", 36))
+
+    def test_directory_image_matches_require_unique_pixels_and_metadata(self):
+        def zone(data):
+            payload = bytearray(16)
+            xenon_ff.write_pc_image(payload, {
+                "name": "normal", "width": 4, "height": 4, "depth": 1,
+                "pc_semantic": 5, "pc_load_flags": (1, 2),
+                "pc_base_level": {"format": "DXT4_5", "bytes": 16, "data": data.hex()}})
+            return struct.pack("<7I", 470, len(payload), 0, 0, 0, 0, 0) + zlib.compress(payload)
+        def source():
+            return {"name": "normal", "width": 4, "height": 4, "depth": 1,
+                    "pc_semantic": 5, "pc_base_level": {"format": "DXN"}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.ff").write_bytes(zone(bytes(16)))
+            image = source()
+            _, _, audit = xenon_ff.scan_pc_zone_directory(root, [image], set())
+            self.assertIn("pc_image_donor", image)
+            self.assertEqual(len(audit["image_matches"]), 1)
+            (root / "b.ff").write_bytes(zone(bytes([1]) * 16))
+            image = source()
+            _, _, audit = xenon_ff.scan_pc_zone_directory(root, [image], set())
+            self.assertNotIn("pc_image_donor", image)
+            self.assertEqual(len(audit["image_conflicts"]), 1)
+            image = source()
+            image["pc_semantic"] = 2
+            _, _, audit = xenon_ff.scan_pc_zone_directory(root, [image], set())
+            self.assertNotIn("pc_image_donor", image)
+            self.assertEqual(audit["image_matches"], [])
+
+    def test_pc_material_donor_skips_incompatible_first_candidate(self):
+        header = bytearray(104)
+        header[67] = 1
+        definition = struct.pack('>I', 0x12345678) + b'abcd' + bytes(4)
+        good = {'header': bytes(header),
+                'textures': struct.pack('<I', 0x12345678) + b'abcd' + bytes(4)}
+        bad = dict(good, textures=bytes(12))
+        textures = [{'definition': definition.hex()}]
+        self.assertIs(xenon_ff.select_pc_material_donor(textures, [bad, good]), good)
+        self.assertIsNone(xenon_ff.select_pc_material_donor(textures, [bad]))
+        self.assertIs(xenon_ff.select_pc_material_donor(textures, [good, dict(good)]), good)
+
+    def test_multiple_pc_donor_zones_retain_duplicate_candidates(self):
+        first = {'name': 'wc/test', 'techset_name': 'first'}
+        second = {'name': 'wc/test', 'techset_name': 'second'}
+        with mock.patch.object(xenon_ff, 'read_pc_material_donors',
+                               side_effect=[{'wc/test': first}, {'wc/test': second}]):
+            result = xenon_ff.read_pc_material_donor_zones(
+                [Path('one.ff'), Path('two.ff')], {'wc/test'}, [], [])
+        self.assertEqual([r['techset_name'] for r in result['wc/test']], ['first', 'second'])
+        self.assertEqual(result['wc/test'][1]['donor_zone'], 'two.ff')
+        self.assertNotIn('donor_zone', first)
+
+    def test_secondary_layer_vertices_preserve_base_and_remap(self):
+        vertices = bytes(range(44)) * 3
+        for stride in (8, 12):
+            layers = b''.join(struct.pack('>2f', i, i + .5) + bytes(stride - 8)
+                              for i in range(3))
+            result, indices = xenon_ff.extract_pc_secondary_layer_vertices(
+                vertices, layers, 0, 0, [2, 0, 2], stride)
+            self.assertEqual(indices, [0, 1, 0])
+            self.assertEqual(len(result), 88)
+            self.assertEqual(struct.unpack_from('<2f', result, 20), (2, 2.5))
+            self.assertEqual(result[:20], vertices[:20])
+            self.assertEqual(result[28:44], vertices[28:44])
+            self.assertEqual(vertices, bytes(range(44)) * 3)
+
+    def test_secondary_layer_vertices_reject_unverified_or_truncated_data(self):
+        for stride, layers, indices in ((16, bytes(16), [0]),
+                                        (8, bytes(7), [0]),
+                                        (8, bytes(16), [1]),
+                                        (8, bytes(8), [-1])):
+            with self.assertRaises(xenon_ff.FormatError):
+                xenon_ff.extract_pc_secondary_layer_vertices(
+                    bytes(44), layers, 0, 0, indices, stride)
+
+    def test_pc_material_record_exposes_serialized_end(self):
+        header = bytearray(104)
+        struct.pack_into('<I', header, 0, xenon_ff.INLINE)
+        header[68:70] = bytes((1, 1))
+        name = b'wc/test\0'
+        constants = bytes(32)
+        states = bytes(8)
+        payload = bytes(header) + name + constants + states + b'next'
+        record = xenon_ff._pc_material_record_at(payload, 'wc/test', 104)
+        self.assertIsNotNone(record)
+        self.assertEqual(record['end_offset'], len(payload) - 4)
+        self.assertEqual(record['constants'], constants)
+        self.assertEqual(record['state_bits'], states)
+        self.assertEqual(record['inline_image_names'], [])
+
     def inspect_blob(self, blob, details=False):
         with tempfile.TemporaryDirectory(prefix="qos-xenon-test-") as directory:
             path = Path(directory) / "fixture.ff"
@@ -185,6 +315,52 @@ class FastfileTests(unittest.TestCase):
             struct.unpack_from("<2B3H4sI", payload, load_offset),
             (0, 0, 8, 4, 1, b"DXT1", 16))
         self.assertEqual(payload[load_offset + 16:], bytes(range(16)))
+
+    def test_cubemap_preserves_all_six_faces(self):
+        face_size = xenon_ff._xenos_texture_layout(32, 32, 0x12)[6]
+        faces = [bytes([index]) * face_size for index in range(6)]
+        restored = xenon_ff.untile_xenos_cubemap_base(
+            32, 32, 0x12, b"".join(faces), 1)
+        self.assertEqual(restored, b"".join(bytes([index]) * 512 for index in range(6)))
+        with self.assertRaisesRegex(xenon_ff.FormatError, "six complete faces"):
+            xenon_ff.untile_xenos_cubemap_base(32, 32, 0x12, b"".join(faces[:-1]), 1)
+        with self.assertRaisesRegex(xenon_ff.FormatError, "mip layout"):
+            xenon_ff.untile_xenos_cubemap_base(32, 32, 0x12, b"".join(faces), 2)
+
+    def test_pc_cubemap_serialization_matches_native_contract(self):
+        data = bytes(32768 * 6)
+        image = {"name": "sp_bog_ft", "width": 256, "height": 256, "depth": 1,
+                 "pc_map_type": 5, "pc_base_level": {
+                     "format": "DXT1", "bytes": len(data), "data": data.hex()}}
+        payload = bytearray()
+        xenon_ff.write_pc_image(payload, image)
+        self.assertEqual(struct.unpack_from("<2I", payload), (5, xenon_ff.INSERT))
+        self.assertEqual(payload[10:12], bytes((1, 2)))
+        self.assertEqual(struct.unpack_from("<2I", payload, 16), (196608, 196608))
+        load_offset = 36 + len("sp_bog_ft") + 1
+        self.assertEqual(struct.unpack_from("<2B3H4sI", payload, load_offset),
+                         (1, 6, 256, 256, 1, b"DXT1", 196608))
+        self.assertEqual(payload[load_offset + 16:], data)
+        image["pc_base_level"] = {"format": "DXT1", "bytes": 32768, "data": bytes(32768).hex()}
+        with self.assertRaisesRegex(xenon_ff.FormatError, "six complete"):
+            xenon_ff.write_pc_image(bytearray(), image)
+
+    def test_xenon_image_capture_keeps_cubemap_faces(self):
+        face_size = xenon_ff._xenos_texture_layout(32, 32, 0x12)[6]
+        pixels = b"".join(bytes([index]) * face_size for index in range(6))
+        header = bytearray(40)
+        struct.pack_into(">I", header, 4, xenon_ff.INLINE)
+        struct.pack_into(">I", header, 12, len(pixels))
+        struct.pack_into(">3H", header, 16, 32, 32, 1)
+        struct.pack_into(">I", header, 24, xenon_ff.INLINE)
+        struct.pack_into(">I", header, 36, xenon_ff.INLINE)
+        raw = header + b"cube\0" + pixels + struct.pack(">2B3H2I", 1, 6, 32, 32, 1, 0x12, 0)
+        image = xenon_ff.image(xenon_ff.Reader(bytes(raw)), xenon_ff.INLINE, True)
+        self.assertEqual(image["pc_map_type"], 5)
+        self.assertEqual(image["pc_load_flags"], (1, 6))
+        self.assertEqual(image["pc_base_level"]["bytes"], 3072)
+        self.assertEqual(image["pc_base_level"]["data"],
+                         b"".join(bytes([index]) * 512 for index in range(6)).hex())
 
     def test_pc_image_serialization_transcodes_xbox_dxn(self):
         image = {
@@ -605,8 +781,9 @@ class FastfileTests(unittest.TestCase):
             True)
         kinds = [kind for kind, _ in assets]
 
-        self.assertEqual(kinds, [12, 5, 7, 8, 6, 6, 13, 17, 15, 32])
+        self.assertEqual(kinds, [12, 7, 8, 6, 6, 5, 13, 17, 15, 32])
         self.assertLess(kinds.index(8), kinds.index(6))
+        self.assertLess(kinds.index(6), kinds.index(5))
 
     def test_gfx_surface_material_references_target_earlier_slots(self):
         surfaces = bytes(4 * 72)
@@ -652,6 +829,12 @@ class FastfileTests(unittest.TestCase):
         self.assertTrue(xenon_ff.requires_pc_state_template(",wc_l_sm_t0c0n0", 6))
         self.assertFalse(xenon_ff.requires_pc_state_template("wc_l_sm_r0c0", 5))
         self.assertFalse(xenon_ff.requires_pc_state_template("wc_l_sm_t0c0", 2))
+
+    def test_layered_material_fallback_is_explicitly_reported(self):
+        material = {"techset_name": "l_sm_r0c0n0_b1c1n1", "textures": []}
+        selected, reason = xenon_ff.select_pc_material_techset(material)
+        self.assertIsNotNone(selected)
+        self.assertEqual(reason, "layered_material_collapse")
 
     def test_canals_cobble_reference_does_not_select_wood_normal(self):
         definition = "59d30d0f6e700b05ffffffff"
@@ -874,6 +1057,13 @@ class FastfileTests(unittest.TestCase):
                          (0, 0, 0, 0, 0, 0, 0))
         self.assertEqual(struct.unpack_from("<I", payload, material_array_offset)[0],
                          xenon_ff.INLINE)
+        linked_payload = bytearray()
+        xenon_ff.write_pc_xmodel(linked_payload, model, [0x40000101])
+        self.assertEqual(struct.unpack_from('<I', linked_payload, material_array_offset)[0],
+                         0x40000101)
+        self.assertEqual(len(payload) - len(linked_payload), len(xenon_ff._pc_external_material()))
+        with self.assertRaises(xenon_ff.FormatError):
+            xenon_ff.write_pc_xmodel(bytearray(), model, [])
 
     def test_complete_rigid_surface_geometry_validation(self):
         header = bytearray(200)

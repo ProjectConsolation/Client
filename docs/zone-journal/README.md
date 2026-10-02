@@ -340,3 +340,51 @@ The emitted cubemap header, load definition, and all six faces now match native
 PC byte-for-byte. The model and material link audits still pass. I installed
 this combined candidate with another backup; the file hashes match, but the
 running map needs to be reloaded to use it.
+
+### October 2: The Sky Works, So Time to Search Everything
+
+My next in-game test confirmed the skybox works. The buildings still have those
+dark patterns, though, so I wanted to stop limiting the comparisons to Barge and
+Docks and search every installed PC zone in one batch.
+
+![The corrected Canals skybox, with the remaining wall artifacts visible](images/2026-10-02-skybox-confirmed.png)
+
+I added a directory-wide donor audit for both images and materials. It checks
+texture dimensions, format, type, semantic, and complete mip or face sizes.
+If compatible PC copies disagree on their pixels, I leave that image alone.
+For a verified native normal image, I can keep the original PC encoding instead
+of running the Xbox normal conversion again.
+
+The singleplayer comparisons also exposed a bug in my donor reader: null
+script-string slots don't have a string after them. Consuming one shifted the
+manifest. Native PC aliases also use an aligned block-2 table address, not the
+unaligned position in the serialized bytes. Fixing those checks let me resolve
+Gettler's native glass and cobblestone materials, rather than just finding their
+names in the zone. Zones with inconsistent techset counts still get rejected.
+
+The batch finished with 55 fastfiles listed. I excluded the installed converted
+Canals and Barge zones, leaving 53 to inspect. I found 342 compatible native PC
+images and used 224 native material records. That includes
+`wc/cs_concfloor_clean01` from Construction Site and
+`wc/gt_glass_window02` and `wc/gt_cobble_stonegrnd_02_darker` from Gettler.
+The floor now gets the original PC `cs_concretefloor01_n` normal image rather
+than my Xbox normal conversion. Window glass also gets its native PC material
+state records, not just another guessed techset.
+
+Four conflicting images were the map-specific lightmaps. Their names are reused
+across maps, so copying them from another map would be wrong; I kept Canals'
+own data. Material validation rejected 26 zones with inconsistent techset root
+counts, although independently validated images from those zones could still
+be used. Another 40 material candidates needed techsets outside the current
+preload pool, so I kept those out too.
+
+I compared all 342 emitted native image records byte-for-byte with their donors.
+The working six-face skybox stayed intact. The link checks also passed for 351
+materials, 1,662 image references, all 74 models, and all 1,206 placements. The
+test suite passes 115 of 116 tests; the existing static-model layout expectation
+still fails. Model material coverage hasn't increased in this pass: 49 of 234
+slots are converted, with 185 explicit white fallbacks still to work through.
+
+I backed up the working skybox zone and installed the batch candidate. This is
+a much broader replacement of suspect texture and material data, but I still
+need an in-game reload before saying the floor or windows are fixed.
