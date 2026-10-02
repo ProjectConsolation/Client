@@ -288,3 +288,55 @@ no invalid links. The converter tests pass 109 of 110 tests; the existing static
 model layout expectation still fails. The layered overlays are not enabled yet,
 and I still need an in-game comparison before calling these material changes an
 improvement.
+### October 2: Giving the Props Their Materials
+
+I found another fairly basic gap: the converter was writing the models' geometry,
+but binding every model surface to `white`. That meant getting the buildings to
+show up wasn't enough to make the props around them look right.
+
+I changed the model writer to use converted material handles where I have an
+exact PC techset and the required images. I also moved those dependencies ahead
+of the models in the zone, since the PC loader needs them to exist when it
+resolves the handles. I didn't use world techsets as guesses for model shaders.
+
+This candidate keeps 74 models, 207 supported rigid model surfaces, and all
+1,206 captured placements. It replaces the white fallback in 49 of the 234
+model-material slots. The other 185 still use the explicit fallback: many are
+shared references I haven't resolved, while others need unsupported techsets or
+geometry. Those omissions now appear in the conversion report instead of being
+hidden behind a successful zone load.
+
+I checked every serialized model record and placement handle, plus 1,662 image
+links and 351 material-techset links. None of those checks found an invalid link.
+The regression suite still has the same one static-model layout failure out of
+110 tests, so I am not calling the whole converter verified. I backed up the
+previous zone and installed this candidate; the visual result still needs a
+fresh map load.
+
+I also checked `cs_concfloor_clean01` against native PC zones. Its texture names
+and five material constants match, including the detail scale. That rules out
+one simple explanation for the floor artifacts, but not a bad normal-image
+conversion. The dark floor patterns, glass, and missing layered overlays remain
+separate unfinished work. This isn't a complete Canals conversion yet.
+
+### October 2: The Sky Was Only One Face
+
+My next test showed a badly stretched sky. The material diagnostic identified
+`sky_bog`, which turned out to be a useful clue: its image is a cubemap, but my
+image writer had been treating it as an ordinary 2D texture and keeping only
+the first face.
+
+I found the same `sp_bog_ft` image in PC Eco Hotel and Italia. After untiling all
+six Xbox faces, the full 196,608 bytes match the PC image exactly, including the
+face order. That is a much better basis for a fix than trying another sky techset.
+
+The converter now keeps all six faces and writes the native PC cubemap type,
+load flags, and no-picmip field. I added tests for capturing the faces, writing
+the PC image, and rejecting truncated faces or unverified cubemap mip layouts.
+The suite passes 112 of 113 tests, with the same existing world-layout failure.
+This still needs an in-game check before I can call the sky fixed.
+
+The emitted cubemap header, load definition, and all six faces now match native
+PC byte-for-byte. The model and material link audits still pass. I installed
+this combined candidate with another backup; the file hashes match, but the
+running map needs to be reloaded to use it.
