@@ -45,6 +45,83 @@ namespace patches
 
 	namespace
 	{
+		std::uintptr_t noclip_cmd_scale_address{};
+		std::uintptr_t noclip_wish_continue{};
+
+		// QoS PC 1.1: EDI is pmove_t; cmd.buttons is at +8. Jump_Check
+		// tests 0x400, PM_CheckDuck tests 0x100. Both pressed cancel out.
+		__declspec(naked) void noclip_vertical_input()
+		{
+			__asm
+			{
+				push ecx
+				mov ecx, [edi + 8]
+				xor eax, eax
+				test ecx, 400h
+				jz check_crouch
+				mov eax, 127
+			check_crouch:
+				test ecx, 100h
+				jz finished
+				sub eax, 127
+			finished:
+				pop ecx
+				ret
+			}
+		}
+
+		__declspec(naked) void noclip_cmd_scale_stub()
+		{
+			__asm
+			{
+				push eax
+				call noclip_vertical_input
+				cvtsi2ss xmm0, eax
+				// Replace the native zero-valued third PM_CmdScale argument.
+				movss dword ptr[esp + 8], xmm0
+				pop eax
+				jmp dword ptr[noclip_cmd_scale_address]
+			}
+		}
+
+		__declspec(naked) void noclip_wish_velocity_stub()
+		{
+			__asm
+			{
+				push eax
+				call noclip_vertical_input
+				cvtsi2ss xmm4, eax
+				cvtps2pd xmm4, xmm4
+				pop eax
+				// Replay the displaced addition; native code then adds view-up
+				// times XMM4 to each component, as in the COD4 noclip path.
+				addsd xmm2, xmm3
+				jmp dword ptr[noclip_wish_continue]
+			}
+		}
+
+		void apply_noclip_vertical_input()
+		{
+			const auto scale_call = game::game_offset(0x101E174D);
+			const auto wish_zero = game::game_offset(0x101E1781);
+			constexpr unsigned char scale_bytes[] = {0xE8, 0x7E, 0xC2, 0xFF, 0xFF};
+			constexpr unsigned char wish_bytes[] = {0x0F, 0x57, 0xE4, 0xF2, 0x0F, 0x58, 0xD3};
+			if (std::memcmp(reinterpret_cast<const void*>(scale_call), scale_bytes, sizeof(scale_bytes)) != 0
+				|| std::memcmp(reinterpret_cast<const void*>(wish_zero), wish_bytes, sizeof(wish_bytes)) != 0)
+			{
+				console::warn("[movement] noclip vertical patch skipped: unexpected engine instructions\n");
+				return;
+			}
+
+			// Only PM_NOCLIP (pm_type 2) reaches these sites. Keep native
+			// friction, speed normalization, acceleration and shared prediction.
+			noclip_cmd_scale_address = game::game_offset(0x101DD9D0);
+			noclip_wish_continue = game::game_offset(0x101E1788);
+			utils::hook::call(scale_call, noclip_cmd_scale_stub);
+			utils::hook::nop(wish_zero, sizeof(wish_bytes));
+			utils::hook::jump(wish_zero, noclip_wish_velocity_stub);
+		}
+
 		constexpr std::size_t k_huffman_max_decoded_bytes = 0x20000;
 		constexpr std::size_t k_huffman_max_compressed_bytes = k_huffman_max_decoded_bytes;
 		constexpr std::size_t k_ui_replace_directive_max_len = 0x100;
@@ -1037,6 +1114,7 @@ namespace patches
 			apply_missing_voice_engine_guard();
 			apply_private_match_unpause();
 			apply_cg_draw_fps_modes();
+			apply_noclip_vertical_input();
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 

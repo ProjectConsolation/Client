@@ -48,7 +48,6 @@ namespace dvars
 	game::dvar_s* cg_drawVersionX = nullptr;
 	game::dvar_s* cg_drawVersionY = nullptr;
 	game::dvar_s* cg_drawOrigin = nullptr;
-	game::dvar_s* cg_drawTechset = nullptr;
 	game::dvar_s* cg_drawMemInfo = nullptr;
 	game::dvar_s* safeArea_horizontal = nullptr;
 	game::dvar_s* safeArea_vertical = nullptr;
@@ -672,7 +671,6 @@ namespace dvars
 					cg_drawVersionX = dvars::Dvar_RegisterFloat("cg_drawVersionX", "Horizontal position from the left edge for the version string.", 50.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawVersionY = dvars::Dvar_RegisterFloat("cg_drawVersionY", "Inset from the bottom edge for the version string.", 17.0f, -1024.0f, 1024.0f, game::dvar_flags::saved);
 					cg_drawOrigin = dvars::Dvar_RegisterBool("cg_drawOrigin", 0, "Draw player origin and velocity.", game::dvar_flags::none);
-					cg_drawTechset = dvars::Dvar_RegisterBool("cg_drawTechset", 0, "Draw the technique set and image bindings for cg_drawMaterial.", game::dvar_flags::none);
 					cg_drawMemInfo = dvars::Dvar_RegisterInt("cg_drawMemInfo", "Draw live memory information (1 = process summary, 2 = native meminfo, 3 = native meminfo in bytes).", 0, 0, 3, game::dvar_flags::saved);
 					disable_native_memory_overlay();
 					safeArea_horizontal = dvars::Dvar_RegisterFloat("safeArea_horizontal", "Horizontal safe-area fraction for HUD placement.", 0.85f, 0.0f, 1.0f, game::dvar_flags::saved);
@@ -734,7 +732,6 @@ namespace dvars
 			cg_drawVersionX = nullptr;
 			cg_drawVersionY = nullptr;
 			cg_drawOrigin = nullptr;
-			cg_drawTechset = nullptr;
 			cg_drawMemInfo = nullptr;
 			safeArea_horizontal = nullptr;
 			safeArea_vertical = nullptr;

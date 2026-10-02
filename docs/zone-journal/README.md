@@ -388,3 +388,42 @@ slots are converted, with 185 explicit white fallbacks still to work through.
 I backed up the working skybox zone and installed the batch candidate. This is
 a much broader replacement of suspect texture and material data, but I still
 need an in-game reload before saying the floor or windows are fixed.
+
+### October 2: Glass Finally Works
+
+My latest in-game test confirmed the glass works after the native PC donor
+pass. I can see the window detail now instead of that flat, void-looking face.
+The skybox is still working too. Most of the rest of the map looks much the
+same, though, with plenty of bad texture and lighting patterns left to fix.
+
+![The window glass after the native PC donor pass](images/2026-10-02-glass-confirmed.png)
+
+This makes me want to lean further on original PC materials wherever there is
+a verified counterpart. Having a material somewhere on disk isn't enough:
+its images and techsets need to be loaded, and the converted surface still
+needs to supply the vertex data that its shader expects. The current candidate
+already uses 224 native material records, so the remaining problems can't all
+be solved by swapping material names. Layered surfaces, lighting data, and the
+185 remaining model-material fallback slots are still on the list.
+
+If I had to put a number on it, I'd call this roughly 50% of the way to a visually
+complete Canals, not halfway through a predictable amount of work. Getting
+into the map, seeing textured geometry, water, sky, and now glass is real
+progress. Matching the original lighting and finishing props and layered
+materials could still take longer than the steps that got it loading.
+
+### Next: A Shared DLC Dependency Zone
+
+I'm considering a dedicated `common_dlc1.ff` for verified shared materials,
+images, and PC techsets. The idea is to preload that zone before a DLC map,
+then let the map resolve its external asset references against those loaded
+assets. That would be cleaner than treating a renamed whole PC map as a
+temporary render-asset donor.
+
+This is the next design step, not something I've finished yet. I need the
+complete dependency closure, including shader and vertex-declaration assets
+required by the techsets, and correct zone lifetime handling. Canals' world
+geometry, placements, visibility data, and map-specific lightmaps should stay
+in its own zone. Shared dependencies won't by themselves fix bad vertex data
+or layered-material conversion, but they should give me a more reliable base
+for removing the remaining material fallbacks.

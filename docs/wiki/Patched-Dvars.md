@@ -4,6 +4,20 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 
 ## Patched Dvars
 
+### Noclip Movement
+
+While `noclip` is enabled, hold your existing jump binding to ascend and crouch
+binding to descend. Holding both cancels vertical input. No new binds or dvars
+are required. Movement follows the camera's up axis, matching the COD4 noclip
+path; native speed scaling, friction and acceleration remain in use. Normal
+walking, jumping, crouching and UFO movement are unchanged.
+
+The QoS PC 1.1 patch restores vertical input at two noclip-only calculation
+sites, guarded by expected instruction bytes. Verify ascent, descent, both
+buttons together, diagonal movement and normal movement after leaving noclip.
+
+### Dvar Reference
+
 | Name | Description | Default / Range |
 | :--- | :--- | :--- |
 | `r_fullscreen` | Made saved and writable so fullscreen behavior can be controlled more reliably and does not get forced back as aggressively by the stock game. | N/A |
@@ -28,7 +42,7 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 | `cg_drawVersionX` | Saved horizontal position from the left edge for the version string. | Default: `50`, Range: `-1024` to `1024` |
 | `cg_drawVersionY` | Saved inset from the bottom edge for the version string. | Default: `17`, Range: `-1024` to `1024` |
 | `cg_drawOrigin` | Draws live player origin and velocity below the active `cg_drawFPS` block. | Boolean |
-| `cg_drawTechset` | When `cg_drawMaterial` is enabled, uses the same native collision-material trace and draws the selected material's resolved technique set and texture/image bindings directly below the stock diagnostic block. | Boolean |
+| `cg_drawMaterial` | `0` disables material diagnostics; `1` retains the stock material, surface, and contents labels; `2` adds the resolved render material's techset and texture/image bindings below them. Preserves the native trace and cheat protection. Replaces the separate `cg_drawTechset` toggle. | Integer (`0`-`2`) |
 | `cg_drawFPS` | Saved debug overlay mode. `1` draws FPS only; values `2` and higher draw the standard three-line FPS, frame-time, and triangle block. | `0` to `7` |
 | `cg_drawMemInfo` | Saved live memory overlay, centered at the right edge. Mode `1` shows working, private, peak, then a blank line and free process address space in MB. Mode `2` reproduces the native `meminfo` hunk, physical-memory, and high/low zone breakdown; mode `3` shows those same quantities in bytes. Memory pressure is colored yellow/red. | Default: `0`, Range: `0` to `3` |
 | `cg_debugInfoCornerOffset` | Default value corrected to `0 0`. Affects the corner offset used by some debug-style HUD info such as `cg_drawFPS`. | Default: `0 0` |

@@ -3,7 +3,6 @@
 #include "loader/component_loader.hpp"
 #include "component/utils/scheduler.hpp"
 #include "game/game.hpp"
-#include "game/dvars.hpp"
 
 #include <utils/string.hpp>
 
@@ -211,15 +210,52 @@ namespace draw_techset
 				scale, scale, 0.0f, text_color, 0);
 		}
 
-		void draw()
+		void configure_draw_material()
 		{
-			if (!dvars::cg_drawTechset || !dvars::cg_drawTechset->current.enabled)
+			auto* const dvar = game::Dvar_FindVar("cg_drawMaterial");
+			if (!dvar)
 			{
 				return;
 			}
+			// QoS PC 1.1 registers a bool at 0x102BEB07; its draw gate at
+			// 0x10312151 tests the low byte, so integer modes 0..2 retain it.
+			if (dvar->type == game::dvar_type::boolean)
+			{
+				dvar->current.integer = dvar->current.enabled ? 1 : 0;
+				dvar->latched.integer = dvar->latched.enabled ? 1 : 0;
+				dvar->reset.integer = dvar->reset.enabled ? 1 : 0;
+				dvar->type = game::dvar_type::integer;
+			}
+			if (dvar->type == game::dvar_type::integer)
+			{
+				dvar->domain.integer.min = 0;
+				dvar->domain.integer.max = 2;
+				dvar->description = "Material diagnostics: 0 = off, 1 = material/surface/contents, 2 = also show resolved techset and image bindings.";
+			}
+		}
 
+		bool resolve_material(const char* name, material_snapshot* snapshot)
+		{
+			const auto capture_named = [snapshot](const char* candidate)
+			{
+				const auto header = game::DB_FindXAssetHeader_Internal(
+					game::ASSET_TYPE_MATERIAL, candidate, 0);
+				return capture_material(header.material, snapshot)
+					&& !_stricmp(snapshot->material_name, candidate);
+			};
+			if (capture_named(name))
+			{
+				return true;
+			}
+			// Collision names omit the world-render material's wc/ prefix.
+			return !strchr(name, '/') && capture_named(utils::string::va("wc/%s", name));
+		}
+
+		void draw()
+		{
 			const auto* const draw_material = game::Dvar_FindVar("cg_drawMaterial");
-			if (!draw_material || !draw_material->current.enabled)
+			if (!draw_material || draw_material->type != game::dvar_type::integer
+				|| draw_material->current.integer != 2)
 			{
 				return;
 			}
@@ -230,14 +266,8 @@ namespace draw_techset
 				return;
 			}
 
-			const auto header = game::DB_FindXAssetHeader_Internal(
-				game::ASSET_TYPE_MATERIAL, trace.material, 0);
 			material_snapshot material{};
-			if (!capture_material(header.material, &material)
-				|| _stricmp(material.material_name, trace.material))
-			{
-				return;
-			}
+			const auto resolved = resolve_material(trace.material, &material);
 
 			auto* const font = game::R_RegisterFont("fonts/consolefont");
 			if (!font || font->pixelHeight <= 0)
@@ -254,12 +284,21 @@ namespace draw_techset
 			const auto x = native_anchor_x * width / virtual_width;
 			auto y = native_anchor_y * height / virtual_height;
 			const auto line_height = static_cast<float>(font->pixelHeight) * font_scale;
+			if (!resolved)
+			{
+				draw_line("techset: <render material not resolved>", font, x, y, font_scale);
+				return;
+			}
 
 			draw_line(utils::string::va("techset: %s", material.technique_name),
 				font, x, y, font_scale);
 			for (std::size_t index = 0; index < material.texture_count; ++index)
 			{
 				y += line_height;
+				if (y > height - line_height)
+				{
+					break;
+				}
 				const auto& texture = material.textures[index];
 				draw_line(utils::string::va(
 					"texture %u: semantic=%u sampler=%u image=%s",
@@ -279,6 +318,7 @@ namespace draw_techset
 			material_trace_function = game::game_offset(material_trace_function_address);
 			material_trace_start = game::game_offset(material_trace_start_address);
 			material_trace_end = game::game_offset(material_trace_end_address);
+			scheduler::loop(configure_draw_material, scheduler::pipeline::main, 250ms);
 			scheduler::loop(draw, scheduler::pipeline::renderer);
 		}
 
