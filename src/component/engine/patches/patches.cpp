@@ -47,6 +47,7 @@ namespace patches
 	{
 		std::uintptr_t noclip_cmd_scale_address{};
 		std::uintptr_t noclip_wish_continue{};
+		game::dvar_s* pm_noclipScale{};
 
 		// QoS PC 1.1: EDI is pmove_t; cmd.buttons is at +8. Jump_Check
 		// tests 0x400, PM_CheckDuck tests 0x100. Both pressed cancel out.
@@ -80,7 +81,19 @@ namespace patches
 				// Replace the native zero-valued third PM_CmdScale argument.
 				movss dword ptr[esp + 8], xmm0
 				pop eax
-				jmp dword ptr[noclip_cmd_scale_address]
+				// Forward the stack argument through the extra call frame.
+				push dword ptr[esp + 4]
+				call dword ptr[noclip_cmd_scale_address]
+				add esp, 4
+				push ecx
+				mov ecx, dword ptr[pm_noclipScale]
+				test ecx, ecx
+				jz finished
+				// PM_CmdScale returns the native speed scale in XMM0.
+				mulss xmm0, dword ptr[ecx + 10h]
+			finished:
+				pop ecx
+				ret
 			}
 		}
 
@@ -1169,6 +1182,10 @@ namespace patches
 
 			scheduler::once([this]
 			{
+				pm_noclipScale = dvars::Dvar_RegisterFloat("pm_noclipScale",
+					"Noclip movement speed multiplier (1 = native speed).",
+					1.0f, 0.0f, 20.0f, game::dvar_flags::saved);
+
 				// Run outside DLL initialization. The native frame loop uses
 				// timeGetTime and Sleep(1), but this image imports no timeBeginPeriod.
 				// Request precision in this process to avoid coarse timer pacing.

@@ -12,6 +12,12 @@ are required. Movement follows the camera's up axis, matching the COD4 noclip
 path; native speed scaling, friction and acceleration remain in use. Normal
 walking, jumping, crouching and UFO movement are unchanged.
 
+`pm_noclipScale` multiplies noclip movement speed in every direction, including
+jump/crouch movement. It is saved, defaults to `1`, and accepts `0` to `20`.
+For example, `pm_noclipScale 0.5` halves speed and `pm_noclipScale 2` doubles it.
+`0` removes movement acceleration; existing momentum still slows through native
+friction. Walking and UFO speed are not affected.
+
 The QoS PC 1.1 patch restores vertical input at two noclip-only calculation
 sites, guarded by expected instruction bytes. Verify ascent, descent, both
 buttons together, diagonal movement and normal movement after leaving noclip.
@@ -26,6 +32,7 @@ buttons together, diagonal movement and normal movement after leaving noclip.
 | `vid_ypos` | Made saved and writable. Controls the window position in windowed mode. | N/A |
 | `developer` | Registered with a `0` to `2` range. Enables the game's development environment behavior and is mainly useful for debugging or internal-style testing. | `0` to `2` |
 | `g_speed` | Saved integer dvar. Controls player movement speed. | Default: `210` |
+| `pm_noclipScale` | Saved speed multiplier applied only to noclip, including jump/crouch vertical movement. | Default: `1`, Range: `0` to `20` |
 | `jump_height` | Saved float dvar. Controls the maximum jump height used by the player movement code. | Default: `41` |
 | `cg_fov` | Saved float dvar. Controls the field of view angle in degrees. | Default: `65`, Range: `0` to `160` |
 | `cg_fovScale` | Saved float dvar. Applies a multiplier to the base field of view. | Default: `1`, Range: `0` to `2` |
