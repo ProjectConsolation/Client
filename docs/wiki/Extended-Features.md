@@ -55,7 +55,7 @@ Advanced helper commands such as `addbot`, `listassetpool`, `dvarDump`, and `com
 
 ### Disk Image Overrides
 
-Place a PC IWI version 6 file in `consolation/images/<image-asset-name>.iwi`
+Place an IWI, DDS or PNG file in `consolation/images/<image-asset-name>.<extension>`
 under the game installation. Use the **image** name, not its material name;
 for example, `brick_wall_col` is overridden by
 `consolation/images/brick_wall_col.iwi`. Image names containing subdirectories
@@ -63,12 +63,27 @@ retain them beneath `images`. This follows the loose-image naming convention
 used by [IW4x](https://github.com/iw4x/iw4x-client/blob/main/src/Components/Modules/Materials.cpp),
 but uses QoS's own texture-upload and ownership path rather than MW2 hooks.
 
-The initial implementation supports DXT1, DXT3 and DXT5 2D images and square
-cubemaps, up to 4096 pixels per dimension and 64 MiB per file. Include the complete
-mip chain unless the IWI no-mipmaps flag is set. Overrides load at full resolution;
-the original image's material sampler, semantic and asset identity remain unchanged.
-PNG, DDS, newer IWI versions, DXN, volume/streaming and legacy-normal encodings
-are not supported. Built-in, procedural and render-target images are excluded.
+Supported formats, up to 4096 pixels per dimension and 64 MiB per file:
+
+- **IWI:** PC version 6, DXT1/DXT3/DXT5, 2D or square cubemap. Complete mip
+  chain, or a single level with the no-mipmaps flag.
+- **DDS:** legacy DXT1/DXT3/DXT5 and 32-bit RGBA/BGRA; DX10 BC1/BC2/BC3,
+  RGBA8/BGRA8/BGRX8 UNORM. Complete power-of-two mip chain or a single level;
+  cubemaps require all six faces. Padded rows, arrays, volumes, premultiplied
+  alpha, BC4/BC5/BC6/BC7 and explicit sRGB formats are rejected.
+- **PNG:** decoded by Windows Imaging Component to straight-alpha BGRA8,
+  2D only. One mip level is uploaded; use DDS/IWI for authored mipmaps.
+
+Priority is **PNG > DDS > IWI** when multiple files have the same basename.
+An invalid highest-priority file retains the zone image, rather than silently
+falling through to another file. Overrides load at full resolution; the original
+material sampler, semantic and asset identity remain unchanged. Built-in,
+procedural and render-target images are excluded. No normal-map conversion is
+performed: a normal replacement must already use the PC shader's channel encoding.
+
+Windows-illegal asset characters use percent-encoded filenames, including `%`
+itself. For example, `*lightmap0_primary` uses `%2Alightmap0_primary.dds`.
+Traversal paths and Windows device names are rejected.
 
 Overrides are read when the fastfile image is uploaded, **not live when saved**.
 Reload the zone that owns the image, or restart the game for shared images.
@@ -76,6 +91,34 @@ Reload the zone that owns the image, or restart the game for shared images.
 `[images] Ignoring override` warning and retain the zone image. Removing the
 file restores the original on its next load. This feature still requires
 in-game validation with a rebuilt client.
+
+#### Dumping Canals Images
+
+`tools/xenon-converter/dump_pc_images.py` exports validated inline DXT images
+from a **converted PC** fastfile into separate `iwi`, `dds` and optional `png`
+directories. It refuses to overwrite an existing dump. The manifest records
+original asset names, override basenames, pixel hashes and external images with
+no embedded pixels. It does not fabricate missing/shared assets.
+
+```powershell
+python tools/xenon-converter/dump_pc_images.py tools/mp_canals.ff tools/image-dumps/my-canals-dump --png
+```
+
+PNG previews require Pillow; DDS/IWI export has no extra Python dependency.
+Copy only the replacements you want into the game's `consolation/images`, using
+the directory layout inside one of the format folders. The dump is not installed
+automatically. Cubemap PNGs are explicitly labelled positive-X face previews;
+use the whole DDS/IWI cube for an override. PNGs show the stored channels, including
+encoded normals and lightmaps, not a reconstructed final lit material.
+
+The current Canals dump contains 429 embedded images (including four lightmaps)
+and identifies one shared `,$identitynormalmap` reference without embedded pixels.
+All 429 exported DDS and IWI files were accepted by the override parser tests.
+
+Format references: [Microsoft DDS layouts](https://learn.microsoft.com/en-us/windows/win32/direct3ddds/dx-graphics-dds-pguide),
+[Windows PNG decoding](https://learn.microsoft.com/en-us/windows/win32/wic/-wic-creating-decoder)
+and local KisakCOD `r_image.h`/`r_image_load_common.cpp`. QoS PC upload and BGRA
+support were verified at `0x103ADD20`, `0x10381D20` and `0x10381B60`.
 
 ### Custom Branding
 

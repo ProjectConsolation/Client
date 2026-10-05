@@ -4,6 +4,7 @@
 #include "utils/hook.hpp"
 #include "utils/nt.hpp"
 #include "image_file.hpp"
+#include "image_png.hpp"
 #include <fstream>
 
 namespace image_overrides
@@ -70,24 +71,33 @@ namespace image_overrides
 			// and call upload a second time against a partially initialized image.
 			try
 			{
-				if (capture_image(&image, &slot, name, sizeof(name)) && safe_image_name(name))
+				if (capture_image(&image, &slot, name, sizeof(name)))
 				{
-					path = images_directory / (std::string(name) + ".iwi");
+					const auto filename = image_filename(name);
+					// Pick one deterministic winner. A bad higher-priority file
+					// retains the zone image rather than silently loading another.
 					std::error_code error;
-					if (std::filesystem::is_regular_file(path, error))
+					for (const auto extension : {".png", ".dds", ".iwi"})
+					{
+						const auto candidate = images_directory / (filename + extension);
+						if (std::filesystem::is_regular_file(candidate, error)) { path = candidate; break; }
+					}
+					if (!path.empty())
 					{
 						const auto size = std::filesystem::file_size(path);
-						if (size > 64 * 1024 * 1024 || size < 28)
-							throw std::runtime_error("invalid IWI file size");
+						if (size > maximum_file_size || size < 8)
+							throw std::runtime_error("invalid override file size");
 						std::ifstream file(path, std::ios::binary);
 						std::vector<unsigned char> data(static_cast<std::size_t>(size));
 						if (!file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size)))
-							throw std::runtime_error("could not read complete IWI override");
-						definition = decode_iwi(data);
+							throw std::runtime_error("could not read complete image override");
+						if (path.extension() == ".png") definition = decode_png(data);
+						else if (path.extension() == ".dds") definition = decode_dds(data);
+						else definition = decode_iwi(data);
 						load_definition header{};
 						std::memcpy(&header, definition.data(), sizeof(header));
 						if (((header.flags & 4) ? 5u : 3u) != image->map_type)
-							throw std::runtime_error("IWI texture type differs from zone image");
+							throw std::runtime_error("override texture type differs from zone image");
 						display_path = path.string();
 						// All validation precedes mutation. Native upload consumes this
 						// buffer synchronously and replaces *slot with its D3D texture.
