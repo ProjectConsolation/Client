@@ -1,5 +1,8 @@
 Use the included "Launch Consolation.lnk" shortcut to start multiplayer safely.
 
+Only install the optional xlive.dll for offline/debug use. Leave it out for
+normal Games for Windows LIVE operation. See README_XLIVE.txt for instructions.
+
 Default target:
 "C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer
 

@@ -4388,6 +4388,38 @@ def summarize_world_textures(gfx_world):
     }
 
 
+def conversion_provenance(args, output, diagnostics):
+    """Record content identities, not timestamps, for cross-PC regeneration.
+
+    Preserve explicit donor order: the first compatible donor wins. Include
+    every audited directory input, even rejected donors, since changing one
+    can change which native records the converter accepts next time.
+    """
+    def identity(path):
+        path = Path(path)
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return {"path": str(path.resolve()), "bytes": path.stat().st_size,
+                "sha256": digest.hexdigest()}
+
+    return {
+        "converter": identity(__file__),
+        "source": identity(args.files[0]),
+        "explicit_donors": [identity(path) for path in (args.pc_material_donor or [])],
+        "directory_donors": [identity(value["zone"]) for value in
+                             diagnostics.get("pc_directory_audit", {}).get("zones", [])
+                             if not value.get("excluded")],
+        "options": {"include_images": args.include_images or args.include_materials,
+                    "include_materials": args.include_materials,
+                    "flatten_world_culling": args.flatten_world_culling,
+                    "normal_slope_probe": args.normal_slope_probe,
+                    "pc_donor_exclude": args.pc_donor_exclude},
+        "output": identity(output),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="+", type=Path)
@@ -4442,6 +4474,8 @@ def main():
                       "output": str(args.convert_map_probe),
                       "bytes": args.convert_map_probe.stat().st_size,
                       **diagnostics}
+            result["provenance"] = conversion_provenance(
+                args, args.convert_map_probe, diagnostics)
             mappings_directory = Path(__file__).resolve().parents[1] / ".work" / "reports"
             mappings_directory.mkdir(parents=True, exist_ok=True)
             mappings_path = mappings_directory / (

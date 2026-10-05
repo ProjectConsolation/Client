@@ -327,6 +327,9 @@ workspace "consolation-client"
 	project "d3d9" -- dll we are using to hook into the game
 		kind "SharedLib"
 		language "C++"
+		-- Produce the optional offline/debug shim even when building only d3d9.
+		-- This is a build-order dependency, not a link dependency.
+		dependson { "xlive" }
 		links { "hid", "setupapi" }
 		buildoptions { "/utf-8" }
 
@@ -418,9 +421,12 @@ workspace "consolation-client"
 
 		linkoptions { "/DEF:../src_xlive/xlive.def" }
 
-		if deployDirectory then
-			postbuildcommands {"copy /y \"$(TargetPath)\" \"" .. deployDirectory .. "\""}
-		end
+		-- Keep the shim opt-in: building the client must not replace GFWL in
+		-- the game directory. Package its usage note beside the built DLL.
+		postbuildcommands {
+			"copy /y \"" .. path.getabsolute("required_files/README_XLIVE.txt")
+				.. "\" \"$(TargetDir)README_XLIVE.txt\""
+		}
 
 	group "Dependencies"
 		dependencies.projects()

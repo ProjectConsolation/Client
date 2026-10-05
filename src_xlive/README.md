@@ -1,5 +1,10 @@
 # Local XLive storage
 
+The replacement `xlive.dll` is optional and intended only for offline/debug
+use, not normal online GFWL operation. Building `d3d9` also builds the shim,
+but does not install it automatically. The output includes
+`README_XLIVE.txt`; copy the DLL into the game root explicitly when needed.
+
 The offline shim stores emulated Games for Windows - LIVE state beside the
 replacement `xlive.dll`. When the DLL is deployed in the game root, this is
 `root\storage`:

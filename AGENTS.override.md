@@ -29,7 +29,9 @@ Fixed success responses, hard-coded game state, manual snapshots, and similar sh
 
 The primary PC analysis target is `jb_mp_s.dll`. Its IDA image base convention is `0x10000000`; preserve the repository's existing fixed-address and rebasing conventions.
 
-Use these loaded IDA databases as symbol and implementation references:
+In this project, a request to check "COD4" means the local [KisakCOD](https://github.com/SwagSoftware/KisakCOD) source tree, and "BO1" means the local [KisakBlack](https://github.com/SwagSoftware/KisakBlack) source tree. The intended sibling checkouts are `C:\Users\vamp\source\repos\KisakCOD` and `C:\Users\vamp\source\repos\KisakBlack`. Do not interpret those shorthand names as requests for the older COD4 or BO1 PDB/IDB databases.
+
+For reference-dependent implementation work, the required pair is the QoS PC `jb_mp_s.dll` database open in IDA and the local KisakCOD source. KisakBlack is an additional comparative source when relevant. The following databases are optional historical references, not prerequisites:
 
 - QoS Wii: `G:\DBs\QoS\jb_mp_final.plf.i64`
 - COD4 alpha, Xbox 360: `G:\DBs\COD4A\_PDBLoaded.i64`
@@ -47,20 +49,20 @@ The installed Games for Windows LIVE SDK is mandatory for all XLive/GFWL reverse
 
 Inspect its headers, import libraries, samples, and documentation before implementing or naming XLive behavior. Do not invent XLive signatures, structures, constants, ordinals, or calling conventions when the SDK supplies them. QoS runtime evidence remains authoritative for game-specific behavior.
 
-The QoS Wii database is the primary naming reference for identifying and renaming corresponding functions in the PC `jb_mp_s.dll` IDB. COD4 and World at War databases are comparative references for inherited engine architecture, algorithms, ownership boundaries, and subsystem behavior. They are not directly bindable implementations.
+The QoS PC database and runtime evidence are authoritative for identifying functions and behavior. KisakCOD is a comparative source for inherited engine architecture, algorithms, ownership boundaries, and subsystem behavior; it is not a directly bindable implementation. The QoS Wii and Xbox 360 references remain useful when available but are not required for every investigation.
 
-Prefer the QoS Wii database and QoS Xbox 360 executable for cross-platform comparisons. Use their symbols, structures, and implementations before consulting other Call of Duty titles. When a QoS name is unavailable or cannot be matched confidently, consult COD4 next as a provisional naming or architectural reference, then validate the result against the QoS PC binary and runtime evidence before adopting it.
+When a QoS name is unavailable or cannot be matched confidently, consult KisakCOD as a provisional naming or architectural reference, then validate the result against the QoS PC binary and runtime evidence before adopting it.
 
-When BO1 Windows x86 server or KisakBlack material is available and relevant, use it only as an additional comparative source, especially where COD4 and World at War differ. Do not treat it as authoritative QoS behavior.
+When KisakBlack material is relevant, use it only as an additional comparative source. Do not treat it as authoritative QoS behavior.
 
 ## Reverse-Engineering Standard
 
 QoS evidence is authoritative. Prefer evidence in this order:
 
 1. QoS xrefs, decompilation, runtime tracing, wire bytes, serialized data, and repeatable tests.
-2. The QoS Wii symbol database and corresponding Wii implementation context.
-3. Comparative COD4 and World at War databases, checked together when relevant.
-4. BO1/KisakBlack and other community reference implementations, including the BO1 PC server PDB listed above.
+2. KisakCOD source, checked against QoS PC behavior.
+3. Optional QoS Wii/Xbox references when they are available and relevant.
+4. KisakBlack and other comparative implementations or optional databases when relevant.
 
 Do not override QoS evidence because another title has a convenient symbol name or implementation. QoS lies between related engine generations but may retain, remove, or alter behavior independently.
 
@@ -80,10 +82,10 @@ When a relevant mandatory reference cannot be checked, state that verification i
 
 ### Reference Availability Gate
 
-- Before attempting a patch for functionality likely inherited from Call of Duty, such as windowed mode, renderer setup, window creation, or input behavior, inspect the relevant COD PDB/IDB first. Much of this functionality may already be implemented in COD even when it is missing, disabled, or obscured in QoS.
-- Compare the QoS implementation against the most relevant COD4, World at War, or Black Ops 1 reference before designing the patch.
-- If the MCP is unreachable or connected to the wrong database, immediately notify the user, identify the exact PDB/IDB that must be loaded, and wait for the user's input before checking or continuing that reference-dependent investigation or patch.
-- Do not replace the required reference check with guesses, a low-confidence BinDiff result, or analysis of an unrelated active database.
+- Before attempting a patch for functionality likely inherited from Call of Duty, such as windowed mode, renderer setup, window creation, or input behavior, inspect the relevant KisakCOD source and the QoS PC `jb_mp_s.dll` IDA database first. Much of this functionality may already be implemented in KisakCOD even when it is missing, disabled, or obscured in QoS.
+- Compare the QoS implementation against KisakCOD before designing the patch; consult KisakBlack only when it adds relevant evidence.
+- If the IDA MCP is unreachable or connected to the wrong database, immediately notify the user that the QoS PC `jb_mp_s.dll` database must be accessible, and wait for the user's input before continuing that reference-dependent investigation or patch.
+- Do not replace the required QoS PC and KisakCOD checks with guesses, a low-confidence BinDiff result, or analysis of an unrelated active database.
 
 ## Engineering Rules
 

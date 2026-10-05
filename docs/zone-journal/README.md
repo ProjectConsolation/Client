@@ -427,3 +427,34 @@ geometry, placements, visibility data, and map-specific lightmaps should stay
 in its own zone. Shared dependencies won't by themselves fix bad vertex data
 or layered-material conversion, but they should give me a more reliable base
 for removing the remaining material fallbacks.
+
+## October 5: Restoring the Current Test on My Other PC
+
+The scripts were current after pulling, but this PC's installed Canals and
+client DLL were still from September 26. The shared donor zone was missing
+too. I regenerated Canals with the current converter, Barge and Docks material
+donors, and the full native PC zone directory audit, excluding the converted
+Canals and Barge files. I left the flattened-culling and normal-slope probes off.
+
+The new file is 24,706,560 bytes. It retains the recorded October 2 coverage:
+342 native PC image matches, 224 native material records, 74 models, 207
+supported model surfaces, and 1,206 placements. Only 49 of the 234 model
+material slots are converted; 119 world surfaces still have incomplete texture
+dependencies. Matching those counts is not proof that the output is identical
+to the other PC or that the remaining visual problems are fixed.
+
+I checked the candidate's PC header, decompressed size, stream termination and
+padding. Docks provides 23 of its 25 distinct required techset names; the other
+two have validated inline roots in native `common_mp.ff`. I installed native
+Docks as the temporary `common_xenon.ff` donor after rebuilding the client,
+and copied the regenerated Canals into the game. Both installed copies passed
+SHA-256 comparison with their source files. The old Canals files are backed up
+under `tools/.work/backup-2026-10-05/`.
+
+Conversion reports now record content hashes for the converter, Xbox source,
+ordered material donors, audited directory inputs and output, along with the
+conversion options. That makes cross-PC differences traceable instead of
+relying on timestamps. All 117 converter tests pass after correcting the stale
+world-layout fixture and adding coverage for the provenance record. A fresh
+in-game test is still needed; this pass restores a current baseline rather
+than completing layered materials, lighting or the remaining model fallbacks.

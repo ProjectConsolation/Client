@@ -1,3 +1,5 @@
+import argparse
+import hashlib
 import struct
 import tempfile
 import unittest
@@ -9,6 +11,33 @@ import xenon_ff
 
 
 class FastfileTests(unittest.TestCase):
+    def test_conversion_provenance_tracks_content_order_and_probe_options(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, first, second, output = [root / name for name in
+                                             ("source.ff", "first.ff", "second.ff", "map.ff")]
+            for path, data in ((source, b"xbox"), (first, b"native-a"),
+                               (second, b"native-b"), (output, b"converted")):
+                path.write_bytes(data)
+            args = argparse.Namespace(files=[source], pc_material_donor=[second, first],
+                include_images=False, include_materials=True,
+                flatten_world_culling=False, normal_slope_probe=True,
+                pc_donor_exclude=["excluded.ff"])
+            diagnostics = {"pc_directory_audit": {"zones": [
+                {"zone": str(first), "material_error": "rejected"},
+                {"zone": str(root / "excluded.ff"), "excluded": True}]}}
+            result = xenon_ff.conversion_provenance(args, output, diagnostics)
+            self.assertEqual([entry["sha256"] for entry in result["explicit_donors"]],
+                [hashlib.sha256(data).hexdigest() for data in (b"native-b", b"native-a")])
+            self.assertEqual(len(result["directory_donors"]), 1)
+            self.assertEqual(result["output"]["sha256"], hashlib.sha256(b"converted").hexdigest())
+            self.assertTrue(result["options"]["include_images"])
+            self.assertTrue(result["options"]["normal_slope_probe"])
+            source.write_bytes(b"new source")
+            changed = xenon_ff.conversion_provenance(args, output, diagnostics)
+            self.assertNotEqual(result["source"]["sha256"], changed["source"]["sha256"])
+            self.assertEqual(result["output"], changed["output"])
+
     def test_pc_donor_manifest_skips_null_script_strings(self):
         payload = bytearray(struct.pack("<4I", 2, xenon_ff.INLINE, 1, xenon_ff.INLINE))
         payload.extend(struct.pack("<2I", 0, xenon_ff.INLINE))
@@ -1234,21 +1263,23 @@ class FastfileTests(unittest.TestCase):
                                          264, 268, 276, 280, 284, 288, 292,
                                          300, 304, 352)],
                          [1, 1, 1, 1, 1, 1, 2, 3, 1, xenon_ff.INLINE,
-                          0, 0, 0, 1, 1, 1, xenon_ff.INLINE, 1])
+                          1, xenon_ff.INLINE, xenon_ff.INLINE,
+                          1, 1, 1, xenon_ff.INLINE, 1])
         self.assertIn(struct.pack("<4f4B", 1.0, 2.0, 3.0, 4.0,
                                   5, 6, 7, 8), payload)
         self.assertIn(struct.pack("<IIHHI", 9, 10, 11, 12, 13), payload)
         self.assertIn(struct.pack("<6f", 18.0, 19.0, 20.0,
                                   21.0, 22.0, 23.0), payload)
-        self.assertIn(struct.pack("<11I", *range(24, 35)), payload)
+        # The final two words are packed unit vectors, not endian-swapped ints.
+        self.assertIn(xenon_ff.convert_world_vertices(vertex), payload)
         self.assertIn(struct.pack("<42I", *range(39, 81)), payload)
         self.assertIn(xenon_ff._pc_dpvs_worlds(
             struct.pack(">15I", *dpvs_world)), payload)
         self.assertEqual(struct.unpack_from("<I", header, 696)[0],
                          xenon_ff.INLINE)
         self.assertEqual(payload[-38:-36], b"\0\0")
-        self.assertIn(struct.pack("<6f", 0.0, 0.0, 0.0,
-                                  1.0, 2.0, 3.0), payload)
+        # This fixture has no serialized sun; the PC world uses a zeroed record.
+        self.assertIn(struct.pack("<I", 38) + bytes(68), payload)
         pc_cell = xenon_ff._pc_gfx_cell_header(
             asset["geometry"]["cells"][0], True)
         self.assertEqual(struct.unpack_from("<I", pc_cell, 24)[0],
@@ -1257,16 +1288,17 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", pc_cell, 48)[0], 0)
         self.assertIn(pc_cell, payload)
         pc_tree = xenon_ff._pc_gfx_aabb_header(
-            asset["geometry"]["cells"][0]["tree"])
+            asset["geometry"]["cells"][0]["tree"], True)
         self.assertEqual(struct.unpack_from("<2I", pc_tree, 24), (1, 0))
         self.assertEqual(struct.unpack_from("<6f", pc_tree),
-                         (10.0, 10.0, 10.0, 20.0, 30.0, 40.0))
-        self.assertEqual(struct.unpack_from("<2I", pc_tree, 32), (0, 0))
+                         (-10.0, -20.0, -30.0, 30.0, 40.0, 50.0))
+        self.assertEqual(struct.unpack_from("<2I", pc_tree, 32),
+                         (1, xenon_ff.INLINE))
         self.assertIn(pc_tree, payload)
         nested = bytearray()
         xenon_ff._write_pc_gfx_aabb_nested(
-            nested, asset["geometry"]["cells"][0]["tree"])
-        self.assertEqual(nested, b"")
+            nested, asset["geometry"]["cells"][0]["tree"], True)
+        self.assertEqual(nested, struct.pack("<I", 0))
         self.assertIn(b",white\0", payload)
 
         shared_payload = bytearray()

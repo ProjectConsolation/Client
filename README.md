@@ -43,11 +43,17 @@ Patch `1.1` may not install correctly if the game is not installed in the defaul
 
 If you are using a nightly build or a release build:
 
-- extract or copy the build into the game root
+- extract or copy the build into the game root, except the optional `xlive.dll`
 - overwrite everything when prompted
 - launch using `Launch Consolation.lnk`
 
 The included shortcut already uses the required `-multiplayer` launch argument.
+
+Only install the bundled `xlive.dll` for offline/debug use, and add `-offline`
+to the launch arguments. Leave it out for normal GFWL use. See
+[the offline/debug DLL note](required_files/README_XLIVE.txt).
+`generate-nightly.bat` generates both projects; building `d3d9` also builds the
+optional shim and copies that note beside it. The shim is not auto-deployed.
 
 Example target behind the shortcut:
 
