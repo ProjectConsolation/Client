@@ -53,6 +53,30 @@ belong to World at War and are not applied to QoS without a separate QoS-specifi
 
 Advanced helper commands such as `addbot`, `listassetpool`, `dvarDump`, and `commandDump`.
 
+### Disk Image Overrides
+
+Place a PC IWI version 6 file in `consolation/images/<image-asset-name>.iwi`
+under the game installation. Use the **image** name, not its material name;
+for example, `brick_wall_col` is overridden by
+`consolation/images/brick_wall_col.iwi`. Image names containing subdirectories
+retain them beneath `images`. This follows the loose-image naming convention
+used by [IW4x](https://github.com/iw4x/iw4x-client/blob/main/src/Components/Modules/Materials.cpp),
+but uses QoS's own texture-upload and ownership path rather than MW2 hooks.
+
+The initial implementation supports DXT1, DXT3 and DXT5 2D images and square
+cubemaps, up to 4096 pixels per dimension and 64 MiB per file. Include the complete
+mip chain unless the IWI no-mipmaps flag is set. Overrides load at full resolution;
+the original image's material sampler, semantic and asset identity remain unchanged.
+PNG, DDS, newer IWI versions, DXN, volume/streaming and legacy-normal encodings
+are not supported. Built-in, procedural and render-target images are excluded.
+
+Overrides are read when the fastfile image is uploaded, **not live when saved**.
+Reload the zone that owns the image, or restart the game for shared images.
+`[images] Loaded override` confirms replacement; invalid files produce an
+`[images] Ignoring override` warning and retain the zone image. Removing the
+file restores the original on its next load. This feature still requires
+in-game validation with a rebuilt client.
+
 ### Custom Branding
 
 Project: Consolation embeds its multiplayer artwork in `d3d9.dll` and intercepts the User32
