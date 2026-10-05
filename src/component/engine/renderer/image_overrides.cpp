@@ -5,6 +5,7 @@
 #include "utils/nt.hpp"
 #include "image_file.hpp"
 #include "image_png.hpp"
+#include "component/engine/scripting/filesystem.hpp"
 #include <fstream>
 
 namespace image_overrides
@@ -35,6 +36,33 @@ namespace image_overrides
 		utils::hook::detour upload_hook;
 		std::filesystem::path images_directory;
 
+		bool read_override(const std::string& filename, std::vector<unsigned char>& data,
+			std::string& extension, std::string& source)
+		{
+			std::error_code error;
+			for (const auto suffix : {".png", ".dds", ".iwi"})
+			{
+				const auto path = images_directory / (filename + suffix);
+				if (!std::filesystem::is_regular_file(path, error)) continue;
+				source = path.string();
+				extension = suffix;
+				const auto size = std::filesystem::file_size(path);
+				if (size > maximum_file_size || size < 8) throw std::runtime_error("invalid override file size");
+				std::ifstream file(path, std::ios::binary);
+				data.resize(static_cast<std::size_t>(size));
+				if (!file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size)))
+					throw std::runtime_error("could not read complete image override");
+				return true;
+			}
+			for (const auto suffix : {".png", ".dds", ".iwi"})
+				if (filesystem::read_iwd_image("images/" + filename + suffix, data, source))
+				{
+					extension = suffix;
+					return true;
+				}
+			return false;
+		}
+
 		bool capture_image(image_view** image, void*** slot, char* name, const std::size_t capacity)
 		{
 			__try
@@ -64,7 +92,6 @@ namespace image_overrides
 			void** slot = nullptr;
 			char name[241]{};
 			std::vector<unsigned char> definition;
-			std::filesystem::path path;
 			std::string display_path;
 			bool overridden = false;
 			// Only preparation is recoverable. Do not catch an engine/D3D failure
@@ -76,29 +103,17 @@ namespace image_overrides
 					const auto filename = image_filename(name);
 					// Pick one deterministic winner. A bad higher-priority file
 					// retains the zone image rather than silently loading another.
-					std::error_code error;
-					for (const auto extension : {".png", ".dds", ".iwi"})
+					std::vector<unsigned char> data;
+					std::string extension;
+					if (read_override(filename, data, extension, display_path))
 					{
-						const auto candidate = images_directory / (filename + extension);
-						if (std::filesystem::is_regular_file(candidate, error)) { path = candidate; break; }
-					}
-					if (!path.empty())
-					{
-						const auto size = std::filesystem::file_size(path);
-						if (size > maximum_file_size || size < 8)
-							throw std::runtime_error("invalid override file size");
-						std::ifstream file(path, std::ios::binary);
-						std::vector<unsigned char> data(static_cast<std::size_t>(size));
-						if (!file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size)))
-							throw std::runtime_error("could not read complete image override");
-						if (path.extension() == ".png") definition = decode_png(data);
-						else if (path.extension() == ".dds") definition = decode_dds(data);
+						if (extension == ".png") definition = decode_png(data);
+						else if (extension == ".dds") definition = decode_dds(data);
 						else definition = decode_iwi(data);
 						load_definition header{};
 						std::memcpy(&header, definition.data(), sizeof(header));
 						if (((header.flags & 4) ? 5u : 3u) != image->map_type)
 							throw std::runtime_error("override texture type differs from zone image");
-						display_path = path.string();
 						// All validation precedes mutation. Native upload consumes this
 						// buffer synchronously and replaces *slot with its D3D texture.
 						image->width = header.width;

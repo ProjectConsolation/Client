@@ -120,6 +120,70 @@ Format references: [Microsoft DDS layouts](https://learn.microsoft.com/en-us/win
 and local KisakCOD `r_image.h`/`r_image_load_common.cpp`. QoS PC upload and BGRA
 support were verified at `0x103ADD20`, `0x10381D20` and `0x10381B60`.
 
+#### Dumping Original Xbox Images
+
+Use `dump_xenon_images.py` for the original big-endian Xbox fastfile, rather
+than the converted PC zone. It uses the converter's Xenos untile/endian path,
+without PC image donors or material substitutions:
+
+```powershell
+python tools/xenon-converter/dump_xenon_images.py path/to/mp_canals_xenon.ff tools/image-dumps/my-xbox-dump --png --pc-overrides --normal-slopes
+```
+
+`raw` preserves original tiled pixel blobs, with source offsets, hashes, headers
+and resource metadata in `manifest.json`. `dds` and `png` contain untiled source
+textures: DXN normals remain BC5/ATI2 in DDS. They are **not automatically
+PC-compatible overrides**, particularly normal maps. `pc-overrides` separately
+contains supported DDS/IWI copies, transcoding DXN to DXT5; `--normal-slopes`
+selects the experimental QoS slope encoding. Ordinary source PNG normals are
+not converted to that encoding. No replacement files are installed automatically.
+
+Mip tails that the converter only approximates are excluded from the original
+export; those images export a decoded base level instead, with the limitation
+recorded in the manifest. Shared references with no pixels and unsupported
+formats/cubemap layouts are listed rather than fabricated. The original Canals
+zone currently yields 441 records: 429 decoded textures, six shared references,
+and six undecoded embedded textures retained as raw blobs. This is an image
+extraction tool, not a complete Xbox asset loader.
+
+#### IWD Image Overrides
+
+Place a classic ZIP archive named, for example, `csl_canals.iwd` in
+`ROOT/consolation/`. Inside the archive use `images/<asset-name>.iwi`, `.dds`
+or `.png`; **do not** include a leading `consolation/` directory. Filename
+escaping and supported formats are the same as loose overrides above.
+Loose `consolation/images` overrides win over archived images. Within each
+source tier, PNG wins over DDS, then IWI. An invalid selected replacement
+retains the zone image. Archive search ordering and pure-server restrictions
+remain native engine behavior; this is not a purity bypass.
+
+The client adds `consolation` archives to QoS's native search paths during
+filesystem startup and restart. It does not change `fs_game` or redirect config
+writes. QoS owns ZIP indexing, file handles, decompression and shutdown cleanup.
+Restart the game after adding or replacing an IWD, and reload the owning zone
+after changing a loose image. There is no live archive refresh. Native filesystem
+consumers can also see other files in mounted IWDs; full mod compatibility has
+not been established. This native integration needs a rebuilt-client in-game test.
+
+Package just one format directory from a dump:
+
+```powershell
+python tools/xenon-converter/package_image_iwd.py tools/dumps/mp_canals/pc-overrides/iwi tools/dumps/mp_canals/csl_canals.iwd
+```
+
+The packager refuses overwrites, checks safe paths and size limits, uses classic
+ZIP/Deflate and verifies every entry's CRC. The requested Xbox Canals dump is
+in `tools/dumps/mp_canals`, including 429 **converted PC IWI v6** images. Xbox
+pixels are embedded in the fastfile, not stored as original IWI files. Original
+DXN normal DDS files remain BC5; use the separate PC overrides for this client.
+The normal-map slope conversion is still experimental, not a guarantee of
+correct world rendering. Keep `manifest.json` for the six missing/shared and
+six undecoded records rather than treating the archive as a complete zone.
+
+Native bindings were checked against local KisakCOD `com_files.cpp` and QoS
+PC 1.1: `FS_Startup` at `0x10272D80`, archive mounting at `0x10271F30`, current-thread
+open at `0x10271D60`, read at `0x10270840`, and EAX-handle close at `0x10270920`.
+
 ### Custom Branding
 
 Project: Consolation embeds its multiplayer artwork in `d3d9.dll` and intercepts the User32

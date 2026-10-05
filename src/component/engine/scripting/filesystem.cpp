@@ -19,7 +19,93 @@ namespace filesystem
 	{
 		utils::hook::detour fs_startup_hook;
 		utils::hook::detour exec_hook;
+		std::string game_directory;
 
+		// Partial KisakCOD searchpath_s layout, verified against QoS PC
+		// FS_AddIwdFilesForGameDirectory (0x10271F30). QoS has no checksum fields.
+		struct search_path_view
+		{
+			search_path_view* next;
+			unsigned char* iwd;
+			void* directory;
+			int localized, language;
+		};
+		static_assert(sizeof(search_path_view) == 20);
+		static_assert(offsetof(search_path_view, iwd) == 4);
+
+		bool consolation_iwd(const unsigned char* iwd)
+		{
+			// FS_LoadZipFile initializes three 256-byte strings: full filename,
+			// basename, gamename. The mounting helper writes gamename at +512.
+			return iwd && _strnicmp(reinterpret_cast<const char*>(iwd + 512), "consolation", 12) == 0;
+		}
+
+		void mount_iwds()
+		{
+			auto* search = *reinterpret_cast<search_path_view**>(game::game_offset(0x11A76550));
+			if (!search) return; // Native filesystem has not started yet.
+			for (auto* entry = search; entry; entry = entry->next)
+				if (consolation_iwd(entry->iwd)) return; // fs_game already mounted this folder.
+			// Mount only archives, not FS_AddGameDirectory: the latter changes
+			// fs_gamedir and would redirect native writes/config ownership.
+			reinterpret_cast<void(__cdecl*)(const char*, const char*)>(game::game_offset(0x10271F30))(
+				game_directory.c_str(), "consolation");
+			for (auto* entry = *reinterpret_cast<search_path_view**>(game::game_offset(0x11A76550));
+				entry; entry = entry->next)
+				if (consolation_iwd(entry->iwd))
+					game::Com_Printf(10, "[FS] Mounted consolation IWD: %.255s\n", entry->iwd);
+		}
+
+		void close_file(const int handle)
+		{
+			// QoS FS_FCloseFile takes its handle in EAX, not on the stack.
+			const auto target = game::game_offset(0x10270920);
+			__asm
+			{
+				mov eax, handle
+				call target
+			}
+		}
+
+		struct file_guard
+		{
+			int handle{};
+			file_guard() = default;
+			file_guard(const file_guard&) = delete;
+			file_guard& operator=(const file_guard&) = delete;
+			~file_guard() { if (handle) close_file(handle); }
+		};
+
+		bool read_iwd_image_internal(const std::string& filename, std::vector<unsigned char>& data, std::string& source)
+		{
+			if (!*reinterpret_cast<void**>(game::game_offset(0x11A76550))) return false;
+			const auto handles = game::game_offset(0x114E7390);
+			// FS_FileHandleForThread uses 1..49 (main), 50..62 (stream/backend),
+			// and 63 (DB). Avoid its fatal exhaustion path without borrowing an
+			// occupied handle. Native image upload normally runs on the DB thread.
+			const auto vacant = [handles](const int first, const int last)
+			{
+				for (int index = first; index <= last; ++index)
+					if (!*reinterpret_cast<void**>(handles + 284 * index)) return true;
+				return false;
+			};
+			if (!vacant(1, 49) || !vacant(50, 62) || !vacant(63, 63)) return false;
+			file_guard file;
+			const auto size = reinterpret_cast<int(__cdecl*)(const char*, int*)>(game::game_offset(0x10271D60))(
+				filename.c_str(), &file.handle);
+			if (!file.handle) return false;
+			const auto* iwd = *reinterpret_cast<unsigned char**>(handles + 284 * file.handle + 20);
+			if (!consolation_iwd(iwd)) return false; // Do not replace from stock main/devraw files.
+			source = std::string(reinterpret_cast<const char*>(iwd), strnlen(reinterpret_cast<const char*>(iwd), 256))
+				+ "::" + filename;
+			if (size < 8 || static_cast<std::size_t>(size) > (64u * 1024u * 1024u))
+				throw std::runtime_error("invalid IWD image size");
+			data.resize(static_cast<std::size_t>(size));
+			const auto read = reinterpret_cast<int(__cdecl*)(void*, int, int)>(game::game_offset(0x10270840))(
+				data.data(), size, file.handle);
+			if (read != size) throw std::runtime_error("could not read complete IWD image");
+			return true;
+		}
 		bool initialized = false;
 		bool engine_paths_enabled = false;
 		bool engine_paths_registered = false;
@@ -77,7 +163,7 @@ namespace filesystem
 			engine_paths_registered = true;
 		}
 
-		void fs_startup_stub(const char* name)
+		int fs_startup_stub()
 		{
 			console::debug("[FS] Startup\n");
 
@@ -99,8 +185,11 @@ namespace filesystem
 			//filesystem::register_path(L"raw");
 			//filesystem::register_path(L"main");
 
-			fs_startup_hook.invoke<void>(name);
+			// QoS PC FS_Startup takes no arguments (unlike KisakCOD).
+			const auto result = fs_startup_hook.invoke<int>();
 			register_engine_search_paths();
+			mount_iwds();
+			return result;
 		}
 
 		std::vector<std::filesystem::path> get_paths(const std::filesystem::path& path)
@@ -198,6 +287,12 @@ namespace filesystem
 			game::Cbuf_AddText(0, script_data.c_str());
 			return 1;
 		}
+	}
+
+	bool read_iwd_image(const std::string& path, std::vector<unsigned char>& data, std::string& source)
+	{
+		if (!path.starts_with("images/") || path.size() >= 256) return false;
+		return read_iwd_image_internal(path, data, source);
 	}
 
 	std::string read_file(const std::string& path)
@@ -351,7 +446,9 @@ namespace filesystem
 	public:
 		void post_load() override
 		{
+			game_directory = utils::nt::get_host_module().get_folder();
 			fs_startup_hook.create(game::game_offset(0x10272D80), fs_startup_stub);
+			mount_iwds();
 			exec_hook.create(game::game_offset(0x103F5960), exec_stub);
 
 			utils::hook::jump(game::game_offset(0x10274AA0), sys_default_install_path_stub);
