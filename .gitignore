@@ -56,6 +56,12 @@ Temporary Items
 # Build results
 build
 tools/.work/
+# Public zone journal: only the curated devlog and its illustrations.
+# Private research/handoff notes belong in tools/.work/private-notes/.
+/docs/zone-journal/*
+!/docs/zone-journal/README.md
+!/docs/zone-journal/images/
+/docs/zone_journal/
 tools/.test-temp*/
 tools/test-runtime-temp/
 .codex-test-temp*/
@@ -850,3 +856,14 @@ tools/__pycache__/compare_xenon_pc_images.cpython-315.pyc
 tools/image-dumps/
 tools/dumps/
 /consolation/main/*.iwd
+
+# Local research, generated documentation metadata, and test scratch files.
+/_tmp_*/
+/.pytest_cache/
+/test-temp/
+*.sum
+/.agents-reverse-engineer/logs/
+/.agents-reverse-engineer/GENERATION-PLAN.md
+
+# Generated/proprietary test zones stay local; converter source stays tracked.
+/tools/**/*.ff

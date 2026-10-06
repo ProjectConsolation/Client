@@ -206,7 +206,29 @@ Replace the source files before building to change the embedded artwork. Loose b
 not needed at runtime. The stock multiplayer DLL's exact `jb.bmp` and `jblogo.bmp` requests are
 overridden; unrelated User32 image requests continue to the original functions.
 
-### Other Extended Features
+### Main-menu logo overlay
+
+`consolation/menu/ui_mp/main_logo.menu` draws `consolation/images/logo_csl.png`
+on the Scaleform `mpmainmenu` screen. Install the menu beside the existing disk
+menus and rebuild/install the updated client DLL. Do **not** use `openmenu` for
+this overlay: it is drawn automatically without entering the native menu stack,
+changing the key catcher, taking focus, or processing mouse/keyboard events.
+
+The `overlayFor "main"` and `scaleformMenu "mpmainmenu"` fields are Consolation
+extensions, not stock COD4 grammar. Only decorative image items are permitted.
+`rect -335 72 312 104 3 1` uses 480-high units and right/top alignment: approximately
+702x234 pixels at 1920x1080, 52 pixels from the right edge. Size preserves the
+PNG's 3:1 aspect ratio, scales with screen height, and stays right-anchored on
+ultrawide. Safe-area dvars do not move it. `forecolor` supplies tint/opacity.
+
+Use `reloadMenus` after changing the rectangle (close any interactive custom menu
+first). PNG textures are cached for the process lifetime; replacing PNG pixels
+requires restarting the game. Bad/missing PNG files log once instead of failing
+the game. The overlay owns a managed D3D9 texture and a private copy of the stock
+white 2D material; stock assets and DB upload globals are not modified. These
+private textures are not included in the engine's zone image-memory accounting.
+Main-screen visibility, alpha blending and Scaleform click-through still require
+an in-game test; the client is not built automatically.
 
 - [[Console]]
 
