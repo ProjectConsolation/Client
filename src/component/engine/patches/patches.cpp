@@ -57,6 +57,7 @@ namespace patches
 	{
 		utils::hook::detour update_sprint_hook;
 		utils::hook::detour move_single_hook;
+		utils::hook::detour player_bone_camera_hook;
 		std::uintptr_t end_sprint_address{};
 		game::dvar_s* overhead_font_dvar{};
 		std::uintptr_t overhead_font_continue{};
@@ -397,6 +398,38 @@ namespace patches
 			}
 		}
 
+		char player_bone_camera_stub(const int local_client_num)
+		{
+			const auto result = player_bone_camera_hook.invoke<char>(local_client_num);
+			// QoS PC 102A3570 positions the first-person camera from the body
+			// bone when cg_viewPersBond is enabled (113F25E4). That animation
+			// path need not match restored prone. KisakCOD OffsetFirstPersonView
+			// uses origin.z + the native smoothed viewHeightCurrent instead.
+			const auto* body_camera = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25E4));
+			if (!body_camera || !body_camera->current.enabled)
+				return result;
+
+			const auto* ps = reinterpret_cast<const unsigned char*>(game::game_offset(0x12A4CDFC));
+			const auto pm_type = *reinterpret_cast<const int*>(ps + 4);
+			const auto flags = *reinterpret_cast<const unsigned int*>(ps + 12);
+			const auto eflags = *reinterpret_cast<const unsigned int*>(ps + 188);
+			const auto cover = *reinterpret_cast<const unsigned int*>(ps + 4032);
+			const auto target = *reinterpret_cast<const int*>(ps + 296);
+			const auto height = *reinterpret_cast<const float*>(ps + 300);
+			// Include the rising prone->crouch transition, but never replace a
+			// crouched/standing camera, turret, death/noclip or cover camera.
+			const bool prone_transition = (flags & 1) != 0 || (target == 40 && height < 40.0f);
+			if (pm_type == 4 || pm_type == 5 || pm_type >= 11 || (eflags & 0x200) != 0
+				|| (cover & 1) != 0 || !prone_transition || !(height >= 0.0f && height <= 60.0f))
+				return result;
+
+			const auto z = *reinterpret_cast<const float*>(ps + 40) + height;
+			*reinterpret_cast<float*>(game::game_offset(0x12A502F0)) = z;
+			// The native helper records the pre-bob camera origin here too.
+			*reinterpret_cast<float*>(game::game_offset(0x12A4CDF8)) = z;
+			return result;
+		}
+
 		// QoS PC 1.1 PM_EndSprint: EAX = playerState, ECX = pmove.
 		// Retain its timer, button-release and per-client TLS side effects.
 		void end_sprint(void* ps, void* pm)
@@ -490,6 +523,18 @@ namespace patches
 
 		void apply_input_and_overhead_patches()
 		{
+			// Compatibility with QoS PC's full-body camera; remove when that
+			// camera is replaced. Verify prone transitions with body rendering
+			// both enabled and disabled; retain all native stance/trace work.
+			const auto bone_camera_site = game::game_offset(0x102A3570);
+			constexpr unsigned char bone_camera_bytes[] = {0x51, 0xF6, 0x05, 0x0C, 0xCE, 0xA4, 0x12, 0x02};
+			auto expected_camera_bytes = std::to_array(bone_camera_bytes);
+			const auto camera_flags = static_cast<std::uint32_t>(game::game_offset(0x12A4CE0C));
+			std::memcpy(expected_camera_bytes.data() + 3, &camera_flags, sizeof(camera_flags));
+			if (std::memcmp(reinterpret_cast<const void*>(bone_camera_site), expected_camera_bytes.data(), expected_camera_bytes.size()) == 0)
+				player_bone_camera_hook.create(bone_camera_site, player_bone_camera_stub);
+			else console::warn("[movement] prone camera patch skipped: unexpected engine instructions\n");
+
 			const auto cover_site = game::game_offset(0x1020DC30);
 			const auto permission_site = game::game_offset(0x101FF670);
 			const auto entry_site = game::game_offset(0x101FD3D0);

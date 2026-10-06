@@ -28,6 +28,31 @@ namespace gametypes
 	{
 		utils::hook::detour db_find_xasset_header_internal_hook;
 
+		void fix_missing_asset_lock_release()
+		{
+			// QoS PC DB_FindXAssetHeaderInternal takes the write lock at
+			// 103E2123, but its missing/create_default=0 branch skips unlock.
+			// Redirect only that JZ to the existing unlock-and-null epilogue.
+			// KisakCOD db_registry.cpp likewise unlocks before a missing return.
+			// Retire this compatibility patch if the native lookup is replaced.
+			const auto site = game::game_offset(0x103E21F3);
+			const auto cleanup = game::game_offset(0x103E21DC);
+			const unsigned char expected[] = {0x0F, 0x84, 0x2E, 0xFD, 0xFF, 0xFF};
+			unsigned char cleanup_bytes[] = {
+				0x68, 0, 0, 0, 0, 0xE8, 0x7A, 0xC7, 0xD2, 0xFF,
+				0x33, 0xC0, 0x5F, 0x5E, 0x5B, 0x8B, 0xE5, 0x5D, 0xC3};
+			const auto lock = static_cast<std::uint32_t>(game::game_offset(0x105624F8));
+			std::memcpy(cleanup_bytes + 1, &lock, sizeof(lock));
+			if (std::memcmp(reinterpret_cast<const void*>(site), expected, sizeof(expected)) != 0
+				|| std::memcmp(reinterpret_cast<const void*>(cleanup), cleanup_bytes, sizeof(cleanup_bytes)) != 0)
+			{
+				console::error("[assets] missing-asset lock fix skipped: unexpected native instructions\n");
+				return;
+			}
+
+			utils::hook::set<std::int32_t>(site + 2, static_cast<std::int32_t>(cleanup - (site + 6)));
+		}
+
 		constexpr auto GAMETYPES_LIST = "maps/mp/gametypes/_gametypes.txt";
 		constexpr auto GAMETYPE_PREFIX = "maps/mp/gametypes/";
 		constexpr auto GAMETYPE_ENTRY_SIZE = 0x2C;
@@ -717,6 +742,7 @@ namespace gametypes
 		public:
 			void post_load() override
 			{
+				fix_missing_asset_lock_release();
 				db_find_xasset_header_internal_hook.create(game::DB_FindXAssetHeader_Internal, db_find_xasset_header_internal_stub);
 
 				// The frontend feeder count path subtracts one to hide the stock "menu" sentinel.
