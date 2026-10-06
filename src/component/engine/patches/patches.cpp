@@ -58,6 +58,11 @@ namespace patches
 		utils::hook::detour update_sprint_hook;
 		utils::hook::detour move_single_hook;
 		utils::hook::detour player_bone_camera_hook;
+		std::uintptr_t third_person_dvar_slot{};
+		std::uintptr_t third_person_pm_type_slot{};
+		std::uintptr_t classic_camera_continue{};
+		std::uintptr_t body_camera_continue{};
+		std::uintptr_t first_person_offset_address{};
 		std::uintptr_t end_sprint_address{};
 		game::dvar_s* overhead_font_dvar{};
 		std::uintptr_t overhead_font_continue{};
@@ -400,6 +405,9 @@ namespace patches
 
 		char player_bone_camera_stub(const int local_client_num)
 		{
+			const auto* third_person = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25F8));
+			if (third_person && third_person->current.integer == 2)
+				return 0; // Classic trailing view must not be overwritten by tag_player.
 			const auto result = player_bone_camera_hook.invoke<char>(local_client_num);
 			// QoS PC 102A3570 positions the first-person camera from the body
 			// bone when cg_viewPersBond is enabled (113F25E4). That animation
@@ -428,6 +436,47 @@ namespace patches
 			// The native helper records the pre-bob camera origin here too.
 			*reinterpret_cast<float*>(game::game_offset(0x12A4CDF8)) = z;
 			return result;
+		}
+
+		// QoS already retains the IW3-style range/angle and traced trailing
+		// camera at 102A11C0. Mode 2 selects it even with cg_viewPersBond=1.
+		// Mode 0/1 and native death-camera selection retain their old branches.
+		__declspec(naked) void third_person_mode_stub()
+		{
+			__asm
+			{
+				push eax
+				mov eax, dword ptr[third_person_dvar_slot]
+				mov eax, dword ptr[eax]
+				cmp dword ptr[eax + 10h], 2
+				je classic_view
+				mov eax, dword ptr[third_person_pm_type_slot]
+				cmp dword ptr[eax], 0Bh
+				pop eax
+				jl body_view
+				jmp dword ptr[classic_camera_continue]
+			classic_view:
+				pop eax
+				jmp dword ptr[classic_camera_continue]
+			body_view:
+				jmp dword ptr[body_camera_continue]
+			}
+		}
+
+		__declspec(naked) void body_camera_offset_stub()
+		{
+			__asm
+			{
+				push eax
+				mov eax, dword ptr[third_person_dvar_slot]
+				mov eax, dword ptr[eax]
+				cmp dword ptr[eax + 10h], 2
+				pop eax
+				je classic_view
+				jmp dword ptr[first_person_offset_address]
+			classic_view:
+				ret
+			}
 		}
 
 		// QoS PC 1.1 PM_EndSprint: EAX = playerState, ECX = pmove.
@@ -523,6 +572,26 @@ namespace patches
 
 		void apply_input_and_overhead_patches()
 		{
+			third_person_dvar_slot = game::game_offset(0x113F25F8);
+			third_person_pm_type_slot = game::game_offset(0x12A4CE00);
+			classic_camera_continue = game::game_offset(0x102A4094);
+			body_camera_continue = game::game_offset(0x102A40AD);
+			first_person_offset_address = game::game_offset(0x102A1EE0);
+			const auto third_person_site = game::game_offset(0x102A408B);
+			unsigned char third_person_bytes[] = {0x83, 0x3D, 0, 0, 0, 0, 0x0B, 0x7C, 0x19};
+			const auto pm_type_address = static_cast<std::uint32_t>(third_person_pm_type_slot);
+			std::memcpy(third_person_bytes + 2, &pm_type_address, sizeof(pm_type_address));
+			const auto body_offset_call = game::game_offset(0x102A40E9);
+			constexpr unsigned char body_offset_bytes[] = {0xE8, 0xF2, 0xDD, 0xFF, 0xFF};
+			if (std::memcmp(reinterpret_cast<const void*>(third_person_site), third_person_bytes, sizeof(third_person_bytes)) == 0
+				&& std::memcmp(reinterpret_cast<const void*>(body_offset_call), body_offset_bytes, sizeof(body_offset_bytes)) == 0)
+			{
+				utils::hook::nop(third_person_site, sizeof(third_person_bytes));
+				utils::hook::jump(third_person_site, third_person_mode_stub);
+				utils::hook::call(body_offset_call, body_camera_offset_stub);
+			}
+			else console::warn("[camera] third-person mode 2 skipped: unexpected engine instructions\n");
+
 			// Compatibility with QoS PC's full-body camera; remove when that
 			// camera is replaced. Verify prone transitions with body rendering
 			// both enabled and disabled; retain all native stance/trace work.
@@ -1558,6 +1627,18 @@ namespace patches
 		utils::hook::detour dvar_registernew_hook;
 		game::dvar_s* Dvar_RegisterNew_Stub(const char* dvarName, game::DvarType type, unsigned short flags, char* desc, int unk, game::DvarValue value, game::DvarLimits domain)
 		{
+			if (type == game::DVAR_TYPE_BOOL && !_stricmp(dvarName, "cg_thirdPerson"))
+			{
+				const auto native_default = value.enabled;
+				type = game::DVAR_TYPE_INT;
+				value = {};
+				value.integer = native_default ? 1 : 0;
+				domain = {};
+				domain.integer.min = 0;
+				domain.integer.max = 2;
+				// Preserve native cheat protection and default. QoS Dvar_SetBool
+				// converts non-bool targets through "0"/"1", so map reset remains valid.
+			}
 			if (type == game::DVAR_TYPE_FLOAT_2 && !_stricmp(dvarName, "cg_debugInfoCornerOffset"))
 			{
 				value.vector[0] = 0.0f;

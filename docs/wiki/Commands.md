@@ -22,6 +22,16 @@ Project: Consolation includes a small set of utility and debugging commands that
 - `commandDump` is still rough and may produce mangled or incomplete results in some cases.
 - `listassetpool` can also be run without arguments to print the available pool numbers and asset type names.
 
+## Camera
+
+`cg_thirdPerson` retains its native cheat protection and default, but accepts integer modes `0` through `2`:
+
+- `0`: native first-person selection.
+- `1`: native QoS third-person/body-camera behavior.
+- `2`: classic IW3-style trailing camera, using QoS's retained distance, angle and collision-trace implementation rather than the body-bone camera. Adjust `cg_thirdPersonRange` and `cg_thirdPersonAngle` as usual.
+
+Mode `2` is implemented in source but still requires a rebuild and in-game testing. Check camera collision near walls, stance transitions, switching all three modes, and map restart. It is not an independent free camera or a complete replacement of QoS's special cameras.
+
 ## Movement
 
 These QoS PC 1.1 hooks require rebuilding the client and in-game validation. Their patch sites are checked before installation; a mismatched executable logs a warning and skips the relevant patch.
