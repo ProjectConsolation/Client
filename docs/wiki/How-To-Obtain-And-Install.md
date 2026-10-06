@@ -53,20 +53,41 @@ Patch `1.1` may not install correctly if the game is not installed in the defaul
 
 If you are using a nightly build or a release build:
 
-- extract or copy the build into the game root
+- download `consolation-nightly.zip` from the Assets list of the latest nightly in [Releases](https://github.com/ProjectConsolation/Client/releases)
+- extract or copy the build into the game root, excluding the optional `xlive.dll` unless using offline/debug mode
 - overwrite everything when prompted
-- launch using `Launch Consolation.lnk`
+- launch using `Launch Consolation.bat`
 
-The included shortcut already uses the required `-multiplayer` launch argument.
+The batch launcher sets the game directory as its working directory and uses this default command:
 
-Example target behind the shortcut:
+```bat
+"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer -seta g_gametype dm -set cin_firstRunDone 1 -set cin_skipAllMovies 1
+```
 
-- `"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer`
+Nightlies include `Launch Consolation.bat` instead of the old `.lnk` shortcut.
 
-Nightly builds should ship with `Launch Consolation.lnk` for this.
+If your game is installed in the default directory, use the batch file as-is.
 
-If your game is installed in the default directory, you should be able to use the included shortcut as-is.
+If installed elsewhere, right-click `Launch Consolation.bat`, choose **Edit**, and change `GAME_DIR` to your real install directory.
 
-If your game is not installed in the default directory, edit the shortcut target so it points at your real install path.
+### Optional offline/debug launch and player name
 
-Advanced users can still make a non-default install work by manually copying the patch `1.1` files into the game root and then editing `Launch Consolation.lnk` so it points at the correct `JB_Launcher_s.exe` path.
+For offline/debug use, copy the bundled `xlive.dll` into the game root and append this to the `start` command in `Launch Consolation.bat`:
+
+```text
+-offline -seta name "CSL_User00"
+```
+
+Replace `CSL_User00` with your desired player name, keeping the quotation marks. The full offline command is:
+
+```bat
+"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer -seta g_gametype dm -set cin_firstRunDone 1 -set cin_skipAllMovies 1 -offline -seta name "CSL_User00"
+```
+
+For normal GFWL play, leave out the optional `xlive.dll` and `-offline`. Offline mode does not provide online GFWL service emulation.
+
+### Desktop shortcut icon
+
+Create a desktop shortcut to `Launch Consolation.bat`. Open its **Properties → Shortcut → Change Icon → Browse** and select the bundled `icon.ico` from the game directory. A `.bat` has a generic Windows icon by default; the icon applied to the running game does not automatically change a shortcut to `JB_Launcher_s.exe`.
+
+Advanced users can still use another install directory by manually copying the patch `1.1` files into the game root and correcting `GAME_DIR` in the batch file.

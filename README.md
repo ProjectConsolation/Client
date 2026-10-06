@@ -12,7 +12,7 @@ For installation help, launch setup, features, and common questions, use the wik
 
 ## Nightly Builds
 
-Nightly builds are automatically generated and available in the **Releases** section of this repository.
+Nightly builds are automatically generated and available in the [Releases](https://github.com/ProjectConsolation/Client/releases) section. Open the latest nightly release and download `consolation-nightly.zip` from its Assets list.
 
 These builds are **experimental and primarily intended for testing**. They are very likely to be unstable, partially broken, or not working at all. If a nightly build happens to work for you, consider yourself lucky - it may break or become outdated very quickly.
 
@@ -45,9 +45,9 @@ If you are using a nightly build or a release build:
 
 - extract or copy the build into the game root, except the optional `xlive.dll`
 - overwrite everything when prompted
-- launch using `Launch Consolation.lnk`
+- launch using `Launch Consolation.bat`
 
-The included shortcut already uses the required `-multiplayer` launch argument.
+The batch launcher includes the multiplayer, default deathmatch and skip-intro arguments, and starts in the game directory.
 
 Only install the bundled `xlive.dll` for offline/debug use, and add `-offline`
 to the launch arguments. Leave it out for normal GFWL use. See
@@ -55,17 +55,23 @@ to the launch arguments. Leave it out for normal GFWL use. See
 `generate-nightly.bat` generates both projects; building `d3d9` also builds the
 optional shim and copies that note beside it. The shim is not auto-deployed.
 
-Example target behind the shortcut:
+Default launch command:
 
-- `"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer`
+```bat
+"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer -seta g_gametype dm -set cin_firstRunDone 1 -set cin_skipAllMovies 1
+```
 
-Nightly builds should ship with `Launch Consolation.lnk` for this.
+Nightly builds ship `Launch Consolation.bat` instead of the old `.lnk` file.
 
-If your game is installed in the default directory, you should be able to use the included shortcut as-is.
+If your game is installed in the default directory, use the included batch file as-is.
 
-If your game is not installed in the default directory, edit the shortcut target so it points at your real install path.
+If installed elsewhere, right-click `Launch Consolation.bat`, choose **Edit**, and change `GAME_DIR` to your real install directory.
 
-Advanced users can still make a non-default install work by manually copying the patch `1.1` files into the game root and then editing `Launch Consolation.lnk` so it points at the correct `JB_Launcher_s.exe` path.
+For **offline/debug only**, install the optional `xlive.dll` and append `-offline -seta name "CSL_User00"` to the batch file's `start` command. Replace `CSL_User00` with your player name, keeping the quotes. Normal GFWL play should omit both the optional DLL and `-offline`.
+
+For a desktop launcher with the Consolation icon, create a shortcut to the `.bat`, then use **Properties → Shortcut → Change Icon → Browse** and select the bundled `icon.ico` in the game directory. Batch files have a generic Windows icon; changing the running game's icon does not update a shortcut to the original launcher.
+
+Advanced users can still make a non-default install work by manually copying the patch `1.1` files into the game root and then correcting `GAME_DIR` in `Launch Consolation.bat`.
 
 # Credits
 

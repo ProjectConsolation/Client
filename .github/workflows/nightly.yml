@@ -54,7 +54,7 @@ jobs:
           $source = "${{ github.workspace }}\required_files\*"
           $dest = "${{ github.workspace }}\build\bin\Release\"
           Write-Host "Copying required files from $source to $dest"
-          Copy-Item $source -Destination $dest -Recurse -Force
+          Copy-Item $source -Destination $dest -Recurse -Force -Exclude 'Launch Consolation.lnk'
         shell: pwsh
 
       - name: Package release zip
@@ -63,7 +63,7 @@ jobs:
           $zipPath = "${{ github.workspace }}\consolation-nightly.zip"
 
           $files = Get-ChildItem -Path $releaseDir -File |
-            Where-Object { $_.Extension -notin @('.lib', '.pdb', '.exp') }
+            Where-Object { $_.Extension -notin @('.lib', '.pdb', '.exp') -and $_.Name -ne 'Launch Consolation.lnk' }
 
           Compress-Archive -Path $files.FullName -DestinationPath $zipPath -Force
           Write-Host "Created $zipPath with $($files.Count) files"
