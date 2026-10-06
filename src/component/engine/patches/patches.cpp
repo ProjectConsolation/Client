@@ -20,6 +20,7 @@
 #include <unordered_set>
 #include <d3d9.h>
 #include <mmsystem.h>
+#include <intrin.h>
 
 #pragma comment(lib, "winmm.lib")
 #ifndef VERSION_BUILD
@@ -30,6 +31,14 @@
 
 namespace patches
 {
+	namespace
+	{
+		game::dvar_s* pm_adsStopsSprint{};
+		// QoS PM_UpdateAimDownSightFlag at 1021D2AF shifts by 11.
+		// The old BUTTON_ADS declaration (0x200) actually requests crouch.
+		constexpr unsigned int qos_ads_button = 0x800u;
+	}
+
 	void enforce_ads_sprint_interrupt(game::usercmd_t* cmd)
 	{
 		if (!cmd)
@@ -37,7 +46,8 @@ namespace patches
 			return;
 		}
 
-		if ((cmd->buttons & game::BUTTON_ADS) != 0)
+		if (pm_adsStopsSprint && pm_adsStopsSprint->current.enabled
+			&& (cmd->buttons & qos_ads_button) != 0)
 		{
 			cmd->buttons = static_cast<game::usercmd_buttons>(cmd->buttons & ~game::BUTTON_SPRINT);
 		}
@@ -45,6 +55,570 @@ namespace patches
 
 	namespace
 	{
+		utils::hook::detour update_sprint_hook;
+		utils::hook::detour move_single_hook;
+		std::uintptr_t end_sprint_address{};
+		game::dvar_s* overhead_font_dvar{};
+		std::uintptr_t overhead_font_continue{};
+		game::dvar_s* pm_allowProne{};
+		std::uintptr_t prone_allowed_continue{};
+		std::uintptr_t prone_blocked_continue{};
+		game::dvar_s* pm_adsExitOnDamage{};
+		std::uintptr_t ads_damage_continue{};
+		std::uintptr_t ads_normal_continue{};
+		game::dvar_s* pm_allowCover{};
+		game::dvar_s* pm_mantleFirstPerson{};
+		game::dvar_s* pm_climbFirstPerson{};
+		game::dvar_s* pm_airborneBobScale{};
+		game::dvar_s* pm_movement_mode{};
+		const char* movement_mode_names[] = { "stock", "iw3" };
+		int applied_movement_mode = -1;
+
+		// Only the host/frontend expands presets. Remote prediction consumes the
+		// individual replicated values; it must not overwrite the host's tuning.
+		void apply_movement_preset()
+		{
+			if (!pm_movement_mode)
+				return;
+			const auto* const server = game::Dvar_FindVar("sv_running");
+			const auto* const ingame = game::Dvar_FindVar("cl_ingame");
+			if (ingame && ingame->current.enabled && (!server || !server->current.enabled))
+			{
+				applied_movement_mode = -1;
+				return;
+			}
+			const int mode = pm_movement_mode->current.integer;
+			if (mode == applied_movement_mode || mode < 0 || mode > 1)
+				return;
+			struct setting { const char* name; const char* stock; const char* iw3; };
+			constexpr setting settings[] = {
+				{ "pm_adsStopsSprint", "0", "1" },
+				{ "pm_adsExitOnDamage", "1", "0" },
+				{ "pm_allowProne", "2", "1" },
+				{ "pm_allowCover", "1", "0" },
+				{ "pm_mantleFirstPerson", "0", "1" },
+				{ "pm_climbFirstPerson", "0", "1" },
+				{ "pm_airborneBobScale", "1", "0" },
+			};
+			for (const auto& setting : settings)
+				game::Dvar_SetString(setting.name, mode == 0 ? setting.stock : setting.iw3);
+			applied_movement_mode = mode;
+			console::info("[movement] applied %s preset\n", movement_mode_names[mode]);
+		}
+		utils::hook::detour cover_update_hook;
+		utils::hook::detour cover_permission_hook;
+		utils::hook::detour cover_entry_hook;
+		utils::hook::detour camera_selection_hook;
+		utils::hook::detour horizontal_bob_hook;
+		utils::hook::detour vertical_bob_hook;
+		void* cover_update_original{};
+		void* cover_permission_original{};
+		void* cover_entry_original{};
+		void* horizontal_bob_original{};
+		void* vertical_bob_original{};
+		std::uintptr_t cover_exit_address{};
+		std::uintptr_t movement_tls_index_address{};
+		std::uintptr_t traversal_camera_continue{};
+		std::uintptr_t traversal_camera_first_person{};
+		std::uintptr_t traversal_camera_entity_address{};
+		std::uintptr_t model_camera_continue{};
+		std::uintptr_t model_camera_end{};
+
+		// QoS PC traversal enum is independently confirmed by the string table
+		// at 10556324 and 101F0FE0's store to playerState +3956. These are NOT
+		// COD4 mantleState fields: QoS owns the movement/animation simulation.
+		bool first_person_traversal_requested()
+		{
+			const auto* const ps = reinterpret_cast<const unsigned char*>(game::game_offset(0x12A4CDFC));
+			if (*reinterpret_cast<const int*>(ps + 4) >= 6
+				|| (*reinterpret_cast<const unsigned int*>(ps + 12) & 8u) == 0)
+				return false;
+			const auto* const third_person = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25F8));
+			if (third_person && third_person->current.enabled)
+				return false; // Preserve an explicit third-person request.
+			const int type = *reinterpret_cast<const int*>(ps + 3956);
+			if (type >= 4 && type <= 6) // mantle_40 / mantle_44 / mantle_56
+				return pm_mantleFirstPerson && pm_mantleFirstPerson->current.enabled;
+			if (type == 2 || type == 3 || type == 7) // ladder / ledge / pipe
+				return pm_climbFirstPerson && pm_climbFirstPerson->current.enabled;
+			return false; // Balance, transitions and wallhug keep their native camera.
+		}
+
+		// Preserve all engine register/FPU state when querying from usercall sites.
+		// EAX alone carries the predicate result; PUSHAD's saved EAX is +28.
+		__declspec(naked) void query_first_person_traversal()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				mov ebp, esp
+				sub esp, 528
+				and esp, -16
+				fxsave [esp]
+				call first_person_traversal_requested
+				movzx eax, al
+				mov [ebp + 28], eax
+				fxrstor [esp]
+				mov esp, ebp
+				popad
+				popfd
+				ret
+			}
+		}
+
+		int* __cdecl camera_selection_stub()
+		{
+			auto* const result = camera_selection_hook.invoke<int*>();
+			const auto* const snapshot = *reinterpret_cast<const unsigned char**>(game::game_offset(0x129FE8E4));
+			if (snapshot && *reinterpret_cast<const int*>(snapshot + 16) < 11
+				&& first_person_traversal_requested())
+				*reinterpret_cast<int*>(game::game_offset(0x12A4CDE8)) = 0;
+			return result;
+		}
+
+		__declspec(naked) void traversal_camera_stub()
+		{
+			__asm
+			{
+				push eax
+				call query_first_person_traversal
+				test eax, eax
+				pop eax
+				jnz first_person
+				push eax
+				mov eax, dword ptr[traversal_camera_entity_address]
+				cmp dword ptr[eax + edx], 3FFh
+				pop eax
+				jmp dword ptr[traversal_camera_continue] // Native JZ consumes this CMP.
+			first_person:
+				jmp dword ptr[traversal_camera_first_person]
+			}
+		}
+
+		__declspec(naked) void model_camera_stub()
+		{
+			__asm
+			{
+				push eax
+				call query_first_person_traversal
+				test eax, eax
+				pop eax
+				jnz finished
+				test edi, edi
+				jz finished
+				jmp dword ptr[model_camera_continue]
+			finished:
+				jmp dword ptr[model_camera_end]
+			}
+		}
+
+		// Disable new cover entry without bypassing QoS's native permission rules.
+		__declspec(naked) void cover_permission_stub()
+		{
+			__asm
+			{
+				push eax
+				mov eax, dword ptr[pm_allowCover]
+				test eax, eax
+				jz native_permission
+				cmp byte ptr[eax + 10h], 0
+				jne native_permission
+				pop eax
+				and dword ptr[esi + 10h], 0FFFFBFFFh // Clear the native entry hint.
+				xor eax, eax
+				ret
+			native_permission:
+				pop eax
+				jmp dword ptr[cover_permission_original]
+			}
+		}
+
+		void __cdecl leave_disabled_cover(unsigned char* pm)
+		{
+			if (!pm_allowCover || pm_allowCover->current.enabled)
+				return;
+			auto* const ps = *reinterpret_cast<unsigned char**>(pm);
+			const auto cover_flags = *reinterpret_cast<unsigned int*>(ps + 4032);
+			if ((cover_flags & 1u) == 0 || (cover_flags & 0x10u) != 0)
+				return;
+			// Same BG per-thread context lookup as 101FF5C0. Begin the native
+			// forced exit (101FF410), then let the original update finish it.
+			const auto tls_index = *reinterpret_cast<unsigned int*>(movement_tls_index_address);
+			const auto* const tls_slots = reinterpret_cast<std::uintptr_t*>(__readfsdword(0x2C));
+			const auto bg = *reinterpret_cast<unsigned char**>(tls_slots[tls_index] + 88);
+			const auto context_for_pm = *reinterpret_cast<int(__cdecl**)(unsigned char*)>(bg + 160528);
+			const int context = context_for_pm(pm);
+			__asm
+			{
+				mov esi, ps
+				push 0
+				push 1
+				push context
+				call dword ptr[cover_exit_address]
+				add esp, 12
+			}
+		}
+
+		__declspec(naked) void cover_entry_stub()
+		{
+			// Central entry (101FD3D0), including auto-cover and queued requests.
+			// Native ABI is EAX = trace/origin input, stack +4 = pmove.
+			// Keep EAX for the native path; the no-entry result is the pmove pointer.
+			__asm
+			{
+				push edx
+				mov edx, dword ptr[pm_allowCover]
+				test edx, edx
+				jz native_entry
+				cmp byte ptr[edx + 10h], 0
+				jne native_entry
+				pop edx
+				mov eax, [esp + 4]
+				ret
+			native_entry:
+				pop edx
+				jmp dword ptr[cover_entry_original]
+			}
+		}
+
+		__declspec(naked) void cover_update_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				mov ebp, esp
+				sub esp, 528
+				and esp, -16
+				fxsave [esp]
+				push edi // QoS PM_UpdateCover takes pmove in EDI.
+				call leave_disabled_cover
+				add esp, 4
+				fxrstor [esp]
+				mov esp, ebp
+				popad
+				popfd
+				jmp dword ptr[cover_update_original]
+			}
+		}
+
+		// Native camera bob helpers: ECX = playerState; stack = cycle, speed,
+		// max amplitude. Scale only their copied speed argument, not velocity,
+		// player state, the shared bg_bobMax dvar, damage kick or recoil.
+		__declspec(naked) void horizontal_bob_stub()
+		{
+			__asm
+			{
+				push eax
+				mov eax, dword ptr[pm_airborneBobScale]
+				test eax, eax
+				jz finished
+				cmp dword ptr[ecx + 80h], 3FFh
+				jne finished
+				test byte ptr[ecx + 0Ch], 8
+				jnz finished
+				fld dword ptr[esp + 0Ch]
+				fmul dword ptr[eax + 10h]
+				fstp dword ptr[esp + 0Ch]
+			finished:
+				pop eax
+				jmp dword ptr[horizontal_bob_original]
+			}
+		}
+
+		__declspec(naked) void vertical_bob_stub()
+		{
+			__asm
+			{
+				push eax
+				mov eax, dword ptr[pm_airborneBobScale]
+				test eax, eax
+				jz finished
+				cmp dword ptr[ecx + 80h], 3FFh
+				jne finished
+				test byte ptr[ecx + 0Ch], 8
+				jnz finished
+				fld dword ptr[esp + 0Ch]
+				fmul dword ptr[eax + 10h]
+				fstp dword ptr[esp + 0Ch]
+			finished:
+				pop eax
+				jmp dword ptr[vertical_bob_original]
+			}
+		}
+
+		__declspec(naked) void ads_damage_stub()
+		{
+			__asm
+			{
+				push edx
+				mov edx, dword ptr[pm_adsExitOnDamage]
+				test edx, edx
+				jz native_damage
+				cmp byte ptr[edx + 10h], 0
+				je keep_ads
+			native_damage:
+				pop edx
+				cmp al, bl
+				je normal_ads
+				cmp dword ptr[esi + 15Ch], ebx
+				jmp dword ptr[ads_damage_continue]
+			keep_ads:
+				pop edx
+			normal_ads:
+				jmp dword ptr[ads_normal_continue]
+			}
+		}
+
+		// PlayerProneAllowed retains native ground/clearance traces. The dvar
+		// overrides only the weapon no-prone gate, never the geometry result.
+		__declspec(naked) void prone_permission_stub()
+		{
+			__asm
+			{
+				push edx
+				mov edx, dword ptr[pm_allowProne]
+				test edx, edx
+				jz native_gate
+				cmp dword ptr[edx + 10h], 2
+				je native_gate // Preset stock must restore the weapon's own gate.
+				cmp dword ptr[edx + 10h], 0
+				pop edx
+				je blocked
+				jmp dword ptr[prone_allowed_continue]
+			native_gate:
+				pop edx
+				cmp dword ptr[edx + 5ACh], 0
+				jne blocked
+				jmp dword ptr[prone_allowed_continue]
+			blocked:
+				jmp dword ptr[prone_blocked_continue]
+			}
+		}
+
+		// QoS PC 1.1 PM_EndSprint: EAX = playerState, ECX = pmove.
+		// Retain its timer, button-release and per-client TLS side effects.
+		void end_sprint(void* ps, void* pm)
+		{
+			__asm
+			{
+				mov eax, ps
+				mov ecx, pm
+				call dword ptr[end_sprint_address]
+			}
+		}
+
+		void __cdecl update_sprint_stub(unsigned char* pm)
+		{
+			// Shared prediction/server path, not a keyboard or gamepad adapter.
+			// Layout checked against 101E4D70 and 101DC6C0, not imported from COD4.
+			auto* const ps = *reinterpret_cast<unsigned char**>(pm);
+			auto& buttons = *reinterpret_cast<unsigned int*>(pm + 8);
+			const bool interrupt = pm_adsStopsSprint && pm_adsStopsSprint->current.enabled
+				&& (buttons & qos_ads_button) != 0;
+			if (interrupt)
+			{
+				if ((*reinterpret_cast<unsigned int*>(ps + 12) & 0x8000u) != 0)
+					end_sprint(ps, pm);
+				buttons &= ~static_cast<unsigned int>(game::BUTTON_SPRINT);
+			}
+			update_sprint_hook.invoke<void>(pm);
+			// Leave sprint suppressed through the later ADS/weapon update.
+			// The outer movement wrapper restores the command after this step.
+		}
+
+		int __cdecl move_single_stub(unsigned char* pm, int argument)
+		{
+			auto& buttons = *reinterpret_cast<unsigned int*>(pm + 8);
+			const auto sprint = buttons & static_cast<unsigned int>(game::BUTTON_SPRINT);
+			const bool interrupt = pm_adsStopsSprint && pm_adsStopsSprint->current.enabled
+				&& (buttons & qos_ads_button) != 0;
+			const auto result = move_single_hook.invoke<int>(pm, argument);
+			if (interrupt)
+				buttons = (buttons & ~static_cast<unsigned int>(game::BUTTON_SPRINT)) | sprint;
+			return result;
+		}
+
+		game::Font_s* select_overhead_font()
+		{
+			auto* const native_font = *reinterpret_cast<game::Font_s**>(game::game_offset(0x113FB174));
+			constexpr const char* names[] = {nullptr, "fonts/normalFont", "fonts/bigfont", "fonts/smallfont", "fonts/boldfont"};
+			const int index = overhead_font_dvar ? overhead_font_dvar->current.integer : 0;
+			if (index <= 0 || index >= static_cast<int>(std::size(names)))
+				return native_font;
+			// Do not cache zone-owned pointers across map changes or request a missing asset.
+			if (game::DB_IsXAssetDefault(game::ASSET_TYPE_FONT, names[index]))
+				return native_font;
+			auto* const font = game::R_RegisterFont(names[index]);
+			return font && font->pixelHeight > 0 ? font : native_font;
+		}
+
+		// Replace only the font load. Native name/team/occlusion/projection and
+		// normalized cg_overheadNamesSize scaling continue unchanged.
+		__declspec(naked) void overhead_font_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				sub esp, 128
+				movdqu [esp], xmm0
+				movdqu [esp + 16], xmm1
+				movdqu [esp + 32], xmm2
+				movdqu [esp + 48], xmm3
+				movdqu [esp + 64], xmm4
+				movdqu [esp + 80], xmm5
+				movdqu [esp + 96], xmm6
+				movdqu [esp + 112], xmm7
+				call select_overhead_font
+				mov [esp + 136], eax // saved EBP in PUSHAD
+				movdqu xmm0, [esp]
+				movdqu xmm1, [esp + 16]
+				movdqu xmm2, [esp + 32]
+				movdqu xmm3, [esp + 48]
+				movdqu xmm4, [esp + 64]
+				movdqu xmm5, [esp + 80]
+				movdqu xmm6, [esp + 96]
+				movdqu xmm7, [esp + 112]
+				add esp, 128
+				popad
+				popfd
+				jmp dword ptr[overhead_font_continue]
+			}
+		}
+
+		void apply_input_and_overhead_patches()
+		{
+			const auto cover_site = game::game_offset(0x1020DC30);
+			const auto permission_site = game::game_offset(0x101FF670);
+			const auto entry_site = game::game_offset(0x101FD3D0);
+			constexpr unsigned char entry_bytes[] = {0x83, 0xEC, 0x10, 0x53, 0x55, 0x56};
+			// Both prologues load a relocated dvar pointer, then CMP enabled,0.
+			const auto matches_bool_load = [](std::uintptr_t site, std::uintptr_t global)
+			{
+				constexpr unsigned char suffix[] = {0x80, 0x78, 0x10, 0x00};
+				return *reinterpret_cast<unsigned char*>(site) == 0xA1
+					&& *reinterpret_cast<std::uintptr_t*>(site + 1) == game::game_offset(global)
+					&& std::memcmp(reinterpret_cast<void*>(site + 5), suffix, sizeof(suffix)) == 0;
+			};
+			if (matches_bool_load(cover_site, 0x118EC9E8)
+				&& matches_bool_load(permission_site, 0x118EC824)
+				&& std::memcmp(reinterpret_cast<void*>(entry_site), entry_bytes, sizeof(entry_bytes)) == 0)
+			{
+				cover_exit_address = game::game_offset(0x101FF410);
+				movement_tls_index_address = game::game_offset(0x105805DC);
+				cover_update_hook.create(cover_site, cover_update_stub);
+				cover_update_original = cover_update_hook.get_original();
+				cover_permission_hook.create(permission_site, cover_permission_stub);
+				cover_permission_original = cover_permission_hook.get_original();
+				cover_entry_hook.create(entry_site, cover_entry_stub);
+				cover_entry_original = cover_entry_hook.get_original();
+			}
+			else console::warn("[movement] cover toggle skipped: unexpected engine instructions\n");
+
+			const auto camera_site = game::game_offset(0x102A3EC8);
+			const auto model_site = game::game_offset(0x102A364A);
+			constexpr unsigned char camera_cmp[] = {0xFF, 0x03, 0x00, 0x00};
+			constexpr unsigned char model_bytes[] = {0x85, 0xFF, 0x0F, 0x84, 0x20, 0x03, 0x00, 0x00};
+			const auto selection_site = game::game_offset(0x102A0320);
+			if (matches_bool_load(selection_site, 0x113F25F8)
+				&& *reinterpret_cast<unsigned short*>(camera_site) == 0xBA81
+				&& *reinterpret_cast<std::uintptr_t*>(camera_site + 2) == game::game_offset(0x12A7F124)
+				&& std::memcmp(reinterpret_cast<void*>(camera_site + 6), camera_cmp, sizeof(camera_cmp)) == 0
+				&& std::memcmp(reinterpret_cast<void*>(model_site), model_bytes, sizeof(model_bytes)) == 0)
+			{
+				// Use the native first-person view branch. Suppress only traversal's
+				// external/model camera; never clear replicated movement flags.
+				traversal_camera_entity_address = game::game_offset(0x12A7F124);
+				traversal_camera_continue = camera_site + 10;
+				traversal_camera_first_person = game::game_offset(0x102A3EE0);
+				model_camera_continue = model_site + sizeof(model_bytes);
+				model_camera_end = game::game_offset(0x102A3972);
+				camera_selection_hook.create(selection_site, camera_selection_stub);
+				utils::hook::nop(camera_site, 10);
+				utils::hook::jump(camera_site, traversal_camera_stub);
+				utils::hook::nop(model_site, sizeof(model_bytes));
+				utils::hook::jump(model_site, model_camera_stub);
+			}
+			else console::warn("[movement] first-person traversal skipped: unexpected engine instructions\n");
+
+			constexpr unsigned char bob_bytes[] = {0x8B, 0x81, 0x28, 0x01, 0x00, 0x00};
+			const auto horizontal_site = game::game_offset(0x102A05D0);
+			const auto vertical_site = game::game_offset(0x102A06C0);
+			if (std::memcmp(reinterpret_cast<void*>(horizontal_site), bob_bytes, sizeof(bob_bytes)) == 0
+				&& std::memcmp(reinterpret_cast<void*>(vertical_site), bob_bytes, sizeof(bob_bytes)) == 0)
+			{
+				horizontal_bob_hook.create(horizontal_site, horizontal_bob_stub);
+				horizontal_bob_original = horizontal_bob_hook.get_original();
+				vertical_bob_hook.create(vertical_site, vertical_bob_stub);
+				vertical_bob_original = vertical_bob_hook.get_original();
+			}
+			else console::warn("[movement] airborne bob control skipped: unexpected engine instructions\n");
+
+			const auto damage_site = game::game_offset(0x1021E925);
+			constexpr unsigned char damage_bytes[] = {0x3A, 0xC3, 0x74, 0x2D, 0x39, 0x9E, 0x5C, 0x01, 0x00, 0x00};
+			if (std::memcmp(reinterpret_cast<void*>(damage_site), damage_bytes, sizeof(damage_bytes)) == 0)
+			{
+				// COD4 PM_UpdateAimDownSightLerp comparison, validated in QoS.
+				// QoS also has a per-player override; gate the branch itself so
+				// that override cannot re-enable cancellation when the server opts out.
+				ads_damage_continue = game::game_offset(0x1021E92F);
+				ads_normal_continue = game::game_offset(0x1021E956);
+				utils::hook::nop(damage_site, sizeof(damage_bytes));
+				utils::hook::jump(damage_site, ads_damage_stub);
+			}
+			else console::warn("[movement] ADS damage patch skipped: unexpected engine instructions\n");
+			const auto prone_site = game::game_offset(0x101DF520);
+			constexpr unsigned char prone_bytes[] = {0x83, 0xBA, 0xAC, 0x05, 0x00, 0x00, 0x00, 0x75, 0x73};
+			if (std::memcmp(reinterpret_cast<void*>(prone_site), prone_bytes, sizeof(prone_bytes)) == 0)
+			{
+				prone_allowed_continue = game::game_offset(0x101DF529);
+				prone_blocked_continue = game::game_offset(0x101DF59C);
+				utils::hook::nop(prone_site, sizeof(prone_bytes));
+				utils::hook::jump(prone_site, prone_permission_stub);
+			}
+			else console::warn("[movement] prone patch skipped: unexpected engine instructions\n");
+			const auto bind_site = game::game_offset(0x10319F0A);
+			constexpr unsigned char bind_bytes[] = {0x8D, 0x44, 0x24, 0x10, 0x8D, 0x50, 0x01};
+			if (std::memcmp(reinterpret_cast<void*>(bind_site), bind_bytes, sizeof(bind_bytes)) == 0)
+			{
+				// KisakCOD Key_Bind_f accepts arbitrary commands. QoS additionally
+				// lowercases and whitelists 36 actions here; skip only that restriction.
+				// Keep native key parsing, quoting, allocation and archive dirty flag.
+				utils::hook::nop(bind_site, sizeof(bind_bytes));
+				utils::hook::jump(bind_site, game::game_offset(0x10319F9C));
+			}
+			else console::warn("[input] bind patch skipped: unexpected engine instructions\n");
+
+			const auto sprint_site = game::game_offset(0x101E4D70);
+			constexpr unsigned char sprint_bytes[] = {0x51, 0xA1, 0x98, 0xBC, 0x6C, 0x10};
+			// Absolute operands are rebased by Windows: compare the opcode and
+			// resolved dvar address rather than the IDA preferred-base bytes.
+			constexpr unsigned char move_bytes[] = {0x81, 0xEC, 0x9C, 0x00, 0x00, 0x00};
+			const auto move_site = game::game_offset(0x101E54C0);
+			if (std::memcmp(reinterpret_cast<void*>(move_site), move_bytes, sizeof(move_bytes)) == 0
+				&& *reinterpret_cast<unsigned char*>(sprint_site) == sprint_bytes[0]
+				&& *reinterpret_cast<unsigned char*>(sprint_site + 1) == sprint_bytes[1]
+				&& *reinterpret_cast<std::uintptr_t*>(sprint_site + 2) == game::game_offset(0x106CBC98))
+			{
+				end_sprint_address = game::game_offset(0x101DC6C0);
+				update_sprint_hook.create(sprint_site, update_sprint_stub);
+				move_single_hook.create(move_site, move_single_stub);
+			}
+			else console::warn("[movement] sprint ADS patch skipped: unexpected engine instructions\n");
+
+			const auto font_site = game::game_offset(0x10284FF8);
+			if (*reinterpret_cast<unsigned short*>(font_site) == 0x2D8B
+				&& *reinterpret_cast<std::uintptr_t*>(font_site + 2) == game::game_offset(0x113FB174))
+			{
+				overhead_font_continue = font_site + 6;
+				utils::hook::nop(font_site, 6);
+				utils::hook::jump(font_site, overhead_font_stub);
+			}
+			else console::warn("[renderer] overhead font patch skipped: unexpected engine instructions\n");
+		}
+
 		std::uintptr_t noclip_cmd_scale_address{};
 		std::uintptr_t noclip_wish_continue{};
 		game::dvar_s* pm_noclipScale{};
@@ -1125,6 +1699,7 @@ namespace patches
 	public:
 		void post_load() override
 		{
+			apply_input_and_overhead_patches();
 			apply_video_dvar_patches();
 			apply_cinematic_stats_guard();
 			disable_startup_remote_screen_sync();
@@ -1186,6 +1761,49 @@ namespace patches
 
 			scheduler::once([this]
 			{
+				pm_adsStopsSprint = dvars::Dvar_RegisterBool("pm_adsStopsSprint", 0,
+					"ADS ends sprint in shared player movement (0 = stock QoS).", game::dvar_flags::replicated);
+				pm_allowProne = dvars::Dvar_RegisterInt("pm_allowProne",
+					"Prone permission: 0 disabled, 1 enabled with native clearance, 2 stock weapon rules.",
+					2, 0, 2, game::dvar_flags::replicated);
+				pm_adsExitOnDamage = dvars::Dvar_RegisterBool("pm_adsExitOnDamage", 1,
+					"Allow stock scope cancellation on damage (0 keeps ADS; recoil is unchanged).", game::dvar_flags::replicated);
+				pm_allowCover = dvars::Dvar_RegisterBool("pm_allowCover", 1,
+					"Allow native cover entry (0 starts a native exit from active cover).", game::dvar_flags::replicated);
+				pm_mantleFirstPerson = dvars::Dvar_RegisterBool("pm_mantleFirstPerson", 0,
+					"Use first-person camera during native mantle traversals (0 = stock camera).", game::dvar_flags::replicated);
+				pm_climbFirstPerson = dvars::Dvar_RegisterBool("pm_climbFirstPerson", 0,
+					"Use first-person camera on native ladders, ledges and pipes (0 = stock camera).", game::dvar_flags::replicated);
+				pm_airborneBobScale = dvars::Dvar_RegisterFloat("pm_airborneBobScale",
+					"Airborne movement camera bob scale: 0 suppresses, 1 restores stock; grounded bob is unchanged.",
+					1.0f, 0.0f, 1.0f, game::dvar_flags::replicated);
+				game::DvarValue movement_default{};
+				movement_default.integer = 0;
+				game::DvarLimits movement_domain{};
+				movement_domain.enumeration.stringCount = static_cast<int>(std::size(movement_mode_names));
+				movement_domain.enumeration.strings = movement_mode_names;
+				pm_movement_mode = game::Dvar_RegisterNew("pm_movement_mode", game::DVAR_TYPE_ENUM,
+					game::dvar_flags::replicated, "Movement preset: stock QoS or experimental COD4-style iw3.",
+					0, movement_default, movement_domain);
+				apply_movement_preset();
+				scheduler::loop(apply_movement_preset, scheduler::main);
+				overhead_font_dvar = dvars::Dvar_RegisterInt("cg_overheadNamesFont",
+					"Overhead font: 0 native, 1 normal, 2 big, 3 small, 4 bold (missing fonts use native).",
+					0, 0, 4, game::dvar_flags::saved | game::dvar_flags::cheat_protected);
+				command::add("overheadFontNext", [](const command::params&)
+				{
+					// Dvar_SetString uses the INTERNAL engine setter, so the command
+					// needs its own gate as well as the dvar's native cheat flag.
+					const auto* const cheats = game::Dvar_FindVar("sv_cheats");
+					if (!cheats || !cheats->current.enabled)
+					{
+						console::info("overheadFontNext: cheats are not enabled\n");
+						return;
+					}
+					const int next = overhead_font_dvar ? (overhead_font_dvar->current.integer + 1) % 5 : 0;
+					game::Dvar_SetString("cg_overheadNamesFont", utils::string::va("%d", next));
+					console::info("cg_overheadNamesFont = %d\n", next);
+				});
 				pm_noclipScale = dvars::Dvar_RegisterFloat("pm_noclipScale",
 					"Noclip movement speed multiplier (1 = native speed).",
 					1.0f, 0.0f, 20.0f, game::dvar_flags::saved);

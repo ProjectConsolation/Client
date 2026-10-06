@@ -1,6 +1,9 @@
 gitVersioningCommand = "git describe --tags --dirty --always"
 gitCurrentBranchCommand = "git symbolic-ref -q --short HEAD"
 
+-- Product/release identity is independent of historical and nightly Git tags.
+local productVersion = "0.1.0"
+
 -- Quote the given string input as a C string
 function cstrquote(value)
 	if value == nil then
@@ -34,19 +37,6 @@ function vertonumarr(value, vernumber, partscount)
 		table.insert(vernum, tonumber(vernumber))
 	end
 	return vernum
-end
-
-function getbaseversion(tagName)
-	if tagName == nil or tagName == "" then
-		return "0.0.1"
-	end
-
-	local major, minor, patch = string.match(tagName, "[vV]?(%d+)%.(%d+)%.(%d+)")
-	if major ~= nil and minor ~= nil and patch ~= nil then
-		return major .. "." .. minor .. "." .. patch
-	end
-
-	return "0.0.1"
 end
 
 function readbuildcounter(path)
@@ -143,7 +133,7 @@ newaction {
 		local revNumber = assert(proc:read('*a')):gsub("%s+", "")
 		proc:close()
 
-		local baseVersion = getbaseversion(tagName)
+		local baseVersion = productVersion
 
 		local buildCounterPath = path.join(projectRoot, "src/build_counter.txt")
 		local buildCounter = readbuildcounter(buildCounterPath) + 1
