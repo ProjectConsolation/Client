@@ -43,13 +43,14 @@ Patch `1.1` may not install correctly if the game is not installed in the defaul
 
 If you are using a nightly build or a release build:
 
-- extract or copy the build into the game root, except the optional `xlive.dll`
+- extract or copy the complete build into the game root, preserving folders
 - overwrite everything when prompted
 - launch using `Launch Consolation.bat`
 
 The batch launcher includes the multiplayer, default deathmatch and skip-intro arguments, and starts in the game directory.
 
-Only install the bundled `xlive.dll` for offline/debug use, and add `-offline`
+The optional replacement is shipped under `optional/offline/xlive.dll`, not at
+the archive root. Only copy it into the game root for offline/debug use, and add `-offline`
 to the launch arguments. Leave it out for normal GFWL use. See
 [the offline/debug DLL note](required_files/README_XLIVE.txt).
 `generate-nightly.bat` generates both projects; building `d3d9` also builds the
@@ -67,7 +68,11 @@ If your game is installed in the default directory, use the included batch file 
 
 If installed elsewhere, right-click `Launch Consolation.bat`, choose **Edit**, and change `GAME_DIR` to your real install directory.
 
-For **offline/debug only**, install the optional `xlive.dll` and append `-offline -seta name "CSL_User00"` to the batch file's `start` command. Replace `CSL_User00` with your player name, keeping the quotes. Normal GFWL play should omit both the optional DLL and `-offline`.
+For **offline/debug only**, copy `optional/offline/xlive.dll` into the game root and append `-offline -seta name "CSL_User00"` to the batch file's `start` command. Replace `CSL_User00` with your player name, keeping the quotes. Normal GFWL play should omit both the root-level replacement DLL and `-offline`. If an older nightly already installed the replacement in the game root, move that copy out; extracting the new archive does not remove it. Do not delete the system GFWL runtime.
+
+`consolation/zone/common_consolation.ff` is a required client asset file. Keep it
+at that location. The nightly packaging check rejects missing launchers or HUD
+assets before publishing.
 
 For a desktop launcher with the Consolation icon, create a shortcut to the `.bat`, then use **Properties → Shortcut → Change Icon → Browse** and select the bundled `icon.ico` in the game directory. Batch files have a generic Windows icon; changing the running game's icon does not update a shortcut to the original launcher.
 

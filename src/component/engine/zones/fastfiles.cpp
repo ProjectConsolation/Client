@@ -58,6 +58,8 @@ namespace fastfiles
 		std::uintptr_t cg_initialized_address = 0;
 
 		bool common_fastfiles_seen = false;
+		bool common_consolation_loaded = false;
+		bool common_consolation_attempted = false;
 		bool patch_consolation_loaded = false;
 		bool patch_mp_loaded = false;
 		bool common_xenon_loaded = false;
@@ -864,6 +866,22 @@ namespace fastfiles
 			// QoS PC 1.1, 0x103E1CF0. Remove this adapter when native Xenon schemas exist.
 			try
 			{
+				// Ensure the required shared HUD assets finish linking before CG registers
+				// map media, even if a map command races the deferred startup loader.
+				if (multiplayer_map_requested && common_fastfiles_seen && !common_consolation_loaded)
+				{
+					if (!common_consolation_attempted)
+					{
+						if (!find_zone_file("common_consolation.ff"))
+							throw std::runtime_error("required consolation/zone/common_consolation.ff is missing; reinstall the complete nightly archive");
+						common_consolation_attempted = true;
+						game::XZoneInfo hud_zone{"common_consolation", 0x11, 0};
+						db_load_xassets_hook.invoke<int>(&hud_zone, 1, 0);
+					}
+					game::DB_WaitXAssets.get()();
+					if (!common_consolation_loaded)
+						throw std::runtime_error("required common_consolation HUD assets did not link");
+				}
 				bool unloads_zones = false;
 				for (int i = 0; zones && i < count; ++i) unloads_zones |= zones[i].freeFlags != 0;
 				for (int i = 0; zones && i < count; ++i)
@@ -1264,6 +1282,7 @@ namespace fastfiles
 				common_fastfiles_seen = common_fastfiles_seen || zone_name_equals(incoming_zone_name, "common_mp") || zone_name_equals(zone_name, "common_mp");
 				patch_mp_loaded = patch_mp_loaded || zone_name_equals(incoming_zone_name, "patch_mp") || zone_name_equals(zone_name, "patch_mp");
 				patch_consolation_loaded = patch_consolation_loaded || zone_name_equals(incoming_zone_name, "patch_consolation") || zone_name_equals(zone_name, "patch_consolation");
+				common_consolation_loaded = common_consolation_loaded || zone_name_equals(incoming_zone_name, "common_consolation") || zone_name_equals(zone_name, "common_consolation");
 				common_xenon_loaded = common_xenon_loaded || zone_name_equals(incoming_zone_name, "common_xenon") || zone_name_equals(zone_name, "common_xenon");
 
 				if (is_scaleform_asset_name(incoming_name) || is_scaleform_asset_name(linked_name))
@@ -1313,6 +1332,14 @@ namespace fastfiles
 				&& !patch_mp_loaded;
 
 			std::vector<game::XZoneInfo> patch_zones{};
+			if (common_fastfiles_seen && !common_consolation_attempted && !common_consolation_loaded)
+			{
+				common_consolation_attempted = true;
+				if (zone_file_exists("common_consolation"))
+					patch_zones.push_back(make_override_zone("common_consolation"));
+				else
+					game::Com_Printf(16, "^1Required client fastfile missing: consolation/zone/common_consolation.ff\n");
+			}
 			if (should_load_patch_mp)
 			{
 				patch_mp_attempted = true;
@@ -1369,7 +1396,9 @@ namespace fastfiles
 				gametypes::refresh_ui_gametype_list();
 			}
 
-			if ((!patch_mp_expected || patch_mp_loaded) && (!patch_consolation_expected || patch_consolation_loaded))
+			const auto common_consolation_expected = has_zone(patch_zones.data(), static_cast<int>(patch_zones.size()), "common_consolation");
+			if ((!patch_mp_expected || patch_mp_loaded) && (!patch_consolation_expected || patch_consolation_loaded)
+				&& (!common_consolation_expected || common_consolation_loaded))
 			{
 				print_zone_load_state("Loaded", patch_zones);
 			}

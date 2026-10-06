@@ -1,6 +1,10 @@
 Use the included "Launch Consolation.bat" to start multiplayer.
 
-Only install the optional xlive.dll for offline/debug use. Leave it out for
+Copy the complete nightly archive into the game directory, preserving folders.
+consolation\zone\common_consolation.ff is REQUIRED for the client HUD assets;
+do not move it into the root directory or omit it when updating.
+
+Only install optional\offline\xlive.dll for offline/debug use. Leave it there for
 normal Games for Windows LIVE operation. See README_XLIVE.txt for instructions.
 
 Default target:
@@ -10,7 +14,7 @@ If installed elsewhere, right-click Launch Consolation.bat, choose Edit,
 and change GAME_DIR to your game directory.
 
 OFFLINE / DEBUG ONLY
-Install the optional xlive.dll and append the following to the START command
+Copy optional\offline\xlive.dll into the game root and append the following to the START command
 in Launch Consolation.bat:
 -offline -seta name "CSL_User00"
 Replace CSL_User00 with your own player name; keep the quotes.

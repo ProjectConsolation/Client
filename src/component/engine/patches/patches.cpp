@@ -55,6 +55,81 @@ namespace patches
 
 	namespace
 	{
+		utils::hook::detour register_stance_media_hook;
+		game::Material* prone_materials[3]{};
+		std::uintptr_t stance_faction_dvar_slot{};
+		std::uintptr_t native_prone_material_slot{};
+		const char* const prone_material_names[] = {
+			"qos_stance_prone", "qos_stance_prone_mi6", "qos_stance_prone_org"
+		};
+
+		int register_stance_media_stub(const int local_client)
+		{
+			const auto result = register_stance_media_hook.invoke<int>(local_client);
+			// Refresh on every native media registration; never retain map-owned handles.
+			for (std::size_t i = 0; i < std::size(prone_materials); ++i)
+			{
+				prone_materials[i] = game::DB_FindXAssetHeader_Internal(
+					game::ASSET_TYPE_MATERIAL, prone_material_names[i], 0).material;
+			}
+			return result;
+		}
+
+		game::Material* select_prone_material()
+		{
+			const auto* dvar = *reinterpret_cast<game::dvar_s**>(stance_faction_dvar_slot);
+			const auto faction = dvar ? dvar->current.integer : 0;
+			if (faction >= 0 && faction < 3 && prone_materials[faction])
+				return prone_materials[faction];
+			return *reinterpret_cast<game::Material**>(native_prone_material_slot);
+		}
+
+		__declspec(naked) void prone_material_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				call select_prone_material
+				mov [esp + 28], eax
+				popad
+				popfd
+				ret
+			}
+		}
+
+		void apply_stance_materials()
+		{
+			// QoS PC CG media registration and both native stance draws verified in IDA.
+			// KisakCOD CG_DrawStanceIcon confirms lastStance bit 1 selects prone.
+			native_prone_material_slot = game::game_offset(0x113FB138);
+			stance_faction_dvar_slot = game::game_offset(0x1148FCD8);
+			const auto name_push = game::game_offset(0x102C1C96);
+			const auto original_name = static_cast<std::uint32_t>(game::game_offset(0x104F6454));
+			for (const auto address : {0x102AB7AA, 0x102AB8A0})
+			{
+				const auto* bytes = reinterpret_cast<const unsigned char*>(game::game_offset(address));
+				std::uint32_t operand{};
+				std::memcpy(&operand, bytes + 1, sizeof(operand));
+				if (bytes[0] != 0xA1 || operand != native_prone_material_slot)
+				{
+					console::warn("[HUD] prone icon hook skipped: unexpected draw instructions\n");
+					return;
+				}
+			}
+			std::uint32_t name_operand{};
+			std::memcpy(&name_operand, reinterpret_cast<void*>(name_push + 1), sizeof(name_operand));
+			if (*reinterpret_cast<unsigned char*>(name_push) != 0x68 || name_operand != original_name)
+			{
+				console::warn("[HUD] prone icon hook skipped: unexpected media registration\n");
+				return;
+			}
+			register_stance_media_hook.create(game::game_offset(0x102C1A60), register_stance_media_stub);
+			utils::hook::set(name_push + 1, prone_material_names[0]);
+			for (const auto address : {0x102AB7AA, 0x102AB8A0})
+				utils::hook::call(game::game_offset(address), prone_material_stub);
+		}
+
 		utils::hook::detour update_sprint_hook;
 		utils::hook::detour move_single_hook;
 		utils::hook::detour player_bone_camera_hook;
@@ -1825,6 +1900,7 @@ namespace patches
 	public:
 		void post_load() override
 		{
+			apply_stance_materials();
 			apply_input_and_overhead_patches();
 			apply_video_dvar_patches();
 			apply_cinematic_stats_guard();
