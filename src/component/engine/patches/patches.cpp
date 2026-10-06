@@ -1700,6 +1700,30 @@ namespace patches
 		}
 
 		utils::hook::detour dvar_registernew_hook;
+		utils::hook::detour dvar_setvariant_hook;
+		const char* __cdecl dvar_setvariant_stub(game::dvar_s* dvar, game::DvarValue value, int source)
+		{
+			// QoS 1.1 Dvar_SetBool (0x10274BA0) uses string pointers for non-bool
+			// targets. SetVariant interprets an INT union directly, not as text.
+			// Restrict adaptation to that native caller and our extended camera dvar;
+			// all normal writes, locking, flags and domain validation remain native.
+			if (_ReturnAddress() == reinterpret_cast<void*>(game::game_offset(0x10274C05))
+				&& dvar && static_cast<int>(dvar->type) == game::DVAR_TYPE_INT
+				&& dvar->name && !_stricmp(dvar->name, "cg_thirdPerson"))
+			{
+				const auto* zero = reinterpret_cast<const char*>(game::game_offset(0x104CAD94));
+				const auto* one = reinterpret_cast<const char*>(game::game_offset(0x104CAD98));
+				// The native caller supplies only the static "0"/"1" strings.
+				// Do not dereference arbitrary union values here.
+				if (value.string == zero || value.string == one)
+				{
+					const int enabled = value.string == one ? 1 : 0;
+					value = {};
+					value.integer = enabled;
+				}
+			}
+			return dvar_setvariant_hook.invoke<const char*>(dvar, value, source);
+		}
 		game::dvar_s* Dvar_RegisterNew_Stub(const char* dvarName, game::DvarType type, unsigned short flags, char* desc, int unk, game::DvarValue value, game::DvarLimits domain)
 		{
 			if (type == game::DVAR_TYPE_BOOL && !_stricmp(dvarName, "cg_thirdPerson"))
@@ -1711,8 +1735,8 @@ namespace patches
 				domain = {};
 				domain.integer.min = 0;
 				domain.integer.max = 2;
-				// Preserve native cheat protection and default. QoS Dvar_SetBool
-				// converts non-bool targets through "0"/"1", so map reset remains valid.
+				// Preserve native cheat protection/default. dvar_setvariant_stub
+				// adapts native boolean writes to the extended integer representation.
 			}
 			if (type == game::DVAR_TYPE_FLOAT_2 && !_stricmp(dvarName, "cg_debugInfoCornerOffset"))
 			{
@@ -1960,6 +1984,7 @@ namespace patches
 
 			
 			dvar_registernew_hook.create(game::Dvar_RegisterNew, Dvar_RegisterNew_Stub);
+			dvar_setvariant_hook.create(game::game_offset(0x10277620), dvar_setvariant_stub);
 
 			scheduler::once([this]
 			{
@@ -1984,7 +2009,7 @@ namespace patches
 				game::DvarLimits movement_domain{};
 				movement_domain.enumeration.stringCount = static_cast<int>(std::size(movement_mode_names));
 				movement_domain.enumeration.strings = movement_mode_names;
-				pm_movement_mode = game::Dvar_RegisterNew("pm_movement_mode", game::DVAR_TYPE_ENUM,
+				pm_movement_mode = game::Dvar_RegisterVariant("pm_movement_mode", game::DVAR_TYPE_ENUM,
 					game::dvar_flags::replicated, "Movement preset: stock QoS or experimental COD4-style iw3.",
 					0, movement_default, movement_domain);
 				apply_movement_preset();

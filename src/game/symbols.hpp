@@ -74,7 +74,6 @@ namespace game
 	WEAK symbol<unsigned short> db_hashTable{ game_offset(0x1082ED60) };
 	WEAK symbol<XAssetEntryPoolEntry> g_assetEntryPool{ game_offset(0x108CB5C0) };
 	WEAK symbol<XZone> g_zones{ game_offset(0x10AB8188) };
-	WEAK symbol<int(char* dvar)> generateHashValue{ game_offset(0x10275260) };
 	WEAK symbol<dvar_s*> dvarHashTable{ game_offset(0x1149FCE0) };
 	WEAK symbol<const char*> g_assetNames{ game_offset(0x1055E3D8) };
 	WEAK symbol<int> keyCatchers{ game_offset(0x11A7AB84) };

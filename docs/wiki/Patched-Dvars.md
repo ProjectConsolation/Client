@@ -62,6 +62,15 @@ buttons together, diagonal movement and normal movement after leaving noclip.
 
 ## Notes
 
+- Dvar lookup uses QoS' locked native lookup. Client registration uses the
+  native find-or-re-register path instead of allocating a second entry for
+  an existing name. The periodic UI override callback updates existing
+  variables only; the native 3,000-dvar limit is not increased.
+- Native boolean writes to the extended `cg_thirdPerson` integer are adapted
+  to `0`/`1`. Console mode `2` remains available, and native protection and
+  domain checks still apply. These changes require runtime regression testing
+  in both normal GFWL and optional offline mode after rebuilding.
+
 - Some of these dvars are stock dvars that have been made writable or saved.
 - Some are custom dvars added by Project: Consolation.
 - A few are mainly intended for testing, debugging, or modding.

@@ -229,21 +229,51 @@ namespace game
 
 	dvar_s* Dvar_FindMalleableVar(const char* dvarName)
 	{
-		dvar_s* var;
-		int hash = generateHashValue((char*)dvarName);
-
-		for (var = (dvar_s*)dvarHashTable[hash]; var; var = var->hashNext)
-		{
-			if (!stricmp(dvarName, var->name))
-				return var;
-		}
-
-		return NULL;
+		// QoS 1.1: native lookup holds the dvar lock and invokes the hash
+		// helper with its name in EAX. That helper is not a cdecl function.
+		using find_var_t = dvar_s* (__cdecl*)(const char*);
+		return dvarName ? reinterpret_cast<find_var_t>(game_offset(0x10276040))(dvarName) : nullptr;
 	}
 
 	dvar_s* Dvar_FindVar(const char* dvarName)
 	{
 		return Dvar_FindMalleableVar(dvarName);
+	}
+
+	dvar_s* Dvar_RegisterVariant(const char* name, DvarType type, unsigned short flags,
+		const char* description, int unknown, DvarValue value, DvarLimits domain)
+	{
+		// QoS 1.1 0x10278960: name in EDI; remaining arguments on the stack.
+		// Like KisakCOD Dvar_RegisterVariant, this re-registers an existing
+		// variable (including user-created strings) rather than allocating duplicates.
+		static_assert(sizeof(DvarValue) == 16);
+		static_assert(sizeof(DvarLimits) == 8);
+		const auto function = game_offset(0x10278960);
+		const int native_type = type;
+		const int native_flags = flags;
+		const auto* value_words = reinterpret_cast<const unsigned int*>(&value);
+		const auto* domain_words = reinterpret_cast<const unsigned int*>(&domain);
+		dvar_s* result;
+		__asm
+		{
+			push unknown
+			push description
+			mov eax, domain_words
+			push dword ptr [eax + 4]
+			push dword ptr [eax]
+			mov eax, value_words
+			push dword ptr [eax + 12]
+			push dword ptr [eax + 8]
+			push dword ptr [eax + 4]
+			push dword ptr [eax]
+			push native_flags
+			push native_type
+			mov edi, name
+			call function
+			add esp, 40
+			mov result, eax
+		}
+		return result;
 	}
 
 	void Dvar_SetString(const char* dvarName, const char* value)

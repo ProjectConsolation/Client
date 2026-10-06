@@ -298,7 +298,7 @@ namespace dvars
 		domain.value.max = max_value;
 		domain.value.min = min_value;
 		console::debug("registered dvar '%s'\n", dvar_name);
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT, flags, description, 0, value, domain);
+		return game::Dvar_RegisterVariant(dvar_name, game::DvarType::DVAR_TYPE_FLOAT, flags, description, 0, value, domain);
 	}
 
 	game::dvar_s* Dvar_RegisterVec4(const char* dvar_name, const char* description, float x, float y, float z, float w, float min_value, float max_value, std::uint16_t flags)
@@ -313,7 +313,7 @@ namespace dvars
 		domain.vector.max = max_value;
 		domain.vector.min = min_value;
 		console::debug("registered dvar '%s'\n", dvar_name);
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, description, 0, value, domain);
+		return game::Dvar_RegisterVariant(dvar_name, game::DvarType::DVAR_TYPE_FLOAT_4, flags, description, 0, value, domain);
 	}
 
 	game::dvar_s* Dvar_RegisterBool(const char* dvar_name, int value_default, const char* description, std::uint16_t flags)
@@ -325,7 +325,7 @@ namespace dvars
 		domain.integer.max = 1;
 		domain.integer.min = 0;
 		console::debug("registered dvar '%s'\n", dvar_name);
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, description, 0, value, domain);
+		return game::Dvar_RegisterVariant(dvar_name, game::DvarType::DVAR_TYPE_BOOL, flags, description, 0, value, domain);
 	}
 
 	game::dvar_s* Dvar_RegisterInt(const char* dvar_name, const char* description, int value_default, int min, int max, std::uint16_t flags)
@@ -337,7 +337,7 @@ namespace dvars
 		domain.integer.max = max;
 		domain.integer.min = min;
 		console::debug("registered dvar '%s'\n", dvar_name);
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_INT, flags, description, 0, value, domain);
+		return game::Dvar_RegisterVariant(dvar_name, game::DvarType::DVAR_TYPE_INT, flags, description, 0, value, domain);
 	}
 
 	game::dvar_s* Dvar_RegisterString(const char* dvar_name, const char* value_default, const char* description, std::uint16_t flags)
@@ -347,7 +347,7 @@ namespace dvars
 
 		game::DvarLimits domain{};
 		console::debug("registered dvar '%s'\n", dvar_name);
-		return game::Dvar_RegisterNew(dvar_name, game::DvarType::DVAR_TYPE_STRING, flags, description, 0, value, domain);
+		return game::Dvar_RegisterVariant(dvar_name, game::DvarType::DVAR_TYPE_STRING, flags, description, 0, value, domain);
 	}
 
 	char* Dvar_ValueToString(game::dvar_s* dvar, game::DvarValue value)
@@ -509,12 +509,18 @@ namespace dvars
 		}
 	}
 
-	game::dvar_s* replace_dvar(const dvar_spec& spec, const bool log)
+	game::dvar_s* replace_dvar(const dvar_spec& spec, const bool log, const bool allow_registration)
 	{
 		const auto value_string = dvar_value_to_string(spec);
 		auto* const existing = game::Dvar_FindVar(spec.name);
 		if (existing)
 		{
+			// Let the native re-registration path convert user-created strings
+			// before writing a typed union; do not overwrite owned string pointers.
+			if (static_cast<int>(existing->type) != static_cast<int>(spec.type))
+			{
+				return allow_registration ? register_dvar(spec, log) : nullptr;
+			}
 			switch (spec.type)
 			{
 			case game::DVAR_TYPE_BOOL:
@@ -553,6 +559,11 @@ namespace dvars
 				console::debug("overriding %s dvar '%s' with %s\n", dvar_type_name(spec.type), spec.name, value_string.c_str());
 			}
 			return existing;
+		}
+
+		if (!allow_registration)
+		{
+			return nullptr;
 		}
 
 		switch (spec.type)
@@ -622,6 +633,16 @@ namespace dvars
 
 
 
+	namespace
+	{
+		void refresh_existing_override(const dvar_spec& spec)
+		{
+			// A recurring callback must never allocate pool entries. Initialization
+			// owns registration; if the engine is resetting dvars, wait for it.
+			replace_dvar(spec, false, false);
+		}
+	}
+
 	class component final : public component_interface
 	{
 	public:
@@ -690,10 +711,10 @@ namespace dvars
 					}
 
 					disable_native_memory_overlay();
-					replace_dvar(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
-					replace_dvar(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
-					replace_dvar(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved), false);
-					replace_dvar(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved), false);
+					refresh_existing_override(make_float("ui_smallFont", "Small UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					refresh_existing_override(make_float("ui_bigFont", "Large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					refresh_existing_override(make_float("ui_extraBigFont", "Extra-large UI font scale", 0.0f, 0.0f, 1.0f, game::dvar_flags::saved));
+					refresh_existing_override(make_float("cg_overheadNamesSize", "Overhead name font scale", 0.5f, 0.0f, 1.0f, game::dvar_flags::saved));
 				}, scheduler::main, 250ms);
 
 			scheduler::on_shutdown([]

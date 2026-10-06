@@ -59,8 +59,7 @@ namespace
 	constexpr BYTE xnet_qos_info_complete = 0x01;
 	constexpr BYTE xnet_qos_info_target_contacted = 0x02;
 	constexpr std::uintptr_t qos_base = 0x10000000;
-	constexpr std::uintptr_t dvar_hash_table_addr = 0x1149FCE0;
-	constexpr std::uintptr_t generate_hash_value_addr = 0x10275260;
+	constexpr std::uintptr_t dvar_find_var_addr = 0x10276040;
 	WORD system_link_port = 3074;
 
 	struct dvar_value
@@ -288,27 +287,11 @@ namespace
 
 	dvar_s* find_dvar(const char* name)
 	{
-		using generate_hash_value_t = int(__cdecl*)(char*);
-
-		auto* const hash_table = qos_address<dvar_s**>(dvar_hash_table_addr);
-		const auto generate_hash_value = qos_address<generate_hash_value_t>(generate_hash_value_addr);
-		if (!hash_table || !generate_hash_value)
-		{
-			return nullptr;
-		}
-
-		char mutable_name[64]{};
-		strncpy_s(mutable_name, name, _TRUNCATE);
-
-		for (auto* var = hash_table[generate_hash_value(mutable_name)]; var; var = var->hash_next)
-		{
-			if (var->name && _stricmp(var->name, name) == 0)
-			{
-				return var;
-			}
-		}
-
-		return nullptr;
+		// Native lookup is cdecl and takes the dvar lock. Its internal hash
+		// helper takes EAX, so calling that helper as cdecl corrupts lookup.
+		using find_var_t = dvar_s* (__cdecl*)(const char*);
+		const auto find_var = qos_address<find_var_t>(dvar_find_var_addr);
+		return find_var && name ? find_var(name) : nullptr;
 	}
 
 	std::string parse_command_line_name(const wchar_t* command_line)
@@ -515,7 +498,7 @@ namespace
 
 		// QoS stores the active player name in the engine dvar. XLive can be
 		// queried before the frontend copies the profile name into that dvar.
-		const auto set_string = qos_base + 0x10278FD0;
+		const auto set_string = qos_address<void*>(0x10278FD0);
 		const auto dvar_name = "name";
 		const auto value = name.c_str();
 		__asm

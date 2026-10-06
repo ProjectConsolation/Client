@@ -46,6 +46,8 @@ namespace game
 	Font_s* R_RegisterFont(const char* font);
 	Material* Material_RegisterHandle(const char* material);
 	dvar_s* Dvar_FindVar(const char* dvarName);
+	dvar_s* Dvar_RegisterVariant(const char* name, DvarType type, unsigned short flags,
+		const char* description, int unknown, DvarValue value, DvarLimits domain);
 	void Dvar_SetString(const char* dvarName, const char* value);
 	void GamerProfile_UpdateProfileFromDvars(int profileIndex, int updateState);
 	void Live_UpdateClan(int object, const char* clan);
