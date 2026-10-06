@@ -2948,6 +2948,35 @@ def write_pc_image(payload, image_value):
     payload.extend(data)
 
 
+def prepare_pc_reflection_probe_images(probes):
+    """Keep unsupported probes bindable, without claiming Xbox cube conversion.
+
+    QoS PC 10366BC2 unconditionally passes a probe image to R_SetSampler;
+    a null image faults at 10385930. A six-face black DXT1 cube is a temporary
+    compatibility fallback, not the original reflection or a 2D substitute.
+    Remove this fallback when the Xbox ARGB8 cubemap mip layout is verified.
+    """
+    fallback_names = []
+    for index, probe in enumerate(probes):
+        value = probe.get("image")
+        if (value and value.get("pc_map_type") == 5
+                and value.get("pc_base_level", {}).get("format") in PC_TEXTURE_FOURCC):
+            continue
+        name = (value or {}).get("name")
+        if not isinstance(name, str):
+            name = f"*consolation_reflection_fallback{index}"
+        data = bytes(6 * 8)  # Six opaque-black 4x4 BC1 faces.
+        probe["image"] = {
+            "name": name, "width": 4, "height": 4, "depth": 1,
+            "pc_map_type": 5, "pc_load_flags": (1, 6),
+            "pc_base_level": {"format": "DXT1", "bytes": len(data),
+                              "data": data.hex()},
+            "pc_reflection_fallback": True,
+        }
+        fallback_names.append(name)
+    return fallback_names
+
+
 def configure_pc_lightmap_image(image_value):
     """Apply the QoS PC GfxWorld lightmap image metadata contract."""
     image_value["pc_semantic"] = 1
@@ -3906,6 +3935,10 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     material_image_report["preceding_material_count"] = len(preceding_materials)
     images_by_name = {}
     if include_images:
+        reflection_fallbacks = prepare_pc_reflection_probe_images(
+            gfx_world["geometry"].get("reflection_probes", []))
+        if diagnostics is not None:
+            diagnostics["reflection_probe_fallbacks"] = reflection_fallbacks
         def keep_image(image_value):
             if not image_value or not isinstance(image_value.get("name"), str):
                 return

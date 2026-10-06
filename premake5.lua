@@ -424,7 +424,7 @@ workspace "consolation-client"
 		-- Keep the shim opt-in: building the client must not replace GFWL in
 		-- the game directory. Package its usage note beside the built DLL.
 		postbuildcommands {
-			"copy /y \"" .. path.getabsolute("required_files/README_XLIVE.txt")
+			"copy /y \"" .. path.translate(path.getabsolute("required_files/README_XLIVE.txt"), "\\")
 				.. "\" \"$(TargetDir)README_XLIVE.txt\""
 		}
 

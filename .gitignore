@@ -849,3 +849,4 @@ tools/__pycache__/compare_xenon_pc_materials.cpython-315.pyc
 tools/__pycache__/compare_xenon_pc_images.cpython-315.pyc
 tools/image-dumps/
 tools/dumps/
+/consolation/main/*.iwd

@@ -55,6 +55,8 @@ Advanced helper commands such as `addbot`, `listassetpool`, `dvarDump`, and `com
 
 ### Disk Image Overrides
 
+Converted Xbox map probes temporarily use a six-face black cubemap when a world reflection probe cannot be decoded. QoS binds these images unconditionally; null probe references caused the renderer crash at `10385930`. Conversion reports list `reflection_probe_fallbacks`. This keeps the binding valid but **does not restore the original Xbox reflections**; their ARGB8 cubemap mip layout still needs conversion.
+
 Place an IWI, DDS or PNG file in `consolation/images/<image-asset-name>.<extension>`
 under the game installation. Use the **image** name, not its material name;
 for example, `brick_wall_col` is overridden by
@@ -149,7 +151,8 @@ extraction tool, not a complete Xbox asset loader.
 #### IWD Image Overrides
 
 Place a classic ZIP archive named, for example, `csl_canals.iwd` in
-`ROOT/consolation/`. Inside the archive use `images/<asset-name>.iwi`, `.dds`
+`ROOT/consolation/main/` (any `.iwd` filename, including `XX_XX.iwd`).
+Inside the archive use `images/<asset-name>.iwi`, `.dds`
 or `.png`; **do not** include a leading `consolation/` directory. Filename
 escaping and supported formats are the same as loose overrides above.
 Loose `consolation/images` overrides win over archived images. Within each
@@ -157,13 +160,16 @@ source tier, PNG wins over DDS, then IWI. An invalid selected replacement
 retains the zone image. Archive search ordering and pure-server restrictions
 remain native engine behavior; this is not a purity bypass.
 
-The client adds `consolation` archives to QoS's native search paths during
+The client adds `consolation/main` archives to QoS's native search paths during
 filesystem startup and restart. It does not change `fs_game` or redirect config
 writes. QoS owns ZIP indexing, file handles, decompression and shutdown cleanup.
 Restart the game after adding or replacing an IWD, and reload the owning zone
 after changing a loose image. There is no live archive refresh. Native filesystem
 consumers can also see other files in mounted IWDs; full mod compatibility has
 not been established. This native integration needs a rebuilt-client in-game test.
+The previous `ROOT/consolation/*.iwd` location is no longer mounted by this
+feature; move those archives into `consolation/main`. Loose overrides stay in
+`consolation/images`, not `consolation/main/images`.
 
 Package just one format directory from a dump:
 

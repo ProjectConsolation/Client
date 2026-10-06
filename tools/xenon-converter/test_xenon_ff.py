@@ -11,6 +11,27 @@ import xenon_ff
 
 
 class FastfileTests(unittest.TestCase):
+    def test_unsupported_reflection_probe_gets_a_real_cube_not_null_or_2d(self):
+        probes = [{"image": {"name": "*reflection_probe0",
+                             "pc_base_level_error": "unverified mip layout"}}]
+        self.assertEqual(xenon_ff.prepare_pc_reflection_probe_images(probes),
+                         ["*reflection_probe0"])
+        payload = bytearray()
+        xenon_ff.write_pc_image(payload, probes[0]["image"])
+        record = xenon_ff.pc_image_record_at(payload, "*reflection_probe0", 36)
+        self.assertIsNotNone(record)
+        self.assertEqual(record["map_type"], 5)
+        self.assertEqual(record["pixel_sha256"], hashlib.sha256(bytes(48)).hexdigest())
+        self.assertTrue(probes[0]["image"]["pc_reflection_fallback"])
+
+    def test_decoded_reflection_probe_is_preserved_and_references_get_fallback(self):
+        decoded = {"name": "real_cube", "pc_map_type": 5,
+                   "pc_base_level": {"format": "DXT1"}}
+        probes = [{"image": decoded}, {"image": {"reference": "0x40000001"}}]
+        self.assertEqual(xenon_ff.prepare_pc_reflection_probe_images(probes),
+                         ["*consolation_reflection_fallback1"])
+        self.assertIs(probes[0]["image"], decoded)
+
     def test_conversion_provenance_tracks_content_order_and_probe_options(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

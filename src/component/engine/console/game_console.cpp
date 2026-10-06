@@ -80,6 +80,7 @@ namespace game_console
 			std::size_t auto_complete_query_length = 0;
 			std::size_t auto_complete_selected_index = 0;
 			bool may_auto_complete = false;
+			bool auto_complete_selected = false;
 		};
 
 		console_state* con = nullptr;
@@ -142,6 +143,8 @@ namespace game_console
 		void insert_text(std::string text);
 		void set_cursor_position(std::size_t cursor);
 		void refresh_auto_complete();
+		void history_up();
+		void history_down();
 		void clear_dead_key_state();
 		void cl_key_event_stub();
 		void cl_console_print_stub(int local_client_num, int channel, const char* txt, int duration, int pixel_width, int flags);
@@ -882,6 +885,16 @@ namespace game_console
 			key_was_down.fill(false);
 			key_is_down.fill(false);
 			key_next_repeat_time.fill(0);
+			if (active)
+			{
+				// Opening the console must not turn a key already held for
+				// gameplay into a fresh text press in the polled input path.
+				for (int vk = 8; vk < 256; ++vk)
+				{
+					key_was_down[static_cast<std::size_t>(vk)] = is_key_down(vk);
+					key_next_repeat_time[static_cast<std::size_t>(vk)] = GetTickCount() + 350u;
+				}
+			}
 
 			if (!con)
 			{
@@ -892,6 +905,7 @@ namespace game_console
 			con->auto_complete_query.clear();
 			con->auto_complete_choice.clear();
 			con->may_auto_complete = false;
+			con->auto_complete_selected = false;
 
 			if (overlay_active)
 			{
@@ -926,6 +940,7 @@ namespace game_console
 			con->auto_complete_query_length = 0;
 			con->auto_complete_selected_index = 0;
 			con->may_auto_complete = false;
+			con->auto_complete_selected = false;
 		}
 
 		void clear_input_line()
@@ -1341,6 +1356,7 @@ namespace game_console
 			{
 				return;
 			}
+			con->auto_complete_selected = false;
 
 			if (cached_command_names.empty() && cached_dvar_names.empty())
 			{
@@ -1783,6 +1799,7 @@ namespace game_console
 			next %= static_cast<int>(count);
 			con->auto_complete_selected_index = static_cast<std::size_t>(next);
 			sync_auto_complete_choice();
+			con->auto_complete_selected = true;
 		}
 
 		void commit_auto_complete_choice(const bool append_space)
@@ -2037,17 +2054,21 @@ namespace game_console
 				switch (key)
 				{
 				case game::K_MWHEELUP:
-					scroll_output(3);
+					if (is_any_shift_down()) history_up();
+					else scroll_output(is_any_ctrl_down() ? 9 : 3);
 					break;
 				case game::K_MWHEELDOWN:
-					scroll_output(-3);
+					if (is_any_shift_down()) history_down();
+					else scroll_output(is_any_ctrl_down() ? -9 : -3);
 					break;
 				default:
 					break;
 				}
 			}
 
-			return should_swallow_key_event() ? 1 : 0;
+			// QoS CL_KeyEvent (1031A999) and KisakCOD always process key-up
+			// bindings even with the console open, releasing +attack/+forward.
+			return down && should_swallow_key_event() ? 1 : 0;
 		}
 
 		__declspec(naked) void cl_key_event_stub()
@@ -2096,9 +2117,13 @@ namespace game_console
 				return;
 			}
 
-			if (!con->auto_complete_matches.empty() && con->may_auto_complete && !con->auto_complete_choice.empty())
+			// Showing suggestions does not select one. An explicitly cycled
+			// suggestion is committed on the first Enter, not executed yet.
+			if (con->auto_complete_selected && !con->auto_complete_matches.empty() && con->may_auto_complete && !con->auto_complete_choice.empty())
 			{
 				commit_auto_complete_choice(true);
+				con->auto_complete_selected = false;
+				return;
 			}
 
 			append_line("] " + con->input);
@@ -2109,7 +2134,9 @@ namespace game_console
 				trim_history();
 			}
 
-			const auto command = con->input + "\n";
+			auto command = con->input;
+			if (command.front() == '/' || command.front() == '\\') command.erase(0, 1);
+			command += "\n";
 			game::Cbuf_AddText(0, command.c_str());
 
 			con->input.clear();
@@ -2289,6 +2316,12 @@ namespace game_console
 			case 'V':
 				paste_from_clipboard();
 				return true;
+			case 'P':
+				history_up();
+				return true;
+			case 'N':
+				history_down();
+				return true;
 			case 'L':
 				if (con)
 				{
@@ -2306,7 +2339,12 @@ namespace game_console
 			switch (vk)
 			{
 			case VK_ESCAPE:
-				set_overlay_active(false);
+				if (con && con->auto_complete_selected)
+				{
+					clear_auto_complete();
+					con->auto_complete_selected = false;
+				}
+				else set_overlay_active(false);
 				break;
 			case VK_RETURN:
 				execute_input();
@@ -2355,6 +2393,11 @@ namespace game_console
 			case VK_HOME:
 				if (con)
 				{
+					if (is_any_ctrl_down())
+					{
+						con->scroll_offset = static_cast<int>(con->lines.size());
+						break;
+					}
 					set_cursor_position(0);
 					refresh_auto_complete();
 				}
@@ -2362,12 +2405,21 @@ namespace game_console
 			case VK_END:
 				if (con)
 				{
+					if (is_any_ctrl_down())
+					{
+						con->scroll_offset = 0;
+						break;
+					}
 					set_cursor_position(con->input.size());
 					refresh_auto_complete();
 				}
 				break;
 			case VK_UP:
-				if (con && con->output_visible && is_any_shift_down())
+				if (con && is_any_ctrl_down() && !con->auto_complete_matches.empty())
+				{
+					cycle_auto_complete_choice(-1);
+				}
+				else if (con && con->output_visible && is_any_shift_down())
 				{
 					scroll_output(1);
 				}
@@ -2377,7 +2429,11 @@ namespace game_console
 				}
 				break;
 			case VK_DOWN:
-				if (con && con->output_visible && is_any_shift_down())
+				if (con && is_any_ctrl_down() && !con->auto_complete_matches.empty())
+				{
+					cycle_auto_complete_choice(1);
+				}
+				else if (con && con->output_visible && is_any_shift_down())
 				{
 					scroll_output(-1);
 				}
@@ -2463,7 +2519,13 @@ namespace game_console
 				const auto key_index = static_cast<std::size_t>(vk);
 				const auto now = GetTickCount();
 				const auto first_press = down && !key_was_down[key_index];
-				const bool repeatable = vk == VK_BACK || vk == VK_DELETE || vk == VK_LEFT || vk == VK_RIGHT || vk == VK_UP || vk == VK_DOWN;
+				const bool text_key = (vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z')
+					|| (vk >= VK_NUMPAD0 && vk <= VK_DIVIDE) || vk == VK_SPACE
+					|| (vk >= VK_OEM_1 && vk <= VK_OEM_3) || vk == VK_OEM_4
+					|| vk == VK_OEM_6 || vk == VK_OEM_7;
+				const bool repeatable = vk == VK_BACK || vk == VK_DELETE || vk == VK_LEFT || vk == VK_RIGHT
+					|| vk == VK_UP || vk == VK_DOWN || vk == VK_PRIOR || vk == VK_NEXT
+					|| (text_key && !is_any_ctrl_down() && !is_key_down(VK_MENU));
 				const auto repeat_press = down && key_was_down[key_index] && repeatable && now >= key_next_repeat_time[key_index];
 
 				if (first_press || repeat_press)

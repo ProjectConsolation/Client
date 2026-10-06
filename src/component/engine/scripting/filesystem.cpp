@@ -20,6 +20,7 @@ namespace filesystem
 		utils::hook::detour fs_startup_hook;
 		utils::hook::detour exec_hook;
 		std::string game_directory;
+		constexpr char iwd_folder[] = "consolation/main";
 
 		// Partial KisakCOD searchpath_s layout, verified against QoS PC
 		// FS_AddIwdFilesForGameDirectory (0x10271F30). QoS has no checksum fields.
@@ -37,7 +38,7 @@ namespace filesystem
 		{
 			// FS_LoadZipFile initializes three 256-byte strings: full filename,
 			// basename, gamename. The mounting helper writes gamename at +512.
-			return iwd && _strnicmp(reinterpret_cast<const char*>(iwd + 512), "consolation", 12) == 0;
+			return iwd && _strnicmp(reinterpret_cast<const char*>(iwd + 512), iwd_folder, sizeof(iwd_folder)) == 0;
 		}
 
 		void mount_iwds()
@@ -45,15 +46,15 @@ namespace filesystem
 			auto* search = *reinterpret_cast<search_path_view**>(game::game_offset(0x11A76550));
 			if (!search) return; // Native filesystem has not started yet.
 			for (auto* entry = search; entry; entry = entry->next)
-				if (consolation_iwd(entry->iwd)) return; // fs_game already mounted this folder.
+				if (consolation_iwd(entry->iwd)) return; // Already mounted this exact folder.
 			// Mount only archives, not FS_AddGameDirectory: the latter changes
 			// fs_gamedir and would redirect native writes/config ownership.
 			reinterpret_cast<void(__cdecl*)(const char*, const char*)>(game::game_offset(0x10271F30))(
-				game_directory.c_str(), "consolation");
+				game_directory.c_str(), iwd_folder);
 			for (auto* entry = *reinterpret_cast<search_path_view**>(game::game_offset(0x11A76550));
 				entry; entry = entry->next)
 				if (consolation_iwd(entry->iwd))
-					game::Com_Printf(10, "[FS] Mounted consolation IWD: %.255s\n", entry->iwd);
+					game::Com_Printf(10, "[FS] Mounted consolation/main IWD: %.255s\n", entry->iwd);
 		}
 
 		void close_file(const int handle)
