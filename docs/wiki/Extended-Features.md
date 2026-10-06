@@ -41,6 +41,12 @@ against the supported *Quantum of Solace* PC 1.1 multiplayer DLL.
 | Weapon | 256 | 320 |
 | Xmodel | 640 | 1,500 |
 
+Material pool capacity is separate from renderer capacity. The client also relocates
+QoS's 1,626-entry sorted-material table so enumerating extended pools cannot overwrite
+nearby renderer state. The native draw-surface format still has an 11-bit material
+index: **2,048 simultaneously sorted materials** remains the rendering limit. The
+4,096-entry pool is not a claim that all 4,096 can render simultaneously.
+
 T4M also increases a separate `Loaded Sound` pool. QoS does not have that asset type: its index
 10 is `Sound Curve`, while its existing `Sound` pool is 10,000 entries. Applying T4M's loaded-sound
 count to either QoS type would therefore be incorrect.

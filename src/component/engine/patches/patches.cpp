@@ -881,6 +881,10 @@ namespace patches
 					&& !strcmp(parent_class, "007 Splash Screen"))
 				{
 					resources::get_splash_dimensions(width, height);
+					class_name = resources::splash_control_class();
+					// The replacement child handles STM_SETIMAGE and paints the
+					// complete bitmap itself. Remove Static-specific style bits.
+					if (strcmp(class_name, "Static")) style &= ~0xFFFFu;
 				}
 			}
 			else if (named_class && !strcmp(class_name, "JB_MP"))

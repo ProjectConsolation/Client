@@ -186,6 +186,33 @@ namespace gametypes
 
 			if (type == game::ASSET_TYPE_RAWFILE)
 			{
+				// QoS UI_LoadArenasFromFile 102CB9C0 requests this single DB
+				// rawfile, not COD4's loose-file enumeration. Preserve stock maps
+				// and append the installed DLC list; the native parser owns the
+				// resulting map/gametype table and its 64-entry capacity checks.
+				if (name && !_stricmp(name, "mp/jbmaps.arena"))
+				{
+					auto original = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, name, create_default);
+					std::string extra;
+					if (filesystem::read_file("mp/csl_dlc01.arena", &extra) && !extra.empty())
+					{
+						const auto* base = original.rawfile;
+						if (rawfile_has_data(base) && extra.size() <= 8192 && extra.find('\0') == std::string::npos)
+						{
+							std::string data(base->buffer, base->len);
+							while (!data.empty() && data.back() == '\0') data.pop_back();
+							data += "\n" + extra;
+							// Cache by full content, not just filename: UI may reload
+							// after another base zone is linked. Allocations retain
+							// native pointer lifetime like the existing rawfile cache.
+							const auto key = std::string("arena:") + data;
+							auto& cache = loaded_gametype_rawfiles();
+							if (!cache.contains(key)) cache[key] = make_rawfile(name, data);
+							original.rawfile = cache.at(key);
+						}
+					}
+					return original;
+				}
 				if (auto* rawfile = scaleform::try_override(name))
 				{
 					game::XAssetHeader header{};

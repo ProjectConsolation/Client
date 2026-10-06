@@ -249,6 +249,44 @@ namespace fastfiles
 			{game::ASSET_TYPE_STRINGTABLE, 5, 80, 0x10, 0x1098CC88, 0x103DE870},
 		};
 
+		void extend_sorted_material_storage()
+
+		{
+			// KisakCOD Material_Sort shows that the DB pool and renderer's
+			// sortedMaterials array are separate allocations. QoS PC 1.1 uses
+			// 1,626 slots at 0x10C48960; its unbounded DB enumeration at
+			// 0x103DFBA0 overwrites adjacent globals when the extended pool is
+			// used. Bags produced 1,673 entries and overwrote rgp.world
+			// (0x10C4A354) with the motion_blur material pointer.
+			// Redirect both enumeration destinations and every native consumer.
+			// Storage supports the 4,096-entry DB pool; this does NOT widen
+			// QoS's 11-bit materialSortedIndex (2,048 renderable materials).
+			static game::Material* sorted_materials[4096]{};
+			static_assert(sizeof(void*) == 4);
+			constexpr std::uintptr_t operands[] =
+			{
+				0x103872C0, 0x1038736D, 0x1038DEA4, 0x10391D54,
+				0x10398214, 0x103987EA, 0x103C0EB3, 0x103C44B5,
+			};
+			const auto stock_table = game::game_offset(0x10C48960);
+			// Validate the entire patch set before changing any operand.
+			for (const auto operand : operands)
+			{
+				std::uintptr_t actual{};
+				std::memcpy(&actual, reinterpret_cast<const void*>(
+					game::game_offset(operand)), sizeof(actual));
+				if (actual != stock_table)
+				{
+					throw std::runtime_error("QoS sorted-material layout did not match PC 1.1");
+				}
+			}
+			for (const auto operand : operands)
+			{
+				utils::hook::set<std::uintptr_t>(game::game_offset(operand),
+					reinterpret_cast<std::uintptr_t>(sorted_materials));
+			}
+		}
+
 		void extend_asset_pools()
 		{
 			// Pool targets are adapted from iAmThatMichael/T4M's
@@ -1356,6 +1394,7 @@ namespace fastfiles
 	public:
 		void post_load() override
 		{
+			extend_sorted_material_storage();
 			extend_asset_pools();
 			scheduler::loop(draw_common_xenon_preload, scheduler::pipeline::renderer);
 			gfx_world_pointer_address = game::game_offset(0x10C4A354);

@@ -12,6 +12,54 @@ namespace resources
 		HICON icon{};
 		HBITMAP splash{};
 		HBITMAP console_logo{};
+		constexpr char splash_class[] = "ConsolationSplashBitmap";
+		bool splash_class_registered{};
+
+		LRESULT CALLBACK splash_bitmap_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+		{
+			// QoS 102C3280 sends STM_SETIMAGE then reads the child rectangle.
+			// Own only this startup bitmap child: no SS_BITMAP automatic sizing
+			// or DPI-dependent image scaling, and always draw the entire image.
+			if (message == STM_SETIMAGE && wparam == IMAGE_BITMAP)
+			{
+				const auto old = GetWindowLongPtrW(window, GWLP_USERDATA);
+				SetWindowLongPtrW(window, GWLP_USERDATA, lparam);
+				InvalidateRect(window, nullptr, FALSE);
+				return old;
+			}
+			if (message == WM_ERASEBKGND) return 1;
+			if (message == WM_PAINT)
+			{
+				PAINTSTRUCT paint{};
+				const auto dc = BeginPaint(window, &paint);
+				RECT rect{};
+				GetClientRect(window, &rect);
+				FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+				const auto bitmap = reinterpret_cast<HBITMAP>(GetWindowLongPtrW(window, GWLP_USERDATA));
+				BITMAP dimensions{};
+				if (bitmap && GetObject(bitmap, sizeof(dimensions), &dimensions) && dimensions.bmWidth > 0 && dimensions.bmHeight != 0)
+				{
+					const auto source = CreateCompatibleDC(dc);
+					if (source)
+					{
+						const auto old = SelectObject(source, bitmap);
+						const float scale = std::min(static_cast<float>(rect.right) / dimensions.bmWidth,
+							static_cast<float>(rect.bottom) / std::abs(dimensions.bmHeight));
+						const int width = static_cast<int>(dimensions.bmWidth * scale);
+						const int height = static_cast<int>(std::abs(dimensions.bmHeight) * scale);
+						SetStretchBltMode(dc, HALFTONE);
+						SetBrushOrgEx(dc, 0, 0, nullptr);
+						StretchBlt(dc, (rect.right - width) / 2, (rect.bottom - height) / 2, width, height,
+							source, 0, 0, dimensions.bmWidth, std::abs(dimensions.bmHeight), SRCCOPY);
+						SelectObject(source, old);
+						DeleteDC(source);
+					}
+				}
+				EndPaint(window, &paint);
+				return 0;
+			}
+			return DefWindowProcA(window, message, wparam, lparam);
+		}
 		utils::hook::detour load_image_a_hook;
 		utils::hook::detour load_icon_a_hook;
 		using load_image_a_fn = HANDLE(WINAPI*)(HINSTANCE, LPCSTR, UINT, int, int, UINT);
@@ -112,6 +160,11 @@ namespace resources
 		SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
 	}
 
+	const char* splash_control_class()
+	{
+		return splash_class_registered ? splash_class : "Static";
+	}
+
 	void prepare_splash_thread()
 	{
 		static thread_local bool configured = false;
@@ -164,6 +217,12 @@ namespace resources
 				IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
 			console_logo = static_cast<HBITMAP>(LoadImageA(self.get_handle(), MAKEINTRESOURCEA(IMAGE_CONSOLE_LOGO),
 				IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
+			WNDCLASSA bitmap_class{};
+			bitmap_class.style = CS_GLOBALCLASS; // Created by the game's HINSTANCE.
+			bitmap_class.lpfnWndProc = splash_bitmap_proc;
+			bitmap_class.hInstance = self.get_handle();
+			bitmap_class.lpszClassName = splash_class;
+			splash_class_registered = RegisterClassA(&bitmap_class) != 0;
 
 			if (!icon || !splash || !console_logo)
 			{

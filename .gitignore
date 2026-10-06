@@ -867,3 +867,6 @@ tools/dumps/
 
 # Generated/proprietary test zones stay local; converter source stays tracked.
 /tools/**/*.ff
+
+# Local proprietary DLC staging and converted game assets.
+/DLC1/
