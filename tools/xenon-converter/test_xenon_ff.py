@@ -11,6 +11,92 @@ import xenon_ff
 
 
 class FastfileTests(unittest.TestCase):
+    def test_portal_manifest_resolves_reciprocal_links_without_requiring_every_cell(self):
+        vertices = struct.pack(">9f", 0, 0, 0, 1, 0, 0, 1, 1, 0).hex()
+        def portal(destination):
+            raw = bytearray(68)
+            struct.pack_into(">I", raw, 32, 0x40001001 + destination * 52)
+            return {"raw": raw.hex(), "cell": None, "vertices": vertices}
+        cells = [{"portals": [portal(2)]}, {"portals": []}, {"portals": [portal(0)]}]
+        result = xenon_ff.portal_link_manifest(cells)
+        self.assertEqual(struct.unpack_from("<4s3I", result), (b"CSLP", 1, 3, 2))
+        self.assertEqual(struct.unpack_from("<6I", result, 16), (0, 0, 2, 2, 0, 0))
+        bad = bytearray.fromhex(cells[0]["portals"][0]["raw"])
+        struct.pack_into(">I", bad, 32, 0x40001001 + 52 * 3)
+        cells[0]["portals"][0]["raw"] = bad.hex()
+        with self.assertRaises(xenon_ff.FormatError):
+            xenon_ff.portal_link_manifest(cells)
+
+    def test_retail_dlc_light_aliases_keep_distinct_definitions(self):
+        cases = [
+            ("39411fd41ac2e99f72db59a7c851bb812b19760749cdf4085b3af43e13d4015f",
+             [(0x40400444, "light_cosine"), (0x40400451, "light_point_linear")]),
+            ("6b67f796c5574cb8caf9cdf280ae7291081388653492975a12ea4f64c6c731e6",
+             [(0x4012912D, "light_cosine"), (0x4012913A, "light_point_linear")]),
+            ("32d6bdf294d30f6cc043e3e38237085382c4c3fa3938ffe9e80d5cc524a46781",
+             [(0x402B88A5, "light_point_linear")]),
+        ]
+        for digest, aliases in cases:
+            with self.subTest(source=digest):
+                lights = []
+                for _, name in aliases:
+                    raw = bytearray(68)
+                    struct.pack_into(">I", raw, 64, xenon_ff.INLINE)
+                    lights.append({"raw": raw.hex(), "def_name": name})
+                for pointer, _ in aliases:
+                    raw = bytearray(68)
+                    struct.pack_into(">I", raw, 64, pointer)
+                    lights.append({"raw": raw.hex(), "def_name": None})
+                self.assertEqual(xenon_ff.resolve_primary_light_names(
+                    {"primary_lights": lights}, digest), len(aliases))
+                self.assertEqual([light["def_name"] for light in lights[len(aliases):]],
+                                 [name for _, name in aliases])
+
+    def test_primary_light_name_aliases_are_content_scoped(self):
+        def light(pointer, name=None):
+            raw = bytearray(68)
+            raw[0] = 2
+            struct.pack_into(">I", raw, 64, pointer)
+            return {"raw": raw.hex(), "def_name": name}
+
+        world = {"header": bytes(44).hex(), "name": "maps/mp/mp_canals.d3dbsp",
+                 "unknown_cells": [], "primary_lights": [
+                     light(0), light(xenon_ff.INLINE, "light_point_linear"),
+                     light(0x404339AD)]}
+        with self.assertRaisesRegex(xenon_ff.FormatError, "unresolved definition"):
+            xenon_ff.resolve_primary_light_names(world, "another archive")
+        with self.assertRaisesRegex(xenon_ff.FormatError, "null primary-light"):
+            xenon_ff.write_pc_com_world(bytearray(), world)
+        self.assertEqual(xenon_ff.resolve_primary_light_names(
+            world, "f5dc9af9673a2adc703f68f106f77fd797d71c84124b1638c674b810ff335a72"), 1)
+        payload = bytearray()
+        xenon_ff.write_pc_com_world(payload, world)
+        start = 44 + len(world["name"]) + 1
+        self.assertEqual(struct.unpack_from("<I", payload, start + 64)[0], 0)
+        for index in (1, 2):
+            self.assertEqual(struct.unpack_from("<I", payload, start + index * 68 + 64)[0], xenon_ff.INLINE)
+        self.assertTrue(payload.endswith(b"light_point_linear\0" * 2))
+
+        known_hash = "f5dc9af9673a2adc703f68f106f77fd797d71c84124b1638c674b810ff335a72"
+        world["primary_lights"] = [light(0x404339AD)]
+        with self.assertRaisesRegex(xenon_ff.FormatError, "unresolved definition"):
+            xenon_ff.resolve_primary_light_names(world, known_hash)
+        world["primary_lights"] = [light(xenon_ff.INLINE, "light_point_linear"),
+                                  light(0x404339B1)]
+        with self.assertRaisesRegex(xenon_ff.FormatError, "unresolved definition"):
+            xenon_ff.resolve_primary_light_names(world, known_hash)
+
+    def test_packed_names_are_not_treated_as_decoded_image_identity(self):
+        definition = "34ecccb373700b08ffffffff"
+        materials = [{"name": {"block_reference": "0x40000101"}, "textures": [
+            {"name": {"block_reference": "0x40000111"}, "definition": definition}]},
+            {"textures": [{"reference": "0x4008184d", "definition": definition}]}]
+        report = xenon_ff.resolve_material_image_references(materials)
+        self.assertEqual(report["resolved_image_references"], 0)
+        self.assertEqual(report["external_image_references"], ["0x4008184d"])
+
+        self.assertIsNone(xenon_ff._complete_pc_material_textures(materials[0], {}))
+
     def test_unsupported_reflection_probe_gets_a_real_cube_not_null_or_2d(self):
         probes = [{"image": {"name": "*reflection_probe0",
                              "pc_base_level_error": "unverified mip layout"}}]
@@ -695,6 +781,13 @@ class FastfileTests(unittest.TestCase):
 
         with mock.patch.object(xenon_ff, "inspect", return_value=report):
             converted = xenon_ff.build_pc_load_zone("unused.ff")
+        report["assets"][0]["name"] = "2d"
+        with mock.patch.object(xenon_ff, "inspect", return_value=report):
+            self.assertEqual(xenon_ff.build_pc_load_zone("unused.ff"), converted)
+        report["assets"][0]["name"] = "unsupported_2d_variant"
+        with mock.patch.object(xenon_ff, "inspect", return_value=report):
+            with self.assertRaisesRegex(xenon_ff.FormatError, "shared '2d'"):
+                xenon_ff.build_pc_load_zone("unused.ff")
 
         version, payload_size = struct.unpack_from("<2I", converted)
         decoder = zlib.decompressobj()
@@ -1649,6 +1742,17 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<6f", header),
                          (-10, -20, -30, 40, 50, 60))
 
+    def test_pc_portal_rejects_unrelocated_cell_instead_of_nulling_it(self):
+        raw = bytearray(68)
+        struct.pack_into(">I", raw, 32, 0x407FA8E9)
+        cell = {"tree": None, "cull_groups": "", "portals": [
+            {"raw": raw.hex(), "cell": None, "vertices": ""}]}
+        payload = bytearray()
+        with self.assertRaisesRegex(xenon_ff.FormatError,
+                                    "portal-to-cell relocation is required"):
+            xenon_ff._write_pc_gfx_cell_nested(payload, cell)
+        self.assertEqual(payload, b"")
+
     def test_pc_bounds_convert_min_max_to_midpoint_half_size(self):
         raw = struct.pack(">6f", -8.0, 4.0, -2.0, 12.0, 10.0, 6.0)
         self.assertEqual(struct.unpack("<6f", xenon_ff._pc_bounds_from_xenon(raw)),
@@ -1795,6 +1899,16 @@ class FastfileTests(unittest.TestCase):
                 "maps/mp/mp_canals.d3dbsp"),
             xenon_ff.PC_CLIP_BLOCK2_CURSOR_BIAS)
 
+    def test_bags_clip_cursor_accounts_for_live_four_byte_skew(self):
+        bias = xenon_ff._pc_clip_block2_cursor_bias("maps/mp/mp_bags.d3dbsp")
+        self.assertEqual(bias, xenon_ff.PC_CLIP_BLOCK2_CURSOR_BIAS - 4)
+        self.assertEqual(xenon_ff._pc_clip_block2_cursor_bias(
+            "maps\\mp\\mp_bags.d3dbsp"), bias)
+        actual_plane_base = 0x2B575B14
+        previous_pointer = 0x2B57A80C
+        corrected_pointer = previous_pointer + bias - xenon_ff.PC_CLIP_BLOCK2_CURSOR_BIAS
+        self.assertEqual(corrected_pointer, actual_plane_base + 985 * 20)
+
     def test_shared_clip_planes_reject_invalid_sign_mask(self):
         header = bytearray(324)
         struct.pack_into(">2I", header, 8, 1, 0x40001235)
@@ -1814,6 +1928,16 @@ class FastfileTests(unittest.TestCase):
         converted = xenon_ff._convert_clip_header({"header": header.hex()})
         self.assertEqual(struct.unpack_from("<2H", converted, 156),
                          (8878, 3))
+
+    def test_omitted_clip_dynents_clear_retained_and_active_counts(self):
+        header = bytearray([0xA5] * 324)
+        header[260:262] = struct.pack(">H", 13)
+        xenon_ff._omit_pc_clip_dynamic_entities(header)
+        self.assertEqual(header[260:270], bytes(10))
+        self.assertEqual(header[272:320], bytes(48))
+        self.assertEqual(header[258:260], bytes([0xA5] * 2))
+        self.assertEqual(header[270:272], bytes([0xA5] * 2))
+        self.assertEqual(header[320:324], bytes([0xA5] * 4))
 
     def test_collision_aabb_tree_swaps_child_fields_independently(self):
         source = struct.pack(

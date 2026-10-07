@@ -4,6 +4,13 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 
 ## Patched Dvars
 
+First-person traversal toggles now accept native camera mode `1`, including
+when snapshot parsing selects it for the native body camera. `pm_climbFirstPerson 1` requests first-person
+ladder/ledge/pipe cameras, and `pm_mantleFirstPerson 1` requests first-person
+mantling. `0` preserves native traversal cameras; explicit `cg_thirdPerson 2`
+takes precedence over both. This changes camera selection, not traversal
+collision or animations. Verify entry, movement and exit on each traversal type.
+
 ### Noclip Movement
 
 While `noclip` is enabled, hold your existing jump binding to ascend and crouch

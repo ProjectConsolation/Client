@@ -5,6 +5,7 @@
 #include "component/engine/console/command.hpp"
 #include "component/engine/patches/xlive.hpp"
 #include "camera_validation.hpp"
+#include "traversal_camera_policy.hpp"
 #include "component/utils/resources.hpp"
 #include "component/utils/scheduler.hpp"
 
@@ -320,18 +321,16 @@ namespace patches
 		bool first_person_traversal_requested()
 		{
 			const auto* const ps = reinterpret_cast<const unsigned char*>(game::game_offset(0x12A4CDFC));
-			if (*reinterpret_cast<const int*>(ps + 4) >= 6
-				|| (*reinterpret_cast<const unsigned int*>(ps + 12) & 8u) == 0)
-				return false;
 			const auto* const third_person = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25F8));
-			if (third_person && third_person->current.enabled)
-				return false; // Preserve an explicit third-person request.
-			const int type = *reinterpret_cast<const int*>(ps + 3956);
-			if (type >= 4 && type <= 6) // mantle_40 / mantle_44 / mantle_56
-				return pm_mantleFirstPerson && pm_mantleFirstPerson->current.enabled;
-			if (type == 2 || type == 3 || type == 7) // ladder / ledge / pipe
-				return pm_climbFirstPerson && pm_climbFirstPerson->current.enabled;
-			return false; // Balance, transitions and wallhug keep their native camera.
+			// QoS snapshot parsing (1030D4BC) sets mode 1 for cg_viewPersBond.
+			// Treating that native body-camera boolean as
+			// an opt-out prevented the first-person traversal hooks from running.
+			// Only the client's explicit IW3 chase-camera mode takes precedence.
+			return traversal_camera_policy::first_person(*reinterpret_cast<const int*>(ps + 4),
+				*reinterpret_cast<const unsigned int*>(ps + 12), third_person ? third_person->current.integer : 0,
+				*reinterpret_cast<const int*>(ps + 3956),
+				pm_mantleFirstPerson && pm_mantleFirstPerson->current.enabled,
+				pm_climbFirstPerson && pm_climbFirstPerson->current.enabled);
 		}
 
 		// Preserve all engine register/FPU state when querying from usercall sites.

@@ -1,5 +1,6 @@
 #include <std_include.hpp>
 #include "component_loader.hpp"
+#include <cstdlib>
 
 namespace
 {
@@ -22,6 +23,11 @@ bool component_loader::post_start()
 	static auto handled = false;
 	if (handled) return true;
 	handled = true;
+	// Registered at runtime, after DLL global constructors. CRT exit is LIFO:
+	// stop components while their global caches/hooks are still alive, rather
+	// than waiting for the registry's earlier static-destructor callback.
+	if (std::atexit([] { component_loader::pre_destroy(); }) != 0)
+		throw std::runtime_error("Could not register component shutdown");
 
 	try
 	{

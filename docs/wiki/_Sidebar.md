@@ -3,6 +3,7 @@
   - [[Extended Features]]
   - [[Bots]]
   - [[Console]]
+  - [[Discord Rich Presence]]
   - [[Commands]]
   - [[Patched Dvars]]
   - [[Patched Raw Input]]

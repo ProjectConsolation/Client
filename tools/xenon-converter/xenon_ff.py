@@ -53,7 +53,14 @@ def _pc_clip_block2_cursor_bias(clip_name):
     # Xenon Barge run resolved every collision-plane reference four bytes past
     # its 20-byte record, proving that this archive's unmodeled block cursor is
     # four bytes lower than the Canals-derived baseline.
-    if clip_name.replace("\\", "/").endswith("/mp_barge.d3dbsp"):
+    # Retail DLC Bags: at the BoxOnPlaneSide trap, cm.planes=0x2B575B14
+    # and all 1,949 node plane pointers were congruent to base+4 (mod 20).
+    # The failing pointer 0x2B57A80C addressed plane 985+4; base+985*20
+    # contains a valid (0,1,0), distance -0, type 1/signbits 0 record.
+    # Keep this a measured correction until the block allocator model is
+    # complete; do not mask signbits or suppress the native assertion.
+    if clip_name.replace("\\", "/").endswith(
+            ("/mp_barge.d3dbsp", "/mp_bags.d3dbsp")):
         bias -= 4
     return bias
 
@@ -632,6 +639,7 @@ def read_zone(path):
         raise FormatError("invalid asset type")
     report = {
         "file": str(path), "version": header[0], "is_xenon": True,
+        "source_sha256": hashlib.sha256(blob).hexdigest(),
         "file_bytes": len(blob), "payload_bytes": len(data),
         "block_bytes": list(header[2:]), "trailing_bytes": len(decoder.unused_data),
         "script_string_count": strings, "asset_count": count,
@@ -1434,6 +1442,40 @@ def requires_pc_state_template(techset_name, source_state_count):
             or (alpha_test and source_state_count in (5, 6)))
 
 
+def resolve_primary_light_names(asset, source_sha256):
+    """Resolve a content-scoped relocation calibration, not arbitrary pointers.
+
+    Retail DLC aliases were checked against the inline ComWorld name sequence,
+    packed string spacing, and lightdef manifest name/attenuation references.
+    The PC R_SetShadowableLight (103B4300) requires a non-null def for spots.
+    These calibrations are restricted to the exact inspected Xbox archives until
+    Reader models the complete Xenon block-2 allocation cursor.
+    """
+    aliases = {
+        "f5dc9af9673a2adc703f68f106f77fd797d71c84124b1638c674b810ff335a72":
+            {0x404339AD: "light_point_linear"},
+        "39411fd41ac2e99f72db59a7c851bb812b19760749cdf4085b3af43e13d4015f":
+            {0x40400444: "light_cosine", 0x40400451: "light_point_linear"},
+        "6b67f796c5574cb8caf9cdf280ae7291081388653492975a12ea4f64c6c731e6":
+            {0x4012912D: "light_cosine", 0x4012913A: "light_point_linear"},
+        "32d6bdf294d30f6cc043e3e38237085382c4c3fa3938ffe9e80d5cc524a46781":
+            {0x402B88A5: "light_point_linear"},
+    }.get(source_sha256, {})
+    inline_names = {light["def_name"] for light in asset["primary_lights"]
+                    if isinstance(light.get("def_name"), str)}
+    resolved = 0
+    for index, light in enumerate(asset["primary_lights"]):
+        pointer = u32(bytes.fromhex(light["raw"]), 64)
+        if pointer not in (0, INLINE, INSERT) and not light.get("def_name"):
+            name = aliases.get(pointer)
+            if name is None or name not in inline_names:
+                raise FormatError(
+                    f"primary light {index} has unresolved definition name {pointer:#x}")
+            light["def_name"] = name
+            resolved += 1
+    return resolved
+
+
 def write_pc_com_world(payload, asset):
     header = _little_endian_words(bytes.fromhex(asset["header"]))
     lights = asset["primary_lights"]
@@ -1448,6 +1490,8 @@ def write_pc_com_world(payload, asset):
 
     for light in lights:
         raw = bytes.fromhex(light["raw"])
+        if u32(raw, 64) and not isinstance(light.get("def_name"), str):
+            raise FormatError("cannot emit a null primary-light definition for a non-null source name")
         converted = _little_endian_words(raw, 4, 64)
         struct.pack_into("<I", converted, 64, INLINE if light["def_name"] else 0)
         payload.extend(converted)
@@ -2335,7 +2379,8 @@ def write_pc_xmodel(payload, model, material_pointers=None):
 def _complete_pc_material_textures(material_value, images_by_name):
     """Keep a technique only when every referenced texture has PC image data."""
     textures = material_value.get("textures", [])
-    if not textures or any(image_value.get("name") not in images_by_name
+    if not textures or any(not isinstance(image_value.get("name"), str)
+                           or image_value.get("name") not in images_by_name
                            for image_value in textures):
         return None
     return textures
@@ -3063,7 +3108,8 @@ def _pc_gfx_cell_header(cell, include_static_models=False,
 
 
 def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
-                              include_empty_tree=False, include_model_indexes=False):
+                              include_empty_tree=False, include_model_indexes=False,
+                              portal_links_validated=False):
     if include_static_models and cell["tree"]:
         payload.extend(_pc_gfx_aabb_header(cell["tree"], include_model_indexes))
         _write_pc_gfx_aabb_nested(payload, cell["tree"], include_model_indexes)
@@ -3072,6 +3118,16 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
 
     for portal in cell["portals"]:
         raw = bytes.fromhex(portal["raw"])
+        source_cell_pointer = u32(raw, 32)
+        if source_cell_pointer and not portal["cell"] and not portal_links_validated:
+            # QoS PC R_VisitPortalsForCell (103AC2A0) recurses through +32
+            # without a null check. The Bags dump captured a null destination
+            # becoming cell index 16060 in a 28-cell world. Packed Xenon links
+            # require relocation into the PC root-cell allocation; do not
+            # silently replace them with null or copy their Xbox offsets.
+            raise FormatError(
+                f"unrelocated GfxPortal cell reference {source_cell_pointer:#x}; "
+                "PC portal-to-cell relocation is required")
         converted = _little_endian_words(raw, 0, 32)
         converted[40:68] = raw[40:68]
         struct.pack_into("<2I", converted, 32,
@@ -3278,7 +3334,7 @@ def write_pc_gfx_world(payload, asset, primary_light_count,
     for cell in cells:
         _write_pc_gfx_cell_nested(
             payload, cell, include_cell_trees, include_empty_cell_trees,
-            include_static_models)
+            include_static_models, geometry.get("pc_portal_links_validated", False))
     for lightmap in lightmaps:
         pair = lightmap.get("images", [])
         if len(pair) != 2:
@@ -3586,6 +3642,15 @@ def _bind_shared_clip_planes(asset, gfx_world):
     asset["collision"]["planes"]["data"] = planes.hex()
 
 
+def _omit_pc_clip_dynamic_entities(header):
+    # QoS PC 0x102E89BF copies the retained count at clipMap+260 into
+    # the active count at +262. Clearing only +262 onward resurrected Bags'
+    # omitted dynents (Xenon 13 read as PC 3328) with a null definition array.
+    # All counts and their omitted array pointers must be cleared together.
+    header[260:270] = bytes(10)
+    header[272:320] = bytes(48)
+
+
 def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
                       entity_name):
     collision = asset["collision"]
@@ -3617,8 +3682,7 @@ def write_pc_clip_map(payload, asset, block2_cursor, clip_name, entity_string,
     struct.pack_into("<I", header, 172, INLINE if visibility else 0)
     struct.pack_into("<I", header, 180, INLINE)
     struct.pack_into("<I", header, 184, INLINE)
-    header[262:270] = bytes(8)
-    header[272:320] = bytes(48)
+    _omit_pc_clip_dynamic_entities(header)
 
     payload.extend(header)
     payload.extend(clip_name.encode() + b"\0")
@@ -3707,7 +3771,7 @@ def resolve_material_image_references(materials):
     family_images = {}
     for material_value in materials:
         for texture in material_value.get("textures", []):
-            if texture.get("name") is not None:
+            if isinstance(texture.get("name"), str):
                 family_images.setdefault(texture["name"], texture)
     canals_cobble_slots = {
         "0x40538ddd": "~gt_cobble_stonegrnd_02_s-g&$~3d30c20d",
@@ -3740,7 +3804,8 @@ def resolve_material_image_references(materials):
         if id(material_value) in seen_materials:
             continue
         seen_materials.add(id(material_value))
-        material_name = material_value.get("name", "").split("/", 1)[-1]
+        raw_name = material_value.get("name", "")
+        material_name = raw_name.split("/", 1)[-1] if isinstance(raw_name, str) else ""
         for texture in material_value.get("textures", []):
             reference, definition = texture.get("reference"), texture.get("definition")
             if reference is None or not definition:
@@ -3791,7 +3856,7 @@ def resolve_material_image_references(materials):
                     image_value["resolved_reference"] = reference
                     resolved_count += 1
             updated.append(image_value)
-            if image_value.get("name") is not None and prefix is not None:
+            if isinstance(image_value.get("name"), str) and prefix is not None:
                 decoded_slots.append((prefix, image_value))
         material_value["textures"] = updated
 
@@ -3816,6 +3881,45 @@ def materials_preceding_gfx_world(assets, gfx_world):
     raise FormatError("GfxWorld is absent from its asset stream")
 
 
+def portal_link_manifest(cells):
+    """Resolve packed Xenon destinations only when the root allocation is unambiguous.
+
+    Reciprocal portals with identical vertex sets identify the root allocation.
+    The runtime adapter maps indices into the newly loaded PC allocation; Xbox
+    packed offsets are never copied into a PC pointer field.
+    """
+    references = []
+    polygons = {}
+    for ci, cell in enumerate(cells):
+        for pi, portal in enumerate(cell["portals"]):
+            pointer = u32(bytes.fromhex(portal["raw"]), 32)
+            if portal["cell"] or pointer in (0, INLINE, INSERT):
+                raise FormatError("portal destination is not a packed root-cell reference")
+            references.append((ci, pi, pointer))
+            vertices = bytes.fromhex(portal["vertices"])
+            key = tuple(sorted(vertices[i:i + 12] for i in range(0, len(vertices), 12)))
+            if key:
+                polygons.setdefault(key, []).append((ci, pointer))
+    if not references:
+        return b""
+    bases = set()
+    for links in polygons.values():
+        if len(links) == 2 and links[0][0] != links[1][0]:
+            a, b = links
+            bases.update((a[1] - 52 * b[0], b[1] - 52 * a[0]))
+    if len(bases) != 1:
+        raise FormatError("cannot uniquely identify packed GfxPortal root-cell allocation")
+    base = bases.pop()
+    if base >> 28 != 4 or any(p < base or (p - base) % 52
+                             or (p - base) // 52 >= len(cells)
+                             for _, _, p in references):
+        raise FormatError("GfxPortal destination exceeds identified root-cell allocation")
+    result = bytearray(struct.pack("<4s3I", b"CSLP", 1, len(cells), len(references)))
+    for ci, pi, pointer in references:
+        result.extend(struct.pack("<3I", ci, pi, (pointer - base) // 52))
+    return bytes(result)
+
+
 def _pc_map_assets(models, techset_names, images, materials, rawfiles,
                    include_materials):
     # QoS PC's image-pointer loader (0x103D45B0) immediately dereferences a
@@ -3829,8 +3933,10 @@ def _pc_map_assets(models, techset_names, images, materials, rawfiles,
                               for material_value in materials]
                if include_materials else [])
             + [(5, model) for model in models]
-            + [(13, "com"), (17, "gfx"), (15, "game")]
-            + [(32, rawfile) for rawfile in rawfiles])
+            + [(13, "com")]
+            + [(32, rawfile) for rawfile in rawfiles if isinstance(rawfile, dict) and rawfile.get("portal_links")]
+            + [(17, "gfx"), (15, "game")]
+            + [(32, rawfile) for rawfile in rawfiles if not (isinstance(rawfile, dict) and rawfile.get("portal_links"))])
 
 
 def build_pc_map_probe(path, include_images=False, include_materials=False,
@@ -3923,6 +4029,13 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
         and isinstance(asset.get("name"), str)
         and "data" in asset
     ]
+    portal_links = portal_link_manifest(gfx_world["geometry"]["cells"])
+    if portal_links:
+        rawfiles.insert(0, {"name": "consolation/portal-links/" + path.stem,
+                           "data": (portal_links + b"\0").hex(), "portal_links": True})
+        gfx_world["geometry"]["pc_portal_links_validated"] = True
+        if diagnostics is not None:
+            diagnostics["portal_link_adapter_version"] = 1
     include_images = include_images or include_materials
     preceding_materials = materials_preceding_gfx_world(
         report["assets"], gfx_world)
@@ -4114,7 +4227,10 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     source_table_base = gfx_world["geometry"].get("asset_table_block2_offset")
     # Packed block-2 offsets are relative to the XFile stream after its
     # 11-byte runtime prefix, while report offsets start at the payload root.
-    inferred_table_base = asset_table_offset - 11
+    # Native PC tables are four-byte aligned (also verified in
+    # read_pc_material_donors). The standalone DLC Canals/Cistern/Dam
+    # archives end their string blocks off that alignment; Bags does not.
+    inferred_table_base = (asset_table_offset - 11 + 3) & ~3
     asset_table_base = (int(source_table_base, 16)
                         if source_table_base else inferred_table_base)
     if source_table_base and asset_table_base != inferred_table_base:
@@ -4188,7 +4304,17 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
                      for value in model["materials"]] if include_materials else None)
         write_pc_xmodel(payload, model, pointers)
 
+    resolved_light_names = resolve_primary_light_names(
+        com_world, report["source_sha256"])
+    if diagnostics is not None:
+        diagnostics["primary_light_name_aliases_resolved"] = resolved_light_names
     write_pc_com_world(payload, com_world)
+
+    for rawfile in rawfiles:
+        if rawfile.get("portal_links"):
+            data = bytes.fromhex(rawfile["data"])
+            payload.extend(struct.pack("<3I", INLINE, len(data) - 1, INLINE))
+            payload.extend(rawfile["name"].encode() + b"\0" + data)
 
     write_pc_gfx_world(payload, gfx_world, len(com_world["primary_lights"]),
                        surface_material_pointers, image_pointers)
@@ -4197,6 +4323,8 @@ def build_pc_map_probe(path, include_images=False, include_materials=False,
     payload.extend(game_name.encode() + b"\0")
 
     for rawfile in rawfiles:
+        if rawfile.get("portal_links"):
+            continue
         data = bytes.fromhex(rawfile["data"])
         if not data or not data.endswith(b"\0"):
             raise FormatError(f"rawfile {rawfile['name']} is not NUL-terminated")
@@ -4322,9 +4450,13 @@ def build_pc_load_zone(path):
     if len(source_techsets) != 1:
         raise FormatError("load-zone conversion requires exactly one techset")
     techset_name = source_techsets[0].get("name")
-    if techset_name != ",2d":
+    if techset_name not in (",2d", "2d"):
         raise FormatError(
-            f"load-zone conversion requires the external ',2d' techset, got {techset_name!r}")
+            f"load-zone conversion requires the shared '2d' techset, got {techset_name!r}")
+    # Dam embeds the Xbox 2d set instead of referring to it externally. The
+    # Xbox shaders cannot be used on PC; bind the same native PC shared set
+    # used by the other load zones rather than emitting that embedded set.
+    techset_name = ",2d"
 
     materials = [dict(asset) for asset in report["assets"]
                  if asset["type"] == "material"]

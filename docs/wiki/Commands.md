@@ -1,5 +1,10 @@
 # Commands
 
+## Discord Rich Presence
+
+`discordRpcStatus` reports the local connection and activity acknowledgement.
+See [Discord Rich Presence](Discord-Rich-Presence) for setup and saved dvars.
+
 Project: Consolation includes a small set of utility and debugging commands that are useful for advanced users, modders, and troubleshooting.
 
 ## Commands
