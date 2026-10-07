@@ -7,6 +7,7 @@
 #include "component/engine/console/console.hpp"
 #include "filesystem.hpp"
 #include "menu_file.hpp"
+#include "../renderer/menu_image.hpp"
 
 #include "game/game.hpp"
 
@@ -28,13 +29,88 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
+#include "menu_slideshow.hpp"
+#include "menu_loadout.hpp"
 
 namespace menu_file
 {
 	namespace
 	{
+		// Native String_Parse disallows line breaks. Disk scripts need the same
+		// single-line, separated-token representation as compiled menu assets.
+		std::string normalize_script(const std::string& source)
+		{
+			std::string result;
+			bool quoted = false;
+			for (std::size_t i = 0; i < source.size(); ++i)
+			{
+				const char c = source[i];
+				if (quoted)
+				{
+					result += c;
+					if (c == '\\' && i + 1 < source.size()) result += source[++i];
+					else if (c == '"') quoted = false;
+					continue;
+				}
+				if (c == '"') { quoted = true; result += c; }
+				else if (source.compare(i, 2, "//") == 0)
+				{
+					while (i + 1 < source.size() && source[i + 1] != '\n') ++i;
+					result += ' ';
+				}
+				else if (source.compare(i, 2, "/*") == 0)
+				{
+					i = source.find("*/", i + 2);
+					if (i == std::string::npos) break; // tokenizer already rejects this
+					++i;
+					result += ' ';
+				}
+				else if (c == ';') result += " ; ";
+				else result += std::isspace(static_cast<unsigned char>(c)) ? ' ' : c;
+			}
+			return result;
+		}
+		// Expected unsupported input is a warning, not a thrown exception during
+		// automatic discovery. Do not strip directives and publish half a menu.
+		// Match tokenizer's handling of strings/comments, including action blocks.
+		int unsupported_directive_line(const std::string& source)
+		{
+			enum class state { normal, quoted, line_comment, block_comment };
+			auto mode = state::normal;
+			int line = 1;
+			for (std::size_t i = 0; i < source.size(); ++i)
+			{
+				const char c = source[i];
+				const char next = i + 1 < source.size() ? source[i + 1] : '\0';
+				if (c == '\n') ++line;
+				if (mode == state::line_comment)
+				{
+					if (c == '\n') mode = state::normal;
+					continue;
+				}
+				if (mode == state::block_comment)
+				{
+					if (c == '*' && next == '/') { mode = state::normal; ++i; }
+					continue;
+				}
+				if (mode == state::quoted)
+				{
+					if (c == '\\' && next) { if (next == '\n') ++line; ++i; }
+					else if (c == '"') mode = state::normal;
+					continue;
+				}
+				if (c == '/' && next == '/') { mode = state::line_comment; ++i; }
+				else if (c == '/' && next == '*') { mode = state::block_comment; ++i; }
+				else if (c == '"') mode = state::quoted;
+				else if (c == '#') return line;
+			}
+			return 0;
+		}
+
 		// ---------------------------------------------------------------
 		// Tokenizer
 		// ---------------------------------------------------------------
@@ -100,9 +176,8 @@ namespace menu_file
 				return token;
 			}
 
-		// Reads the raw text between a matching pair of braces, without
-			// tokenizing its contents. Action scripts are passed to QoS's native
-			// script runner; braces inside comments and strings are not delimiters.
+			// Read balanced source, then serialize a single-line script for QoS.
+			// Braces inside comments and strings are not delimiters.
 			std::string read_balanced_block()
 			{
 				skip_ignorable();
@@ -149,7 +224,7 @@ namespace menu_file
 					fail("unterminated block");
 				}
 
-				return source_.substr(start, (cursor_ - 1) - start);
+				return normalize_script(source_.substr(start, (cursor_ - 1) - start));
 			}
 
 			float number()
@@ -309,6 +384,7 @@ namespace menu_file
 		struct parsed_item
 		{
 			std::string name;
+			std::string background;
 			parsed_rect rect{};
 			int type = 0; // ITEM_TYPE_*, see item_type_keywords
 			int style = 0;
@@ -326,13 +402,17 @@ namespace menu_file
 			int text_align_mode = 0;
 			float text_align_x = 0, text_align_y = 0;
 			std::string action, on_focus, on_accept, leave_focus;
+			std::vector<std::pair<int, std::string>> key_actions;
 			std::string mouse_enter, mouse_exit, mouse_enter_text, mouse_exit_text;
 			std::string dvar, dvar_test, enable_dvar;
 
 			bool has_listbox = false;
 			float lb_element_width = 0, lb_element_height = 0;
 			int lb_element_style = 0;
-			int lb_feeder = 0;
+			float lb_feeder = 0;
+			std::vector<std::array<int, 4>> lb_columns;
+			std::string lb_double_click;
+			std::array<float, 4> lb_select_border{0.80f, 0.025f, 0.065f, 1.0f};
 
 			bool has_editfield = false;
 			float ef_min = 0, ef_max = 0, ef_def = 0, ef_range = 0;
@@ -342,6 +422,8 @@ namespace menu_file
 		struct parsed_menu
 		{
 			std::string name;
+			std::string background;
+			std::string overlay_for, scaleform_menu;
 			parsed_rect rect{0, 0, 640, 480};
 			int full_screen = 0;
 			bool visible = false;
@@ -462,13 +544,16 @@ namespace menu_file
 			tok.fail(std::format("unrecognized {} value '{}'", field_name, token));
 		}
 
-		// Font is stored in itemDef_s as an int enum (fontEnum), not a
-		// string, and this build's font-index table has not been located
-		// yet. Anything other than "default" logs and falls back to 0 --
-		// treat this as a placeholder until the real table is confirmed.
+		// Verified QoS Item_Text_Paint 102CE710 and CL_GetFontForMode
+		// 102D9130; compare KisakCOD UI_GetFontHandle. These are modes,
+		// not arbitrary asset registrations or TTF filename indexes.
 		int resolve_font_enum(tokenizer& tok, const std::string& name)
 		{
 			const auto normalized = lower(name);
+			if (normalized == "bigfont" || normalized == "fonts/bigfont") return 2;
+			if (normalized == "objectivefont" || normalized == "fonts/objectivefont") return 6;
+			if (normalized == "consolefont" || normalized == "fonts/consolefont") return 5;
+			if (normalized == "boldfont" || normalized == "fonts/boldfont") return 4;
 			if (normalized == "default" || normalized.empty())
 			{
 				return 0;
@@ -495,6 +580,7 @@ namespace menu_file
 		{
 			static const std::unordered_map<std::string, item_field_fn> table{
 				{"name", [](tokenizer& t, parsed_item& i) { i.name = t.next(); }},
+				{"background", [](tokenizer& t, parsed_item& i) { i.background = t.next(); }},
 				{"rect", [](tokenizer& t, parsed_item& i) { i.rect = read_rect(t); }},
 				{"type", [](tokenizer& t, parsed_item& i) { i.type = read_type_keyword(t, item_type_keywords(), "type"); }},
 				{"style", [](tokenizer& t, parsed_item& i) { i.style = read_type_keyword(t, window_style_keywords(), "style"); }},
@@ -514,6 +600,11 @@ namespace menu_file
 				{"action", [](tokenizer& t, parsed_item& i) { i.action = t.read_balanced_block(); }},
 				{"onfocus", [](tokenizer& t, parsed_item& i) { i.on_focus = t.read_balanced_block(); }},
 				{"onaccept", [](tokenizer& t, parsed_item& i) { i.on_accept = t.read_balanced_block(); }},
+				{"execkeyint", [](tokenizer& t, parsed_item& i) {
+					const int key = t.integer();
+					if (key < 0 || key > 255) t.fail("execKeyInt expects a native key code from 0 to 255");
+					i.key_actions.emplace_back(key, t.read_balanced_block());
+				}},
 				{"leavefocus", [](tokenizer& t, parsed_item& i) { i.leave_focus = t.read_balanced_block(); }},
 				{"mouseenter", [](tokenizer& t, parsed_item& i) { i.mouse_enter = t.read_balanced_block(); }},
 				{"mouseexit", [](tokenizer& t, parsed_item& i) { i.mouse_exit = t.read_balanced_block(); }},
@@ -529,7 +620,17 @@ namespace menu_file
 				{"elementwidth", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_element_width = t.number(); }},
 				{"elementheight", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_element_height = t.number(); }},
 				{"elementtype", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_element_style = t.integer(); }},
-				{"feeder", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_feeder = t.integer(); }},
+				{"feeder", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_feeder = t.number(); }},
+				{"columns", [](tokenizer& t, parsed_item& i) {
+					i.has_listbox = true;
+					const auto count = t.integer();
+					if (count < 0 || count > 16) t.fail("columns must contain 0 to 16 entries");
+					i.lb_columns.clear();
+					for (int column = 0; column < count; ++column)
+						i.lb_columns.push_back({t.integer(), t.integer(), t.integer(), t.integer()});
+				}},
+				{"doubleclick", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_double_click = t.read_balanced_block(); }},
+				{"selectborder", [](tokenizer& t, parsed_item& i) { i.has_listbox = true; i.lb_select_border = read_color4(t); }},
 				// itemDefData_t: editFieldDef_s
 				{"maxchars", [](tokenizer& t, parsed_item& i) { i.has_editfield = true; i.ef_max_chars = t.integer(); }},
 				{"maxcharsgotonext", [](tokenizer& t, parsed_item& i) { i.has_editfield = true; i.ef_max_chars_goto_next = t.integer(); }},
@@ -590,6 +691,9 @@ namespace menu_file
 		{
 			static const std::unordered_map<std::string, menu_field_fn> table{
 				{"name", [](tokenizer& t, parsed_menu& m) { m.name = t.next(); }},
+				{"background", [](tokenizer& t, parsed_menu& m) { m.background = t.next(); }},
+				{"overlayfor", [](tokenizer& t, parsed_menu& m) { m.overlay_for = t.next(); }},
+				{"scaleformmenu", [](tokenizer& t, parsed_menu& m) { m.scaleform_menu = t.next(); }},
 				{"rect", [](tokenizer& t, parsed_menu& m) { m.rect = read_rect(t); }},
 				{"fullscreen", [](tokenizer& t, parsed_menu& m) { m.full_screen = t.integer(); }},
 				{"style", [](tokenizer& t, parsed_menu& m) { m.style = read_type_keyword(t, window_style_keywords(), "style"); }},
@@ -658,6 +762,21 @@ namespace menu_file
 			{
 				tok.fail("menuDef is missing a 'name' field");
 			}
+			if (!menu.overlay_for.empty())
+			{
+				if (!menu.on_open.empty() || !menu.on_close.empty() || !menu.on_esc.empty() || menu.full_screen)
+					tok.fail("display-only overlays cannot have menu actions or fullscreen");
+				for (const auto& item : menu.items)
+					if (!item.decoration || item.type != 0 || item.background.empty()
+						|| item.rect.w <= 0 || item.rect.h <= 0
+						|| (item.rect.horz_align != 1 && item.rect.horz_align != 3) || item.rect.vert_align != 1
+						|| !item.text.empty() || !item.action.empty() || !item.on_focus.empty()
+						|| !item.on_accept.empty() || !item.leave_focus.empty()
+						|| !item.mouse_enter.empty() || !item.mouse_exit.empty()
+						|| !item.mouse_enter_text.empty() || !item.mouse_exit_text.empty() || !item.dvar.empty())
+						tok.fail("overlays accept only decorative images with left/right, top-aligned rectangles");
+			}
+			else if (!menu.scaleform_menu.empty()) tok.fail("scaleformMenu requires overlayFor");
 
 			return menu;
 		}
@@ -666,6 +785,7 @@ namespace menu_file
 		{
 			tokenizer tok(source);
 			std::vector<parsed_menu> menus;
+			bool root = false;
 			while (!tok.at_end())
 			{
 				const auto field = tok.next();
@@ -674,6 +794,8 @@ namespace menu_file
 					break;
 				}
 
+				if (field == "{" && !root) { root = true; continue; }
+				if (field == "}" && root) { root = false; continue; }
 				if (lower(field) != "menudef")
 				{
 					tok.fail(std::format("expected 'menuDef', got '{}'", field));
@@ -681,6 +803,7 @@ namespace menu_file
 
 				menus.push_back(parse_menu(tok));
 			}
+			if (root) tok.fail("unterminated menu file root");
 
 			return menus;
 		}
@@ -719,11 +842,15 @@ namespace menu_file
 			item->window.style = parsed.style;
 			item->window.border = parsed.border;
 			item->window.borderSize = parsed.border_size;
-			item->window.staticFlags = parsed.decoration ? 1 : 0;
-			std::fill(std::begin(item->window.dynamicFlags), std::end(item->window.dynamicFlags), parsed.visible ? 4 : 0);
+			// KisakCOD Item_SetFocus; QoS PC 102D15C0 checks this exact bit.
+			item->window.staticFlags = parsed.decoration ? 0x100000 : 0;
+			// QoS Window_Paint 102D1A00 consumes 0x10000 for explicit foreColor.
+			std::fill(std::begin(item->window.dynamicFlags), std::end(item->window.dynamicFlags), 0x10000 | (parsed.visible ? 4 : 0));
 			std::copy(parsed.fore_color.begin(), parsed.fore_color.end(), item->window.foreColor);
 			std::copy(parsed.back_color.begin(), parsed.back_color.end(), item->window.backColor);
 			std::copy(parsed.border_color.begin(), parsed.border_color.end(), item->window.borderColor);
+			if (!parsed.background.empty() && !lower(parsed.background).ends_with(".png"))
+				item->window.background = game::Material_RegisterHandle(parsed.background.c_str());
 
 			item->type = parsed.type;
 			item->fontEnum = parsed.font_enum;
@@ -737,6 +864,16 @@ namespace menu_file
 			item->action = allocate_menu_string_opt(parsed.action);
 			item->onFocus = allocate_menu_string_opt(parsed.on_focus);
 			item->onAccept = allocate_menu_string_opt(parsed.on_accept);
+			// QoS Menu_HandleKey 102D7210 consults onKey before generic Enter.
+			// onAccept is for edit fields; listbox action also runs on arrows.
+			for (auto key = parsed.key_actions.rbegin(); key != parsed.key_actions.rend(); ++key)
+			{
+				auto* handler = utils::memory::allocate<game::ItemKeyHandler>();
+				handler->key = key->first;
+				handler->action = allocate_menu_string(key->second);
+				handler->next = item->onKey;
+				item->onKey = handler;
+			}
 			item->leaveFocus = allocate_menu_string_opt(parsed.leave_focus);
 			item->mouseEnter = allocate_menu_string_opt(parsed.mouse_enter);
 			item->mouseExit = allocate_menu_string_opt(parsed.mouse_exit);
@@ -749,15 +886,26 @@ namespace menu_file
 
 			if (parsed.has_listbox)
 			{
+				// Both paint and input validate dataType == 6 before using the union.
+				item->dataType = 6;
 				auto* listbox = utils::memory::allocate<game::listBoxDef_s>();
 				std::memset(listbox, 0, sizeof(*listbox));
 				listbox->elementWidth = parsed.lb_element_width;
 				listbox->elementHeight = parsed.lb_element_height;
 				listbox->elementStyle = parsed.lb_element_style;
+				listbox->numColumns = static_cast<int>(parsed.lb_columns.size());
+				for (int column = 0; column < listbox->numColumns; ++column)
+				{
+					const auto& value = parsed.lb_columns[column];
+					listbox->columnInfo[column] = {value[0], value[1], value[2], value[3]};
+				}
+				listbox->doubleClick = allocate_menu_string_opt(parsed.lb_double_click);
+				std::copy(parsed.lb_select_border.begin(), parsed.lb_select_border.end(), listbox->selectBorder);
 				item->typeData.listBox = listbox;
 			}
 			else if (parsed.has_editfield)
 			{
+				item->dataType = 4;
 				auto* edit = utils::memory::allocate<game::editFieldDef_s>();
 				std::memset(edit, 0, sizeof(*edit));
 				edit->minVal = parsed.ef_min;
@@ -819,9 +967,426 @@ namespace menu_file
 		// Disk scanning / cache
 		// ---------------------------------------------------------------
 		std::unordered_map<std::string, game::menuDef_t*> loaded_menus;
+		std::unordered_map<std::string, parsed_menu> loaded_overlays;
 		std::unordered_map<std::string, std::string> loaded_menu_sources;
+		// Keep asset names separate from native material pointers; PNG upload is
+		// deferred until the renderer exists, and donor techniques refresh per paint.
+		struct png_background { std::string filename; int style; };
+		std::unordered_map<game::windowDef_t*, png_background> png_backgrounds;
+		bool frontend_transition = false;
+		bool frontend_was_away = false;
+		bool frontend_return_requested = false;
+		bool frontend_match_active = false;
+		bool local_loadout_active = false;
+		std::string pending_scaleform_screen;
+		std::string return_frontend_page;
 		bool scanned = false;
 		utils::hook::detour open_menu_hook;
+		utils::hook::detour paint_menus_hook;
+		utils::hook::detour frontend_screen_hook;
+		utils::hook::detour window_paint_hook;
+		std::unordered_map<std::string, std::vector<std::string>> preview_lists;
+
+		const std::vector<std::string>& slideshow_files(const std::string& filename)
+		{
+			const auto prefix = filename == "slideshow_mp.png" ? "preview_mp_" : "preview_sp_";
+			if (!preview_lists.contains(filename))
+			{
+				auto& files = preview_lists[filename];
+				for (const auto& root : filesystem::get_search_paths())
+				{
+					std::error_code error;
+					std::filesystem::directory_iterator it(std::filesystem::path(root) / "images", error), end;
+					for (; !error && it != end; it.increment(error))
+					{
+						const auto name = it->path().filename().string();
+						if (it->is_regular_file(error) && name.starts_with(prefix) && name.ends_with(".png")) files.push_back(name);
+					}
+				}
+				std::sort(files.begin(), files.end());
+				files.erase(std::unique(files.begin(), files.end()), files.end());
+			}
+			return preview_lists.at(filename);
+		}
+		bool is_slideshow(const std::string& filename)
+		{
+			return filename == "slideshow_mp.png" || filename == "slideshow_sp.png";
+		}
+        game::Material* menu_background(const std::string& filename)
+        {
+            if (filename == "lobby_map.png")
+            {
+                const auto* map = game::Dvar_FindVar("ui_mapname");
+                if (map && static_cast<unsigned char>(map->type) == game::DVAR_TYPE_STRING && map->current.string)
+                {
+                    const std::string name(map->current.string);
+                    if (name.starts_with("mp_") && name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") == std::string::npos)
+                        if (auto* image = menu_image::get("preview_mp_" + name + ".png")) return image;
+                }
+                const auto& files = slideshow_files("slideshow_mp.png");
+                return files.empty() ? nullptr : menu_image::get(files.front());
+            }
+			if (!is_slideshow(filename)) return menu_image::get(filename);
+			const auto& files = slideshow_files(filename);
+			return files.empty() ? nullptr : menu_image::get(files.front());
+		}
+
+		void draw_slide(unsigned char* context, game::windowDef_t* window,
+			const std::string& filename, std::size_t index, float progress, float alpha)
+		{
+            auto* material = filename == "lobby_map.png" ? menu_background(filename) : menu_image::get(filename);
+			if (!material || !material->textureTable || alpha <= 0) return;
+			const auto* image = static_cast<menu_image::image*>(material->textureTable[0].image);
+			if (!image || !image->height || window->rect.w <= 0 || window->rect.h <= 0) return;
+			auto rect = window->rect;
+			// QoS Window_Paint 102D1A00 uses per-client ScrPlaceView (76 bytes).
+			// ScrPlace_ApplyRect 1030DF40: EDX=x, ECX=w, EDI=y, ESI=h;
+			// stack=(placement, horizontal alignment, vertical alignment).
+			const auto client = *reinterpret_cast<const int*>(context);
+			if (client < 0 || client > 3) return;
+			const auto placement = game::game_offset(0x1127BA50) + client * 76;
+			const auto target = game::game_offset(0x1030DF40);
+			auto* x = &rect.x; auto* y = &rect.y; auto* w = &rect.w; auto* h = &rect.h;
+			const int horizontal = rect.horzAlign, vertical = rect.vertAlign;
+			__asm
+			{
+				push esi
+				push edi
+				push vertical
+				push horizontal
+				push placement
+				mov edx, x
+				mov ecx, w
+				mov edi, y
+				mov esi, h
+				call target
+				add esp, 12
+				pop edi
+				pop esi
+			}
+			if (rect.w <= 0 || rect.h <= 0) return;
+			const auto uv = menu_slideshow::cover(static_cast<float>(image->width) / image->height,
+				rect.w / rect.h, index, progress);
+			float color[4]{window->foreColor[0], window->foreColor[1], window->foreColor[2], window->foreColor[3] * alpha};
+			game::R_AddCmdDrawStretchPic(rect.x, rect.y, rect.w, rect.h,
+				uv.s0, uv.t0, uv.s1, uv.t1, color, material, 0);
+		}
+
+		void __cdecl window_paint_stub(unsigned char* context, game::windowDef_t* window,
+			float fade_amount, float fade_in, float fade_clamp, int fade_cycle)
+		{
+			const auto binding = png_backgrounds.find(window);
+            if (binding != png_backgrounds.end() && binding->second.filename == "lobby_map.png")
+            {
+                static const auto start = GetTickCount64();
+                draw_slide(context, window, "lobby_map.png", 0,
+                    menu_slideshow::background_progress(GetTickCount64() - start), 1);
+                const auto style = window->style;
+                window->style = 0;
+                window_paint_hook.invoke<void>(context, window, fade_amount, fade_in, fade_clamp, fade_cycle);
+                window->style = style;
+                return;
+            }
+            if (binding != png_backgrounds.end() && is_slideshow(binding->second.filename))
+			{
+				const auto& files = slideshow_files(binding->second.filename);
+				if (!files.empty())
+				{
+					static const auto start = GetTickCount64();
+					const auto frame = menu_slideshow::sample(GetTickCount64() - start, files.size());
+					// Opaque outgoing layer + fading incoming layer avoids a black dip.
+					draw_slide(context, window, files[frame.previous], frame.previous, frame.previous_progress, 1);
+					draw_slide(context, window, files[frame.current], frame.current, frame.progress, frame.alpha);
+				}
+				const auto style = window->style;
+				window->style = 0;
+				window_paint_hook.invoke<void>(context, window, fade_amount, fade_in, fade_clamp, fade_cycle);
+				window->style = style;
+				return;
+			}
+			window_paint_hook.invoke<void>(context, window, fade_amount, fade_in, fade_clamp, fade_cycle);
+		}
+		bool scaleform_suppressed = false;
+		bool previous_scaleform_enabled = true;
+
+		void set_scaleform_enabled(game::dvar_s* dvar, const bool enabled)
+		{
+			// QoS PC Dvar_SetBool 10274BA0: ESI=dvar, stack=(bool, source).
+			const auto target = game::game_offset(0x10274BA0);
+			const int value = enabled;
+			__asm
+			{
+				push esi
+				mov esi, dvar
+				push 0 // DVAR_SOURCE_INTERNAL
+				push value
+				call target
+				add esp, 8
+				pop esi
+			}
+		}
+
+		void restore_scaleform(const bool required_by_destination = false)
+		{
+			if (!scaleform_suppressed) return;
+			if (auto* dvar = game::Dvar_FindVar("sf_enable"))
+				set_scaleform_enabled(dvar, required_by_destination || previous_scaleform_enabled);
+			scaleform_suppressed = false;
+		}
+
+		void __cdecl frontend_screen_stub(const char* name)
+		{
+			// UI_SetActiveMenu calls 102DC580 on return to the frontend too.
+			// Reset the pending route here; sf_current_menu is an AS callback and
+			// can still contain the old screen while this transition is pending.
+			frontend_transition = !name || _stricmp(name, "mpmainmenu") != 0;
+			frontend_return_requested = !frontend_transition;
+			if (frontend_return_requested)
+			{
+				pending_scaleform_screen.clear();
+				frontend_match_active = false;
+			}
+			restore_scaleform(frontend_transition);
+			frontend_screen_hook.invoke<void>(name);
+		}
+
+		bool register_native_menu(unsigned char* context, game::menuDef_t* menu)
+		{
+			auto& count = *reinterpret_cast<int*>(context + 2104);
+			auto** menus = reinterpret_cast<game::menuDef_t**>(context + 56);
+			if (count < 0 || count > 512) return false;
+			for (int i = 0; i < count; ++i)
+				if (menus[i] == menu) return true;
+			if (count == 512) return false;
+			menus[count++] = menu;
+			return true;
+		}
+
+		void update_frontend(unsigned char* context)
+		{
+			const auto client = *reinterpret_cast<const int*>(context);
+			const auto count = *reinterpret_cast<const int*>(context + 2172);
+			if (client < 0 || client > 3 || count < 0 || count > 16) { restore_scaleform(); return; }
+			// QoS CL_UpdateInGameState (1031CC50) reads connection state at
+			// 111F45F8: active=10; connect (10311330) enters state 3. Like
+			// KisakCOD, cl_ingame only becomes true after loading completes.
+			// sf_current_menu can remain mpsyssetup throughout the entire match;
+			// never use that stale frontend screen to reopen a lobby over gameplay.
+			const auto connection_state = reinterpret_cast<const int*>(game::game_offset(0x111F45F8))[client];
+			if (connection_state >= 3) frontend_match_active = true;
+			if (frontend_match_active)
+			{
+				std::array<game::menuDef_t*, 16> open{};
+				std::copy_n(reinterpret_cast<game::menuDef_t**>(context + 2108), count, open.begin());
+				bool closed = false;
+				for (int i = count - 1; i >= 0; --i)
+				{
+					auto* menu = open[i];
+					if (menu && menu->window.name && std::string_view(menu->window.name).starts_with("csl_"))
+					{
+						utils::hook::invoke<void>(game::game_offset(0x102CE070), context, menu);
+						closed = true;
+					}
+				}
+				// Native connection entry releases menu capture too (10311593).
+				if (closed) *game::keyCatchers &= ~0x10;
+				pending_scaleform_screen.clear();
+				return_frontend_page.clear();
+				frontend_return_requested = false;
+				restore_scaleform();
+				return;
+			}
+			const auto* screen = game::Dvar_FindVar("sf_current_menu");
+			if (!screen || static_cast<unsigned char>(screen->type) != game::DVAR_TYPE_STRING || !screen->current.string) return;
+			// A queued sf_open can leave the previous screen reported for a frame.
+			// Do not reopen that replacement and disable GFx before it processes
+			// the requested destination (especially host -> settings transitions).
+			if (!pending_scaleform_screen.empty())
+			{
+				if (_stricmp(screen->current.string, pending_scaleform_screen.c_str()))
+				{
+					restore_scaleform(true);
+					return;
+				}
+				pending_scaleform_screen.clear();
+				frontend_transition = false;
+			}
+			const bool root = !_stricmp(screen->current.string, "mpmainmenu");
+			const char* replacement_name = root ? "csl_main"
+				: !_stricmp(screen->current.string, "mpsyssetup") ? "csl_host"
+				: !_stricmp(screen->current.string, "mpxblobbyprivatematch") ? "csl_private"
+				: !_stricmp(screen->current.string, "mpxblivemain") ? "csl_online"
+				: !_stricmp(screen->current.string, "mpsysjoin") ? "csl_serverbrowser" : nullptr;
+			if (replacement_name && local_loadout_active)
+			{
+				// The LIVE wrapper normally clears this on exit; our direct local
+				// editor route bypasses that wrapper, so balance it on return.
+				command::execute("set modifyingloadouts 0\n");
+				local_loadout_active = false;
+			}
+			const bool returned = root && frontend_was_away;
+			if (!root) { frontend_transition = false; frontend_was_away = true; }
+			else if (returned) { frontend_transition = false; frontend_was_away = false; }
+			auto* top = count ? reinterpret_cast<game::menuDef_t**>(context + 2108)[count - 1] : nullptr;
+			const bool native_main = top && top->window.name && !_stricmp(top->window.name, "main")
+				&& (top->window.dynamicFlags[client] & 4);
+			if (replacement_name && !frontend_transition && (!root || native_main || returned || frontend_return_requested))
+			{
+				auto* replacement = find(replacement_name);
+				if (!replacement || count == 16) return;
+				// Register companion dialogs before onOpen/actions invoke native open.
+				for (const auto& [name, menu] : loaded_menus)
+					if (name.starts_with("csl_")) register_native_menu(context, menu);
+				if (register_native_menu(context, replacement))
+				{
+					// An explicit return may arrive after the root is already open;
+					// don't reopen it over a confirmation dialog or reset its focus.
+					bool present = false;
+					for (int i = 0; i < count; ++i)
+						present |= reinterpret_cast<game::menuDef_t**>(context + 2108)[i] == replacement;
+					if (!present) utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, replacement->window.name);
+					if (root && !return_frontend_page.empty())
+					{
+						if (auto* page = find(return_frontend_page))
+							utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, page->window.name);
+						return_frontend_page.clear();
+					}
+					frontend_return_requested = false;
+					*game::keyCatchers |= 0x10;
+				}
+			}
+			else if (top && top->window.name
+				&& (!_stricmp(top->window.name, "csl_main") || !_stricmp(top->window.name, "csl_host") || !_stricmp(top->window.name, "csl_private") || !_stricmp(top->window.name, "csl_serverbrowser"))
+				&& (!replacement_name || _stricmp(top->window.name, replacement_name)))
+				utils::hook::invoke<void>(game::game_offset(0x102CE070), context, top);
+			bool custom_frontend = false;
+			for (int i = 0; i < *reinterpret_cast<int*>(context + 2172); ++i)
+				custom_frontend |= replacement_name && reinterpret_cast<game::menuDef_t**>(context + 2108)[i] == find(replacement_name);
+			if (custom_frontend && !frontend_transition)
+			{
+				if (auto* dvar = game::Dvar_FindVar("sf_enable"))
+				{
+					if (!scaleform_suppressed) previous_scaleform_enabled = dvar->current.enabled;
+					scaleform_suppressed = true;
+					set_scaleform_enabled(dvar, false);
+				}
+			}
+			else restore_scaleform();
+		}
+
+		void paint_menus_stub(unsigned char* context)
+		{
+			ensure_loaded();
+			update_frontend(context);
+			for (const auto& [window, binding] : png_backgrounds)
+			{
+				window->background = menu_background(binding.filename);
+				// Shader-style Window_Paint does not guard a null material.
+				window->style = window->background ? binding.style : 0;
+			}
+			// QoS 102D839C / KisakCOD Menu_PaintAll starts at the last
+			// fullscreen menu. Keep the stock host's video paint, but do not
+			// change fullscreen input handling or draw older custom pages below
+			// a new page. Restore all fields before the next input/frame pass.
+			struct paint_state { game::menuDef_t* menu; int fullscreen; int flags; };
+			std::array<paint_state, 16> saved{};
+			int saved_count = 0, latest_page = -1;
+			const auto stack_count = *reinterpret_cast<const int*>(context + 2172);
+			const auto local_client = *reinterpret_cast<const int*>(context);
+			if (stack_count >= 0 && stack_count <= 16 && local_client >= 0 && local_client < 4)
+			{
+				for (int i = 0; i < stack_count; ++i)
+				{
+					auto* page = reinterpret_cast<game::menuDef_t**>(context + 2108)[i];
+					if (page && page->window.name && std::string_view(page->window.name).starts_with("csl_") && page->fullScreen)
+					{
+						saved[saved_count++] = {page, page->fullScreen, page->window.dynamicFlags[local_client]};
+						page->fullScreen = 0;
+						latest_page = saved_count - 1;
+					}
+				}
+				for (int i = 0; i < latest_page; ++i) saved[i].menu->window.dynamicFlags[local_client] &= ~4u;
+			}
+            // Menu_Open clears the stock main host's visibility when opening a
+            // fullscreen replacement. Its native video therefore disappears on
+            // root/navigation pages, although it remains visible in host setup.
+            // Paint the host only during this pass; never give it input focus.
+            game::menuDef_t* video_host = nullptr;
+            int video_flags = 0;
+            int video_static_flags = 0;
+            int video_visible_entries = 0;
+            if (latest_page >= 0)
+            {
+                const auto registered = *reinterpret_cast<const int*>(context + 2104);
+                if (registered >= 0 && registered <= 512)
+                    for (int i = 0; i < registered; ++i)
+                    {
+                        auto* candidate = reinterpret_cast<game::menuDef_t**>(context + 56)[i];
+                        if (candidate && candidate->window.name && !_stricmp(candidate->window.name, "main"))
+                        {
+                            video_host = candidate;
+                            video_flags = candidate->window.dynamicFlags[local_client];
+                            video_static_flags = candidate->window.staticFlags;
+                            video_visible_entries = candidate->visibleExp.numEntries;
+                            // QoS Menu_IsVisible 102CE890 (also KisakCOD): a
+                            // KEYCATCH_UI-hidden host remains hidden despite
+                            // WINDOW_VISIBLE. Only bypass that during painting.
+                            candidate->window.staticFlags &= ~0x40000000;
+                            candidate->visibleExp.numEntries = 0;
+                            candidate->window.dynamicFlags[local_client] |= 4;
+                            break;
+                        }
+                    }
+            }
+            paint_menus_hook.invoke<void>(context);
+            if (video_host)
+            {
+                video_host->window.dynamicFlags[local_client] =
+                    (video_host->window.dynamicFlags[local_client] & ~4) | (video_flags & 4);
+                video_host->window.staticFlags = video_static_flags;
+                video_host->visibleExp.numEntries = video_visible_entries;
+            }
+			for (int i = 0; i < saved_count; ++i)
+			{
+				saved[i].menu->fullScreen = saved[i].fullscreen;
+				if (i < latest_page)
+				{
+					// Only restore the temporary visibility mask, preserving any
+					// other native paint/fade bookkeeping performed this frame.
+					auto& flags = saved[i].menu->window.dynamicFlags[local_client];
+					flags = (flags & ~4) | (saved[i].flags & 4);
+				}
+			}
+			// QoS PC 1.1 Menu_PaintAll 102D8290: stack +2108, count +2172.
+			// Unlike openmenu, this path never registers, focuses or stacks an overlay.
+			const auto count = *reinterpret_cast<const int*>(context + 2172);
+			const auto client = *reinterpret_cast<const int*>(context);
+			if (count <= 0 || count > 16 || client < 0 || client > 3) return;
+			auto* menu = reinterpret_cast<game::menuDef_t**>(context + 2108)[count - 1];
+			if (!menu || !menu->window.name || !(menu->window.dynamicFlags[client] & 4)) return;
+			const auto* screen = game::Dvar_FindVar("sf_current_menu");
+			const auto width = *reinterpret_cast<const unsigned*>(game::game_offset(0x10E27190));
+			const auto height = *reinterpret_cast<const unsigned*>(game::game_offset(0x10E27194));
+			if (!width || !height) return;
+			const float scale = static_cast<float>(height) / 480.0f;
+			for (const auto& [name, overlay] : loaded_overlays)
+			{
+				if (!overlay.visible || _stricmp(menu->window.name, overlay.overlay_for.c_str())) continue;
+				// sf_current_menu is consumed by QoS 1040EA50 for frontend navigation.
+				if (!overlay.scaleform_menu.empty() && (!screen || static_cast<unsigned char>(screen->type) != game::DVAR_TYPE_STRING
+					|| !screen->current.string || _stricmp(screen->current.string, overlay.scaleform_menu.c_str()))) continue;
+				for (const auto& item : overlay.items)
+				{
+					if (!item.visible) continue;
+					auto* material = menu_image::get(item.background);
+					if (!material) continue;
+					const auto x = item.rect.x * scale + (item.rect.horz_align == 3 ? static_cast<float>(width) : 0.0f);
+					auto color = item.fore_color;
+					game::R_AddCmdDrawStretchPic(x, item.rect.y * scale, item.rect.w * scale, item.rect.h * scale,
+						0, 0, 1, 1, color.data(), material, 0);
+				}
+			}
+		}
 
 		void open_menu_stub()
 		{
@@ -908,6 +1473,14 @@ namespace menu_file
 				return;
 			}
 
+			const auto directive_line = unsupported_directive_line(source);
+			if (directive_line)
+			{
+				console::warn("[menu - disk] skipped %s: line %d: #include/#define preprocessing is not implemented; file left unchanged\n",
+					disk_path.string().c_str(), directive_line);
+				return;
+			}
+
 			std::vector<parsed_menu> menus;
 			try
 			{
@@ -922,14 +1495,29 @@ namespace menu_file
 			for (const auto& parsed : menus)
 			{
 				const auto key = lower(parsed.name);
-				if (loaded_menus.contains(key))
+				if (loaded_menus.contains(key) || loaded_overlays.contains(key))
 				{
 					console::warn("[menu - disk] duplicate menu name '%s' in %s, keeping first definition\n",
 						parsed.name.c_str(), disk_path.string().c_str());
 					continue;
 				}
+				if (!parsed.overlay_for.empty())
+				{
+					loaded_overlays.emplace(key, parsed);
+					console::info("[menu - overlay] loaded '%s' for %s (display-only)\n", parsed.name.c_str(), parsed.overlay_for.c_str());
+					continue;
+				}
 
 				auto* native = build_native_menu(parsed);
+				if (lower(parsed.background).ends_with(".png"))
+					png_backgrounds.emplace(&native->window, png_background{parsed.background, parsed.style});
+				else if (!parsed.background.empty()) native->window.background = game::Material_RegisterHandle(parsed.background.c_str());
+				for (std::size_t i = 0; i < parsed.items.size(); ++i)
+					if (lower(parsed.items[i].background).ends_with(".png"))
+					{
+						png_backgrounds.emplace(&native->items[i]->window, png_background{parsed.items[i].background, parsed.items[i].style});
+						native->items[i]->window.style = 0;
+					}
 				loaded_menus.emplace(key, native);
 				std::error_code path_error;
 				const auto absolute_path = std::filesystem::absolute(disk_path, path_error);
@@ -941,6 +1529,7 @@ namespace menu_file
 
 		void scan_search_paths()
 		{
+			std::unordered_set<std::string> visited;
 			for (const auto& search_path : filesystem::get_search_paths())
 			{
 				std::error_code error{};
@@ -968,6 +1557,9 @@ namespace menu_file
 
 					if (extension == ".menu")
 					{
+						const auto resolved = std::filesystem::weakly_canonical(entry.path(), error);
+						if (error) { error.clear(); continue; }
+						if (!visited.insert(lower(resolved.generic_string())).second) continue;
 						parse_and_register(entry.path());
 					}
 				}
@@ -976,9 +1568,107 @@ namespace menu_file
 
 		void register_commands()
 		{
+			command::add("cslMenuRoute", [](const command::params& args)
+			{
+				if (args.size() != 2) { console::info("usage: cslMenuRoute <options|host|join|online|private|loadout|stats|map|mode|rules|main|browserback|leave|discord>\n"); return; }
+				const auto route = lower(args.get(1));
+				if (route == "discord")
+				{
+					const auto result = ShellExecuteA(nullptr, "open", "https://discord.gg/XSrTvXJcsw", nullptr, nullptr, SW_SHOWNORMAL);
+					if (reinterpret_cast<INT_PTR>(result) <= 32) console::warn("Could not open the Discord invite in your browser.\n");
+					return;
+				}
+				if (route == "map" || route == "mode" || route == "browserback")
+				{
+					auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
+					const auto* name = route == "map" ? "csl_maps" : route == "mode" ? "csl_modes" : "csl_systemlink";
+					if (route == "browserback")
+					{
+						if (auto* browser = find("csl_serverbrowser"))
+							utils::hook::invoke<void>(game::game_offset(0x102CE070), context, browser);
+						// Leave the browser's native screen too; otherwise update_frontend
+						// immediately reopens its replacement on the next frame.
+						pending_scaleform_screen = "mpmainmenu";
+						return_frontend_page = "csl_systemlink";
+						frontend_return_requested = true;
+						frontend_transition = false;
+						restore_scaleform(true);
+						command::execute("sf_open mpmainmenu\n");
+						return;
+					}
+					if (auto* menu = find(name); menu && register_native_menu(context, menu))
+						utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, name);
+					return;
+				}
+				std::string script;
+				if (route == "options") script = "sf_open cmoptions\n";
+				else if (route == "loadout")
+				{
+					auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
+					const auto count = *reinterpret_cast<const int*>(context + 2172);
+					const char* lobby = nullptr;
+					// Settings sits above its owning lobby. Inspect the stack rather
+					// than onlinegame, which is not set merely by opening ONLINE PLAY.
+					for (int i = count >= 0 && count <= 16 ? count - 1 : -1; i >= 0; --i)
+					{
+						const auto* menu = reinterpret_cast<game::menuDef_t**>(context + 2108)[i];
+						if (!menu || !menu->window.name) continue;
+						const std::string_view name(menu->window.name);
+						if (menu_loadout::is_lobby(name))
+						{
+							lobby = menu->window.name;
+							break;
+						}
+					}
+					if (lobby) return_frontend_page = lobby;
+					if (lobby && std::string_view(lobby) == "csl_host")
+					{
+						local_loadout_active = true;
+						// QoS menuData: mploadout is the LIVE-gated shop wrapper;
+						// mpcustomloadout is its native class editor. Keep the local
+						// session intact; do not sign into LIVE or start an online party.
+					}
+					script = menu_loadout::script(lobby ? std::string_view(lobby) : std::string_view{});
+				}
+				else if (route == "stats") script = "sf_open mpaccompleads\n";
+				else if (route == "rules") script = "sf_open mpsysoptions\n";
+				else if (route == "host" || route == "join")
+					// QoS menuData mpsyslink onClickExec setup, followed by the
+					// native sf_open command (1040DE30), not a guessed GFx ABI.
+					script = "nosplitscreen; xsignin; systemlink 1; splitscreen 0; xblive_rankedmatch 0; onlinegame 0; exec default_systemlink.cfg; set ui_mptype 1; sf_open "
+						+ std::string(route == "host" ? "mpsyssetup\n" : "mpsysjoin\n");
+				else if (route == "online")
+					script = "nosplitscreen; set xsigninscreen mpxbplaylistselect; xsigninlive; systemlink 0; splitscreen 0; onlinegame 1; exec default_xboxlive.cfg; party_maxplayers 12; xblive_privatematch 0; xblive_rankedmatch 0; party_timerVisible 0; xstartprivateparty; sf_open mpxbplaylistselect\n";
+				else if (route == "private")
+					// Extracted QoS menuData onClickExec, not a fabricated party.
+					script = "nosplitscreen; set xsigninscreen mpxblobbyprivatematch; xsigninlive; systemlink 0; splitscreen 0; onlinegame 1; exec default_xboxlive.cfg; xblive_rankedmatch 0; ui_enumeratesaved; party_timerVisible 0; xblive_privatematch 1; xstartprivateparty; xstartpartyhost; sf_open mpxblobbyprivatematch\n";
+				else if (route == "main") script = "sf_open mpmainmenu\n";
+				else if (route == "leave")
+				{
+					const auto* online = game::Dvar_FindVar("onlinegame");
+					return_frontend_page = online && static_cast<unsigned char>(online->type) == game::DVAR_TYPE_BOOL && online->current.enabled
+						? "csl_online" : "csl_systemlink";
+					// QoS menuData leaves the match lobby before stopping its parties.
+					if (online && static_cast<unsigned char>(online->type) == game::DVAR_TYPE_BOOL && online->current.enabled)
+						script = "party_leavematchlobby; onlinegame 0; xstopprivateparty; xstopparty; ";
+					script += "sf_open mpmainmenu\n";
+				}
+				else { console::warn("cslMenuRoute: unknown destination '%s'\n", route.c_str()); return; }
+				const auto destination = script.rfind("sf_open ");
+				pending_scaleform_screen = script.substr(destination + 8);
+				if (!pending_scaleform_screen.empty() && pending_scaleform_screen.back() == '\n') pending_scaleform_screen.pop_back();
+				auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
+				for (const auto* name : {"csl_maps", "csl_modes", "csl_settings", "csl_systemlink", "csl_online", "csl_host", "csl_private", "csl_serverbrowser", "csl_main"})
+					if (auto* menu = find(name)) utils::hook::invoke<void>(game::game_offset(0x102CE070), context, menu);
+				frontend_transition = route != "main" && route != "leave";
+				frontend_return_requested = !frontend_transition;
+				restore_scaleform(true);
+				if (auto* enabled = game::Dvar_FindVar("sf_enable")) set_scaleform_enabled(enabled, true);
+				command::execute(script);
+			});
 			command::add("reloadMenus", [](const command::params&)
 			{
-				if (reload()) console::info("reloadMenus: %zu custom menu(s) loaded; reopen the menu to test changes\n", loaded_menus.size());
+				if (reload()) console::info("reloadMenus: %zu custom menu(s), %zu display-only overlay(s) loaded\n", loaded_menus.size(), loaded_overlays.size());
 			});
 		}
 
@@ -988,6 +1678,11 @@ namespace menu_file
 			void post_load() override
 			{
 				open_menu_hook.create(game::game_offset(0x102E1560), open_menu_stub);
+				paint_menus_hook.create(game::game_offset(0x102D8290), paint_menus_stub);
+				frontend_screen_hook.create(game::game_offset(0x102DC580), frontend_screen_stub);
+				// QoS PC 1.1 / KisakCOD Window_Paint comparison; only disk slideshow
+				// windows use the custom background. All other windows stay native.
+				window_paint_hook.create(game::game_offset(0x102D1A00), window_paint_stub);
 				console::info("[menu - open] installed: native openmenu hook with disk-source diagnostics\n");
 				register_commands();
 			}
@@ -995,8 +1690,21 @@ namespace menu_file
 			void pre_destroy() override
 			{
 				open_menu_hook.clear();
+				paint_menus_hook.clear();
+				frontend_screen_hook.clear();
+				window_paint_hook.clear();
+				loaded_overlays.clear();
 				loaded_menus.clear();
 				loaded_menu_sources.clear();
+				png_backgrounds.clear();
+				preview_lists.clear();
+				frontend_was_away = false;
+				frontend_transition = false;
+				frontend_return_requested = false;
+				frontend_match_active = false;
+				local_loadout_active = false;
+				pending_scaleform_screen.clear();
+				return_frontend_page.clear();
 				scanned = false;
 			}
 		};
@@ -1049,7 +1757,10 @@ namespace menu_file
 		std::fill(menus + retained, menus + count, nullptr);
 		count = retained;
 		loaded_menus.clear();
+		loaded_overlays.clear();
 		loaded_menu_sources.clear();
+		png_backgrounds.clear();
+		preview_lists.clear();
 		scanned = false;
 		ensure_loaded();
 		return true;

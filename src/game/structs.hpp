@@ -494,6 +494,9 @@ namespace game
 
 	struct listBoxDef_s
 	{
+		// KisakCOD mousePos prefix, verified in QoS 102D4DC0/102DEE10:
+		// four-client startPos at +4 and endPos at +20, not +0/+16.
+		int mousePos;
 		int startPos[4];
 		int endPos[4];
 		int drawPadding;
@@ -510,6 +513,10 @@ namespace game
 		float disableColor[4];
 		Material* selectIcon;
 	};
+	static_assert(offsetof(listBoxDef_s, startPos) == 4);
+	static_assert(offsetof(listBoxDef_s, endPos) == 20);
+	static_assert(offsetof(listBoxDef_s, notselectable) == 316);
+	static_assert(sizeof(listBoxDef_s) == 364);
 
 	struct multiDef_s
 	{
@@ -561,7 +568,9 @@ namespace game
 		const char* enableDvar;
 		int dvarFlags;
 		void* focusSound;
-		int feeder;//float special;
+		// QoS UI listbox 102D4DC0 reads offset 376 as float; matches
+		// KisakCOD itemDef_s::special, not an integer feeder identifier.
+		float feeder;
 		int cursorPos[4];
 		itemDefData_t typeData;
 		int imageTrack;
@@ -577,6 +586,10 @@ namespace game
 		statement_s foreColorAlphaExp;
 	};
 	static_assert(sizeof(itemDef_s) == 468);
+	static_assert(offsetof(itemDef_s, type) == 264);
+	static_assert(offsetof(itemDef_s, dataType) == 268);
+	static_assert(offsetof(itemDef_s, onKey) == 360);
+	static_assert(offsetof(itemDef_s, feeder) == 376);
 	static_assert(offsetof(itemDef_s, foreColorAlphaExp) == 460);
 
 	struct menuDef_t

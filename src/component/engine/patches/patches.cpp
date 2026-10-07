@@ -14,6 +14,8 @@
 #include <utils/flags.hpp>
 #include <utils/string.hpp>
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -59,6 +61,11 @@ namespace patches
 		game::Material* prone_materials[3]{};
 		std::uintptr_t stance_faction_dvar_slot{};
 		std::uintptr_t native_prone_material_slot{};
+		std::uintptr_t stance_state_address{};
+		std::uintptr_t stance_icon_draw_address{};
+		std::uintptr_t stance_health_draw_address{};
+		// Selected 128px candidates end at row 85; native crouch ends at 125.
+		const float prone_baseline_offset = 40.0f / 128.0f;
 		const char* const prone_material_names[] = {
 			"qos_stance_prone", "qos_stance_prone_mi6", "qos_stance_prone_org"
 		};
@@ -98,12 +105,88 @@ namespace patches
 			}
 		}
 
+		// Call-site adapters preserve QoS' register ABI and native HUD placement.
+		// Only prone moves: apply the same baseline to the icon and health tint.
+		__declspec(naked) void stance_icon_draw_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				mov eax, stance_state_address
+				test dword ptr[eax], 1
+				jz unchanged
+				fld dword ptr[esi + 12]
+				fmul prone_baseline_offset
+				fadd dword ptr[esp + 48]
+				fstp dword ptr[esp + 48]
+			unchanged:
+				popad
+				popfd
+				jmp dword ptr[stance_icon_draw_address]
+			}
+		}
+
+		__declspec(naked) void stance_health_draw_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				mov eax, stance_state_address
+				test dword ptr[eax], 1
+				jz unchanged
+				fld dword ptr[esi + 12]
+				fmul prone_baseline_offset
+				fadd dword ptr[esp + 44]
+				fstp dword ptr[esp + 44]
+			unchanged:
+				popad
+				popfd
+				jmp dword ptr[stance_health_draw_address]
+			}
+		}
+
+		__declspec(naked) void stance_flash_draw_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				mov eax, stance_state_address
+				test dword ptr[eax], 1
+				jz unchanged
+				call select_prone_material
+				mov [esp + 28], eax
+			unchanged:
+				popad
+				popfd
+				jmp stance_icon_draw_stub
+			}
+		}
+
 		void apply_stance_materials()
 		{
 			// QoS PC CG media registration and both native stance draws verified in IDA.
 			// KisakCOD CG_DrawStanceIcon confirms lastStance bit 1 selects prone.
 			native_prone_material_slot = game::game_offset(0x113FB138);
 			stance_faction_dvar_slot = game::game_offset(0x1148FCD8);
+			stance_state_address = game::game_offset(0x12A57294);
+			stance_icon_draw_address = game::game_offset(0x1044FAD0);
+			stance_health_draw_address = game::game_offset(0x1044F9E0);
+			for (const auto& [call, target] : std::array<std::pair<int, int>, 3>{{
+				{0x102AB861, 0x1044F9E0}, {0x102AB8F2, 0x1044FAD0}, {0x102AB997, 0x1044FAD0}}})
+			{
+				const auto address = game::game_offset(call);
+				std::int32_t displacement{};
+				std::memcpy(&displacement, reinterpret_cast<const void*>(address + 1), 4);
+				if (*reinterpret_cast<const unsigned char*>(address) != 0xE8
+					|| address + 5 + displacement != game::game_offset(target))
+				{
+					console::warn("[HUD] prone icon hook skipped: unexpected draw ABI\n");
+					return;
+				}
+			}
 			const auto name_push = game::game_offset(0x102C1C96);
 			const auto original_name = static_cast<std::uint32_t>(game::game_offset(0x104F6454));
 			for (const auto address : {0x102AB7AA, 0x102AB8A0})
@@ -128,6 +211,9 @@ namespace patches
 			utils::hook::set(name_push + 1, prone_material_names[0]);
 			for (const auto address : {0x102AB7AA, 0x102AB8A0})
 				utils::hook::call(game::game_offset(address), prone_material_stub);
+			utils::hook::call(game::game_offset(0x102AB861), stance_health_draw_stub);
+			utils::hook::call(game::game_offset(0x102AB8F2), stance_icon_draw_stub);
+			utils::hook::call(game::game_offset(0x102AB997), stance_flash_draw_stub);
 		}
 
 		utils::hook::detour update_sprint_hook;
@@ -478,25 +564,83 @@ namespace patches
 			}
 		}
 
+		// QoS PC 10421490 is AnglesToAxis: ESI=angles, EDX=axis. The
+		// inherited IDA label BG_PlayerAnglesFromVelocity is not its ABI/name.
+		void camera_angles_to_axis(const float* angles, float* axis)
+		{
+			const auto address = game::game_offset(0x10421490);
+			__asm
+			{
+				push esi
+				mov esi, angles
+				mov edx, axis
+				call address
+				pop esi
+			}
+		}
+
 		char player_bone_camera_stub(const int local_client_num)
 		{
 			const auto* third_person = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25F8));
 			if (third_person && third_person->current.integer == 2)
 				return 0; // Classic trailing view must not be overwritten by tag_player.
-			const auto result = player_bone_camera_hook.invoke<char>(local_client_num);
-			// QoS PC 102A3570 positions the first-person camera from the body
-			// bone when cg_viewPersBond is enabled (113F25E4). That animation
-			// path need not match restored prone. KisakCOD OffsetFirstPersonView
-			// uses origin.z + the native smoothed viewHeightCurrent instead.
-			const auto* body_camera = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25E4));
-			if (!body_camera || !body_camera->current.enabled)
-				return result;
-
 			const auto* ps = reinterpret_cast<const unsigned char*>(game::game_offset(0x12A4CDFC));
+			const auto* body_camera = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25E4));
 			const auto pm_type = *reinterpret_cast<const int*>(ps + 4);
 			const auto flags = *reinterpret_cast<const unsigned int*>(ps + 12);
 			const auto eflags = *reinterpret_cast<const unsigned int*>(ps + 188);
 			const auto cover = *reinterpret_cast<const unsigned int*>(ps + 4032);
+			// Jump_Start (101DB390) sets +128 to ENTITYNUM_NONE. Exclude
+			// traversal, cover, turret and special cameras, not just jump input.
+			const bool airborne = body_camera && body_camera->current.enabled
+				&& pm_type == 0 && *reinterpret_cast<const int*>(ps + 128) == 1023
+				&& (flags & 8) == 0 && (cover & 1) == 0 && (eflags & 0x200) == 0;
+			auto* const view_angles = reinterpret_cast<float*>(game::game_offset(0x12A54954));
+			auto* const view_axis = reinterpret_cast<float*>(game::game_offset(0x12A502F4));
+			std::array<float, 3> aim_angles{view_angles[0], view_angles[1], view_angles[2]};
+			const auto finite = [](const float value) { return std::isfinite(value); };
+			bool valid_aim = std::all_of(aim_angles.begin(), aim_angles.end(), finite);
+			bool repaired = airborne && (!valid_aim || !std::all_of(view_axis, view_axis + 9, finite));
+			if (airborne)
+			{
+				if (!valid_aim)
+				{
+					// 102A3D30 copies predictedPlayerState.viewangles (+284) here.
+					// falling.dmp has finite predicted angles but NaN camera angles.
+					std::copy_n(reinterpret_cast<const float*>(ps + 284), 3, aim_angles.begin());
+					valid_aim = std::all_of(aim_angles.begin(), aim_angles.end(), finite);
+				}
+				if (valid_aim)
+				{
+					std::copy(aim_angles.begin(), aim_angles.end(), view_angles);
+					// The bone helper snapshots last frame's axis before building
+					// the DObj. Rebuild now so a bad axis cannot feed the next frame.
+					camera_angles_to_axis(view_angles, view_axis);
+				}
+			}
+			const auto result = player_bone_camera_hook.invoke<char>(local_client_num);
+			if (airborne && valid_aim && (!std::all_of(view_angles, view_angles + 3, finite)
+				|| !std::all_of(view_axis, view_axis + 9, finite)))
+			{
+				std::copy(aim_angles.begin(), aim_angles.end(), view_angles);
+				camera_angles_to_axis(view_angles, view_axis);
+				repaired = true;
+			}
+			// One diagnostic per airborne episode, not a per-frame console flood.
+			static bool reported_invalid_airborne_camera = false;
+			if (!airborne) reported_invalid_airborne_camera = false;
+			if (repaired && valid_aim && !reported_invalid_airborne_camera)
+			{
+				console::warn("camera: repaired non-finite airborne body-camera orientation (client %d)\n", local_client_num);
+				reported_invalid_airborne_camera = true;
+			}
+			// QoS PC 102A3570 positions the first-person camera from the body
+			// bone when cg_viewPersBond is enabled (113F25E4). That animation
+			// path need not match restored prone. KisakCOD OffsetFirstPersonView
+			// uses origin.z + the native smoothed viewHeightCurrent instead.
+			if (!body_camera || !body_camera->current.enabled)
+				return result;
+
 			const auto target = *reinterpret_cast<const int*>(ps + 296);
 			const auto height = *reinterpret_cast<const float*>(ps + 300);
 			// Include the rising prone->crouch transition, but never replace a
@@ -505,7 +649,6 @@ namespace patches
 			if (pm_type == 4 || pm_type == 5 || pm_type >= 11 || (eflags & 0x200) != 0
 				|| (cover & 1) != 0 || !prone_transition || !(height >= 0.0f && height <= 60.0f))
 				return result;
-
 			const auto z = *reinterpret_cast<const float*>(ps + 40) + height;
 			*reinterpret_cast<float*>(game::game_offset(0x12A502F0)) = z;
 			// The native helper records the pre-bob camera origin here too.
@@ -1003,7 +1146,9 @@ namespace patches
 
 		std::string build_timestamp_label()
 		{
-			return std::string(__DATE__) + " " + __TIME__;
+			std::string date = __DATE__;
+			if (date.size() > 4 && date[4] == ' ') date.erase(4, 1);
+			return date + " " + __TIME__;
 		}
 
 		std::string build_game_date_string()
@@ -1679,7 +1824,9 @@ namespace patches
 					ex_style |= WS_EX_APPWINDOW;
 				}
 			}
-			return CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
+			const auto window = CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
+			if (named_class && !strcmp(class_name, "JB_MP")) resources::apply_window_icon(window);
+			return window;
 		}
 
 		template <typename T>
@@ -1719,7 +1866,10 @@ namespace patches
 				{
 					const int enabled = value.string == one ? 1 : 0;
 					value = {};
-					value.integer = enabled;
+					// A native true write means "remain in third person", not
+					// "select the stock camera". Keep explicit mode 2 on that path;
+					// false writes and console integer writes retain their meanings.
+					value.integer = enabled && dvar->current.integer == 2 ? 2 : enabled;
 				}
 			}
 			return dvar_setvariant_hook.invoke<const char*>(dvar, value, source);
@@ -1806,14 +1956,49 @@ namespace patches
 		}
 
 		utils::hook::detour BG_GetPlayerJumpHeight_hook;
-		float BG_GetPlayerJumpHeight_stub(int a1)
+		std::uintptr_t jump_height_original{};
+		void __cdecl override_jump_height(float* height)
 		{
-			auto jump_height = game::Dvar_FindVar("jump_height");
+			const auto* dvar = game::Dvar_FindVar("jump_height");
+			if (dvar && std::isfinite(dvar->current.value) && dvar->current.value >= 0.0f)
+				*height = dvar->current.value;
+		}
 
-			if (!jump_height)
-				return BG_GetPlayerJumpHeight_hook.invoke<float>(a1);
-
-			return jump_height->current.value;
+		__declspec(naked) void BG_GetPlayerJumpHeight_stub()
+		{
+			// QoS 101DBBE7: EAX=player state; 101DBBEF consumes XMM0,
+			// not the x87 return used by an ordinary MSVC float function.
+			__asm
+			{
+				call dword ptr[jump_height_original]
+				pushfd
+				pushad
+				sub esp, 128
+				movdqu [esp], xmm0
+				movdqu [esp + 16], xmm1
+				movdqu [esp + 32], xmm2
+				movdqu [esp + 48], xmm3
+				movdqu [esp + 64], xmm4
+				movdqu [esp + 80], xmm5
+				movdqu [esp + 96], xmm6
+				movdqu [esp + 112], xmm7
+				mov eax, esp
+				push eax
+				call override_jump_height
+				add esp, 4
+				movdqu xmm0, [esp]
+				movdqu xmm1, [esp + 16]
+				movdqu xmm2, [esp + 32]
+				movdqu xmm3, [esp + 48]
+				movdqu xmm4, [esp + 64]
+				movdqu xmm5, [esp + 80]
+				movdqu xmm6, [esp + 96]
+				movdqu xmm7, [esp + 112]
+				add esp, 128
+				popad
+				popfd
+				ret
+			}
 		}
 
 		utils::hook::detour BG_GetPlayerSpeed_hook;
@@ -1843,78 +2028,6 @@ namespace patches
 		}
 
 
-		float __cdecl Jump_GetLandFactor(DWORD* ps)
-		{
-			__int64 v1; // r10
-			double v2; // fp1
-
-			auto jump_slowdownEnable = game::Dvar_FindVar("jump_slowdownEnable");
-			if (jump_slowdownEnable->current.enabled)
-			{
-				if (*(DWORD*)(ps + 24) < 1700)
-				{
-					v1 = *(DWORD*)(ps + 24);
-					v2 = (float)((float)((float)v1 * (float)0.00088235294) + (float)1.0);
-				}
-				else
-				{
-					v2 = 2.5;
-				}
-			}
-			else
-			{
-				v2 = 1.0;
-			}
-			return *((float*)&v2 + 1);
-		}
-
-		utils::hook::detour Jump_Start_hook;
-		int Jump_Start_stub(int unused, int unused2, DWORD* pml_t)
-		{
-			DWORD* pmove_t{};
-			float jump_height = game::Dvar_FindVar("jump_height")->current.value;
-
-			_asm
-			{
-				mov  edi, DWORD PTR[edi]; edi = *edi
-				mov  DWORD PTR[pmove_t], edi
-			}
-
-			auto v3 = *pmove_t;
-			auto gravity = *(int*)(*pmove_t + 0x68);
-			auto calculatedGravity = (double)gravity * (jump_height + jump_height);
-
-			if ((*(DWORD*)(*pmove_t + 12) & 0x4000) != 0 && *(DWORD*)(v3 + 24) <= 1800)
-			{
-				auto landFactor = Jump_GetLandFactor(pmove_t);
-				calculatedGravity = (float)((float)calculatedGravity / (float)landFactor);
-			}
-
-			pml_t[12] = 0;
-			pml_t[13] = 0;
-			pml_t[11] = 0;
-
-			auto zOrigin = *(float*)(v3 + 40);
-			*(DWORD*)(v3 + 128) = 1023; // groundEntityNum
-			auto serverTime = pmove_t[1];
-			*(float*)(v3 + 140) = zOrigin;
-
-			*(DWORD*)(v3 + 136) = serverTime;
-			auto v9 = sqrt(calculatedGravity);
-			auto v11 = *(DWORD*)(v3 + 12) & 0xFFFFFE7F | 0x4000;
-			*(float*)(v3 + 52) = v9;
-			*(DWORD*)(v3 + 12) = v11;
-			*(DWORD*)(v3 + 24) = 0;
-			*(DWORD*)(v3 + 3900) = 0;
-
-			auto v13 = game::Dvar_FindVar("jump_spreadAdd")->current.value;
-			auto v14 = *(float*)(v3 + 4340) + v13;
-			*(float*)(v3 + 4340) = v14;
-			if (v14 > 255.0)
-				*(DWORD*)(v3 + 4340) = 255.0;
-
-			return v13;
-		}
 	}
 
 	class component final : public component_interface
@@ -1949,10 +2062,12 @@ namespace patches
 
 			// various hooks to return dvar functionality, thanks to Liam
 			BG_GetPlayerJumpHeight_hook.create(game::game_offset(0x101E6900), BG_GetPlayerJumpHeight_stub);
+			jump_height_original = reinterpret_cast<std::uintptr_t>(BG_GetPlayerJumpHeight_hook.get_original());
 			BG_GetPlayerSpeed_hook.create(game::game_offset(0x101E6930), BG_GetPlayerSpeed_stub);
 			r_lodScale_hook.create(game::game_offset(0x10279010), r_lodScale_stub);
 
-			Jump_Start_hook.create(game::game_offset(0x101DB390), Jump_Start_stub);
+			// Keep native Jump_Start (EDI=pml, XMM1=height, stack=pmove).
+			// Its weapon-specific landing factor, flags and spread remain authoritative.
 
 			const auto offline_mode = local_offline_mode_requested();
 			dvars::overrides::register_bool("cl_offlineMode", offline_mode, game::dvar_flags::read_only);

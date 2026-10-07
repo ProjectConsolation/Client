@@ -4,6 +4,14 @@
 #include <utils/nt.hpp>
 
 #include "resources.hpp"
+#include <unordered_set>
+#include <mutex>
+#include <shobjidl.h>
+#include <propkey.h>
+#include <propvarutil.h>
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "propsys.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace resources
 {
@@ -14,6 +22,41 @@ namespace resources
 		HBITMAP console_logo{};
 		constexpr char splash_class[] = "ConsolationSplashBitmap";
 		bool splash_class_registered{};
+		std::unordered_set<HBITMAP> splash_copies;
+		std::mutex splash_copies_mutex;
+
+		void apply_taskbar_identity(HWND window)
+		{
+			// WM_SETICON does not identify a pinned shortcut. Use the same explicit
+			// Shell identity as the supplied shortcut helper; no executable patching.
+			IPropertyStore* store{};
+			if (FAILED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&store)))) return;
+			const auto set = [store](const PROPERTYKEY& key, const wchar_t* text)
+			{
+				PROPVARIANT value{};
+				if (SUCCEEDED(InitPropVariantFromString(text, &value)))
+				{
+					store->SetValue(key, value);
+					PropVariantClear(&value);
+				}
+			};
+			constexpr PROPERTYKEY id = INIT_PKEY_AppUserModel_ID;
+			constexpr PROPERTYKEY icon_key = INIT_PKEY_AppUserModel_RelaunchIconResource;
+			constexpr PROPERTYKEY name_key = INIT_PKEY_AppUserModel_RelaunchDisplayNameResource;
+			constexpr PROPERTYKEY command_key = INIT_PKEY_AppUserModel_RelaunchCommand;
+			wchar_t module_path[MAX_PATH]{};
+			const auto self = utils::nt::library::get_by_address(reinterpret_cast<void*>(apply_taskbar_identity));
+			if (GetModuleFileNameW(self.get_handle(), module_path, MAX_PATH))
+			{
+				const auto icon_resource = std::wstring(module_path) + L",-102";
+				set(icon_key, icon_resource.c_str());
+			}
+			set(name_key, L"Project: Consolation");
+			// Retain this instance's actual offline/profile arguments on relaunch.
+			set(command_key, GetCommandLineW());
+			set(id, L"ProjectConsolation.Client.Multiplayer");
+			store->Release();
+		}
 
 		LRESULT CALLBACK splash_bitmap_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 		{
@@ -28,6 +71,7 @@ namespace resources
 				return old;
 			}
 			if (message == WM_ERASEBKGND) return 1;
+			if (message == WM_SIZE) InvalidateRect(window, nullptr, FALSE);
 			if (message == WM_PAINT)
 			{
 				PAINTSTRUCT paint{};
@@ -62,6 +106,7 @@ namespace resources
 		}
 		utils::hook::detour load_image_a_hook;
 		utils::hook::detour load_icon_a_hook;
+		utils::hook::detour send_message_a_hook;
 		using load_image_a_fn = HANDLE(WINAPI*)(HINSTANCE, LPCSTR, UINT, int, int, UINT);
 		using load_icon_a_fn = HICON(WINAPI*)(HINSTANCE, LPCSTR);
 
@@ -122,7 +167,10 @@ namespace resources
 				// The original launcher requests its stock bitmap dimensions. Resizing
 				// the embedded 768x480 replacement to that request makes it appear
 				// cropped/zoomed inside the native-sized splash window.
-				return copy_image_or_original(splash, IMAGE_BITMAP, 0, 0);
+				const auto copy = static_cast<HBITMAP>(copy_image_or_original(splash, IMAGE_BITMAP, 0, 0));
+				std::lock_guard lock(splash_copies_mutex);
+				splash_copies.insert(copy);
+				return copy;
 			}
 
 			if (type == IMAGE_BITMAP && console_logo &&
@@ -147,6 +195,38 @@ namespace resources
 			const auto original = reinterpret_cast<load_icon_a_fn>(load_icon_a_hook.get_original());
 			return original(handle, name);
 		}
+
+		LRESULT WINAPI send_message_a(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+		{
+			bool replacement = false;
+			if (message == STM_SETIMAGE && wparam == IMAGE_BITMAP)
+			{
+				std::lock_guard lock(splash_copies_mutex);
+				replacement = splash_copies.contains(reinterpret_cast<HBITMAP>(lparam));
+			}
+			if (replacement)
+			{
+				char class_name[64]{};
+				GetClassNameA(window, class_name, sizeof(class_name));
+				if (!_stricmp(class_name, "Static"))
+				{
+					// Catch bitmap controls outside the patched QoS IAT too. SS_BITMAP
+					// may DPI-scale its bitmap independently of its fixed client size.
+					// Only handles returned by our splash override qualify for this path.
+					SetLastError(0);
+					const auto previous = SetWindowLongPtrA(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(splash_bitmap_proc));
+					if (previous || GetLastError() == 0)
+					{
+						SetWindowLongPtrA(window, GWL_STYLE, GetWindowLongPtrA(window, GWL_STYLE) & ~0xFFFFL);
+						std::printf("[resources] splash bitmap control uses aspect-fit painting\n");
+						return splash_bitmap_proc(window, message, wparam, lparam);
+					}
+				}
+			}
+			using send_message_fn = LRESULT(WINAPI*)(HWND, UINT, WPARAM, LPARAM);
+			const auto original = reinterpret_cast<send_message_fn>(send_message_a_hook.get_original());
+			return original(window, message, wparam, lparam);
+		}
 	}
 
 	void apply_window_icon(const HWND window)
@@ -158,6 +238,7 @@ namespace resources
 
 		SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
 		SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+		apply_taskbar_identity(window);
 	}
 
 	const char* splash_control_class()
@@ -236,12 +317,14 @@ namespace resources
 		{
 			load_image_a_hook.create(reinterpret_cast<void*>(LoadImageA), load_image_a);
 			load_icon_a_hook.create(reinterpret_cast<void*>(LoadIconA), load_icon_a);
+			send_message_a_hook.create(reinterpret_cast<void*>(SendMessageA), send_message_a);
 			std::printf("[resources] embedded icon, splash, and console image overrides installed\n");
 		}
 
 		void pre_destroy() override
 		{
 			load_icon_a_hook.clear();
+			send_message_a_hook.clear();
 			load_image_a_hook.clear();
 		}
 	};

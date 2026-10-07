@@ -21,10 +21,13 @@ Replace CSL_User00 with your own player name; keep the quotes.
 Do not add -offline or install the bundled xlive.dll for normal GFWL play.
 
 DESKTOP ICON
-Windows batch files use a generic icon. Create a desktop shortcut to
-Launch Consolation.bat, then open Properties > Shortcut > Change Icon > Browse
-and select icon.ico in the game directory. The game's runtime window icon
-does not automatically replace the icon of a shortcut to JB_Launcher_s.exe.
+Windows batch files use a generic icon. Run Repair Consolation Shortcut.ps1
+with PowerShell to repair an existing pinned "Launch Consolation" shortcut.
+The helper preserves your arguments, backs up the shortcut, sets icon.ico,
+and assigns the same taskbar application identity as the client window.
+To create a desktop shortcut instead, pass -ShortcutPath with its full .lnk path.
+If Windows retains an old cached icon, unpin and repin the repaired shortcut.
+The client update needs rebuilding before the matching window identity takes effect.
 
 Patch 1.1 may not install correctly outside the default C:\ install path.
 Recommended: install to the default directory.

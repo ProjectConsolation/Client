@@ -63,8 +63,8 @@ jobs:
           $utcNow = (Get-Date).ToUniversalTime()
           $time = $utcNow.ToString("dd MMMM yyyy - HH:mm:ss 'UTC'")
           $tag = "nightly-" + $utcNow.ToString("yyyyMMdd-HHmmss") + "-${{ steps.shortsha.outputs.short_sha }}"
-          "build_time=$time" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-          "release_tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+          "build_time=$time" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         shell: pwsh
 
       - name: Cleanup old nightly releases (keep 10)

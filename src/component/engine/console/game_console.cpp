@@ -235,7 +235,9 @@ namespace game_console
 			}
 
 			version += " ";
-			version += __DATE__;
+			std::string date = __DATE__;
+			if (date.size() > 4 && date[4] == ' ') date.erase(4, 1);
+			version += date;
 			version += " ";
 			version += __TIME__;
 			version += " win-x86";

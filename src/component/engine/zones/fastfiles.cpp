@@ -7,6 +7,8 @@
 #include "component/engine/scripting/gametypes.hpp"
 #include "fastfiles.hpp"
 #include "xenon.hpp"
+#include "dlc_zone_policy.hpp"
+#include "portal_links.hpp"
 #include "component/engine/console/command.hpp"
 
 #include <utils/hook.hpp>
@@ -17,6 +19,8 @@
 
 #include <unordered_set>
 #include <cstring>
+#include <unordered_map>
+#include <stdexcept>
 
 namespace fastfiles
 {
@@ -75,6 +79,70 @@ namespace fastfiles
 		unsigned int normalized_rawfile_name_index = 0;
 		std::mutex external_asset_log_mutex;
 		std::unordered_set<std::string> logged_external_assets;
+		std::mutex portal_links_mutex;
+		std::unordered_map<std::string, portal_links::manifest> pending_portal_links;
+
+		void relocate_portal_links(game::XAssetEntry* entry)
+		{
+			if (!entry) return;
+			std::lock_guard lock(portal_links_mutex);
+			if (entry->asset.type == game::ASSET_TYPE_RAWFILE)
+			{
+				const auto* file = entry->asset.header.rawfile;
+				constexpr std::string_view prefix = "consolation/portal-links/";
+				if (file && file->name && file->buffer && std::string_view(file->name).starts_with(prefix))
+				{
+					const auto zone = std::string(std::string_view(file->name).substr(prefix.size()));
+					if (!dlc::requires_donor(zone) || zone.ends_with("_load")) return;
+					portal_links::manifest links;
+					pending_portal_links.erase(zone);
+					if (portal_links::decode({file->buffer, file->len}, links))
+						pending_portal_links.emplace(zone, std::move(links));
+					else throw std::runtime_error("Invalid DLC portal-link manifest: " + zone);
+				}
+				return;
+			}
+			if (entry->asset.type != game::ASSET_TYPE_GFXWORLD) return;
+			auto* world = static_cast<unsigned char*>(entry->asset.header.data);
+			if (!world) return;
+			const auto* base_name = *reinterpret_cast<const char**>(world + 4);
+			if (!base_name || !dlc::requires_donor(base_name)) return;
+			const std::string zone(base_name);
+			const auto found = pending_portal_links.find(zone);
+			if (found == pending_portal_links.end()) return; // Stock/older zones have no adapter.
+			const auto& manifest = found->second;
+			// QoS PC Load_GfxWorld / R_VisitPortalsForCell; cell=52, portal=68.
+			// The converter emits null destinations plus this pre-world rawfile.
+			// Validate the entire allocation and sequence before publishing pointers.
+			if (!world || *reinterpret_cast<std::uint32_t*>(world + 288) != manifest.cells)
+				throw std::runtime_error("DLC portal cell count mismatch: " + zone);
+			auto* cells = *reinterpret_cast<unsigned char**>(world + 296);
+			if (!cells) throw std::runtime_error("DLC portal cells missing: " + zone);
+			std::vector<std::pair<unsigned char*, unsigned char*>> writes;
+			std::size_t index = 0;
+			for (std::uint32_t ci = 0; ci < manifest.cells; ++ci)
+			{
+				auto* cell = cells + ci * 52;
+				const auto count = *reinterpret_cast<std::uint32_t*>(cell + 28);
+				auto* portals = *reinterpret_cast<unsigned char**>(cell + 32);
+				if (count > manifest.links.size() || (count && !portals))
+					throw std::runtime_error("DLC portal array mismatch: " + zone);
+				for (std::uint32_t pi = 0; pi < count; ++pi)
+				{
+					if (index >= manifest.links.size() || manifest.links[index].cell != ci
+						|| manifest.links[index].portal != pi)
+						throw std::runtime_error("DLC portal sequence mismatch: " + zone);
+					writes.emplace_back(portals + pi * 68 + 32,
+						cells + manifest.links[index++].destination * 52);
+				}
+			}
+			if (index != manifest.links.size()) throw std::runtime_error("DLC portal count mismatch: " + zone);
+			for (const auto& [address, destination] : writes)
+				std::memcpy(address, &destination, sizeof(destination));
+			game::Com_Printf(16, "^5[Xenon] relocated %u portal links in %s\n",
+				static_cast<unsigned int>(writes.size()), zone.c_str());
+			pending_portal_links.erase(found);
+		}
 
 		constexpr float preload_bar_height = 9.0f;
 		float preload_background_color[4] = {0.0f, 0.0f, 0.0f, 0.90f};
@@ -851,14 +919,15 @@ namespace fastfiles
 		int db_load_xassets_stub(game::XZoneInfo* zones, const int count, const int sync)
 		{
 			bool multiplayer_map_requested = false;
+			bool dlc_map_requested = false;
 			for (int i = 0; zones && i < count; ++i)
 			{
 				if (zones[i].name && std::string_view(zones[i].name).starts_with("mp_"))
 				{
 					multiplayer_map_requested = true;
+					dlc_map_requested |= dlc::requires_donor(utils::string::to_lower(zones[i].name));
 					std::lock_guard lock(external_asset_log_mutex);
 					logged_external_assets.clear();
-					break;
 				}
 			}
 
@@ -866,6 +935,17 @@ namespace fastfiles
 			// QoS PC 1.1, 0x103E1CF0. Remove this adapter when native Xenon schemas exist.
 			try
 			{
+				if (multiplayer_map_requested && !dlc_map_requested && common_xenon_attempted)
+				{
+					// Release only donor-owned assets. Freeing 0x11 would also
+					// remove common_consolation and the native patch zones.
+					game::XZoneInfo unload_donor{nullptr, 0, dlc::donor_free_flags};
+					db_load_xassets_hook.invoke<int>(&unload_donor, 1, 0);
+					game::DB_WaitXAssets.get()();
+					common_xenon_loaded = false;
+					common_xenon_attempted = false;
+					game::Com_Printf(16, "^5[Xenon] Unloaded shared donor before stock map load\n");
+				}
 				// Ensure the required shared HUD assets finish linking before CG registers
 				// map media, even if a map command races the deferred startup loader.
 				if (multiplayer_map_requested && common_fastfiles_seen && !common_consolation_loaded)
@@ -892,12 +972,12 @@ namespace fastfiles
 						throw std::runtime_error("Xenon UI conversion requires resident PC shader assets; use loadXenonZone without unloading zones");
 				}
 
-				if (multiplayer_map_requested && !common_xenon_attempted)
+				if (dlc_map_requested && !common_xenon_attempted)
 				{
 					common_xenon_attempted = true;
 					if (find_zone_file("common_xenon.ff"))
 					{
-						game::XZoneInfo donor_zone{"common_xenon", 0x11, 0};
+						game::XZoneInfo donor_zone{"common_xenon", dlc::donor_alloc_flags, 0};
 						game::Com_Printf(16, "^5[Xenon] Preloading shared PC render assets from common_xenon.ff\n");
 						present_common_xenon_preload(donor_zone.name);
 						const auto clear_preload_overlay = gsl::finally([]()
@@ -1228,6 +1308,7 @@ namespace fastfiles
 			const auto type = entry ? static_cast<int>(entry->asset.type) : -1;
 			const auto incoming_zone_index = get_asset_zone_index(entry);
 			const auto* const incoming_zone_name = get_zone_name(incoming_zone_index);
+			relocate_portal_links(entry);
 			const bool common_xenon_world_root = common_xenon_linking.load(std::memory_order_acquire)
 				&& (type == game::ASSET_TYPE_CLIPMAP_MP || type == game::ASSET_TYPE_COMWORLD
 					|| type == game::ASSET_TYPE_gameWORLD_MP || type == game::ASSET_TYPE_MAP_ENTS
