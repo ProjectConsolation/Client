@@ -166,6 +166,12 @@ source tier, PNG wins over DDS, then IWI. An invalid selected replacement
 retains the zone image. Archive search ordering and pure-server restrictions
 remain native engine behavior; this is not a purity bypass.
 
+The supplied `csl_dlc01.iwd` image replacements are scoped to Camille Pack
+map and load-zone deserialization (`mp_bags`, `mp_canals`, `mp_cistern`,
+`mp_dam` and their `_load` zones). They do not replace stock PC or shared
+donor-zone textures. Other user-created IWDs retain global image overrides.
+Restart after rebuilding the client so already-uploaded textures are discarded.
+
 The client adds `consolation/main` archives to QoS's native search paths during
 filesystem startup and restart. It does not change `fs_game` or redirect config
 writes. QoS owns ZIP indexing, file handles, decompression and shutdown cleanup.

@@ -18,10 +18,6 @@ namespace draw_techset
 		constexpr auto material_trace_end_address = 0x12A502F4;
 		constexpr std::size_t trace_text_capacity = 0x1000;
 		constexpr std::size_t max_texture_count = 16;
-		constexpr float virtual_width = 640.0f;
-		constexpr float virtual_height = 480.0f;
-		constexpr float native_anchor_x = 56.0f;
-		constexpr float native_anchor_y = 350.0f;
 
 		struct gfx_image_view
 		{
@@ -56,7 +52,21 @@ namespace draw_techset
 		std::uintptr_t material_trace_start{};
 		std::uintptr_t material_trace_end{};
 		float text_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-		float shadow_color[4] = {0.0f, 0.0f, 0.0f, 0.75f};
+		std::uintptr_t native_text_draw{};
+
+		// QoS CG_DrawMaterial 102B58D0 uses EAX=ECX=1 for placement
+		// alignment, ten caller-cleaned stack arguments, and its cached font.
+		// Preserve that exact path instead of recreating viewport scaling.
+		__declspec(naked) void draw_native_text(void*, const char*, int, game::Font_s*,
+			float, float, float, float, const float*, int)
+		{
+			__asm
+			{
+				mov eax, 1
+				mov ecx, 1
+				jmp dword ptr[native_text_draw]
+			}
+		}
 
 		__declspec(naked) int trace_material_native(char*, char*, char*)
 		{
@@ -186,28 +196,11 @@ namespace draw_techset
 			}
 		}
 
-		void get_client_size(float* width, float* height)
-		{
-			*width = virtual_width;
-			*height = virtual_height;
-			RECT client_rect{};
-			const auto window = *game::main_window;
-			if (window && GetClientRect(window, &client_rect)
-				&& client_rect.right > client_rect.left
-				&& client_rect.bottom > client_rect.top)
-			{
-				*width = static_cast<float>(client_rect.right - client_rect.left);
-				*height = static_cast<float>(client_rect.bottom - client_rect.top);
-			}
-		}
-
 		void draw_line(const char* text, game::Font_s* font, const float x,
 			const float y, const float scale)
 		{
-			game::R_AddCmdDrawText(text, 0x7FFFFFFF, font, x + 1.0f, y + 1.0f,
-				scale, scale, 0.0f, shadow_color, 0);
-			game::R_AddCmdDrawText(text, 0x7FFFFFFF, font, x, y,
-				scale, scale, 0.0f, text_color, 0);
+			draw_native_text(reinterpret_cast<void*>(game::game_offset(0x1127BA50)),
+				text, 0x7FFFFFFF, font, x, y, scale, scale, text_color, 0);
 		}
 
 		void configure_draw_material()
@@ -269,21 +262,17 @@ namespace draw_techset
 			material_snapshot material{};
 			const auto resolved = resolve_material(trace.material, &material);
 
-			auto* const font = game::R_RegisterFont("fonts/consolefont");
+			auto* const font = *reinterpret_cast<game::Font_s**>(game::game_offset(0x113FB174));
 			if (!font || font->pixelHeight <= 0)
 			{
 				return;
 			}
 
-			float width{};
-			float height{};
-			get_client_size(&width, &height);
-			const auto layout_scale = (std::min)(width / virtual_width,
-				height / virtual_height);
-			const auto font_scale = (std::max)(0.5f, layout_scale * 0.5f);
-			const auto x = native_anchor_x * width / virtual_width;
-			auto y = native_anchor_y * height / virtual_height;
-			const auto line_height = static_cast<float>(font->pixelHeight) * font_scale;
+			constexpr auto font_scale = 1.0f;
+			constexpr auto x = 8.0f;
+			const auto line_height = static_cast<float>(font->pixelHeight);
+			// The three native labels occupy baselines 240+h, 240+2h, 240+3h.
+			auto y = 240.0f + 4.0f * line_height;
 			if (!resolved)
 			{
 				draw_line("techset: <render material not resolved>", font, x, y, font_scale);
@@ -295,7 +284,7 @@ namespace draw_techset
 			for (std::size_t index = 0; index < material.texture_count; ++index)
 			{
 				y += line_height;
-				if (y > height - line_height)
+				if (y > 480.0f - line_height)
 				{
 					break;
 				}
@@ -318,6 +307,7 @@ namespace draw_techset
 			material_trace_function = game::game_offset(material_trace_function_address);
 			material_trace_start = game::game_offset(material_trace_start_address);
 			material_trace_end = game::game_offset(material_trace_end_address);
+			native_text_draw = game::game_offset(0x1031CF90);
 			scheduler::loop(configure_draw_material, scheduler::pipeline::main, 250ms);
 			scheduler::loop(draw, scheduler::pipeline::renderer);
 		}
@@ -327,6 +317,7 @@ namespace draw_techset
 			material_trace_function = 0;
 			material_trace_start = 0;
 			material_trace_end = 0;
+			native_text_draw = 0;
 		}
 	};
 }

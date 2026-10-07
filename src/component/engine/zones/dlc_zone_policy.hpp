@@ -15,4 +15,12 @@ namespace fastfiles::dlc
     // QoS's 0x10 image-loading bit, but never share the HUD's 0x01 bit.
     constexpr int donor_free_flags = 0x40;
     constexpr int donor_alloc_flags = donor_free_flags | 0x10;
+
+    // DLC textures reuse PC image names, including normal/specular maps. They
+    // must not replace stock or shared donor images. Other user IWDs retain
+    // their intentional global override behavior. Inputs are lowercase.
+    constexpr bool allows_image_archive(std::string_view archive, std::string_view loading_zone)
+    {
+        return archive != "csl_dlc01.iwd" || requires_donor(loading_zone);
+    }
 }

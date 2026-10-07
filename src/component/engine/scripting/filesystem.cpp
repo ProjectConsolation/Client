@@ -4,6 +4,7 @@
 #include "component/engine/console/command.hpp"
 #include "component/engine/console/console.hpp"
 #include "filesystem.hpp"
+#include "component/engine/zones/dlc_zone_policy.hpp"
 
 #include "game/game.hpp"
 
@@ -11,6 +12,7 @@
 #include <utils/flags.hpp>
 #include <utils/hook.hpp>
 #include <utils/nt.hpp>
+#include <utils/string.hpp>
 #include <ShlObj.h>
 
 namespace filesystem
@@ -97,6 +99,16 @@ namespace filesystem
 			if (!file.handle) return false;
 			const auto* iwd = *reinterpret_cast<unsigned char**>(handles + 284 * file.handle + 20);
 			if (!consolation_iwd(iwd)) return false; // Do not replace from stock main/devraw files.
+			// Image upload happens during DB deserialization, before asset linking.
+			// QoS DB_TryLoadXFile (103E17B0) sets 10826634 and the 68-byte
+			// zone-name table at 10AB8188 before loading the image records.
+			const auto zone_index = *reinterpret_cast<const unsigned int*>(game::game_offset(0x10826634));
+			const auto* zone_name = zone_index > 0 && zone_index < 33
+				? reinterpret_cast<const char*>(game::game_offset(0x10AB8188) + 68 * zone_index) : "";
+			const auto archive = utils::string::to_lower(std::filesystem::path(
+				std::string(reinterpret_cast<const char*>(iwd), strnlen(reinterpret_cast<const char*>(iwd), 256))).filename().string());
+			if (!fastfiles::dlc::allows_image_archive(archive,
+				utils::string::to_lower(std::string(zone_name, strnlen(zone_name, 67))))) return false;
 			source = std::string(reinterpret_cast<const char*>(iwd), strnlen(reinterpret_cast<const char*>(iwd), 256))
 				+ "::" + filename;
 			if (size < 8 || static_cast<std::size_t>(size) > (64u * 1024u * 1024u))
