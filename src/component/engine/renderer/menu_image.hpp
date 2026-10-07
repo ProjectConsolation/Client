@@ -68,7 +68,15 @@ namespace menu_image
         {
             std::string path;
             if (!filesystem::find_file("images/" + filename, &path))
-                throw std::runtime_error("file not found in consolation/images");
+            {
+                // A map-specific preview is optional: menu_background tries the
+                // installed slideshow next. Do not throw for a normal lookup
+                // miss, which otherwise stops first-chance exception debugging.
+                rejected->emplace(filename, true);
+                game::Com_Printf(13, "^3[menu - image] %s: file not found in consolation/images; skipping optional image\n",
+                    filename.c_str());
+                return nullptr;
+            }
             std::ifstream stream(path, std::ios::binary | std::ios::ate);
             if (!stream) throw std::runtime_error("could not open PNG");
             const auto length = static_cast<std::streamoff>(stream.tellg());
