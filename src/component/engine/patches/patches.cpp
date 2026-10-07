@@ -4,6 +4,7 @@
 #include "component/engine/console/console.hpp"
 #include "component/engine/console/command.hpp"
 #include "component/engine/patches/xlive.hpp"
+#include "camera_validation.hpp"
 #include "component/utils/resources.hpp"
 #include "component/utils/scheduler.hpp"
 
@@ -64,8 +65,10 @@ namespace patches
 		std::uintptr_t stance_state_address{};
 		std::uintptr_t stance_icon_draw_address{};
 		std::uintptr_t stance_health_draw_address{};
-		// Selected 128px candidates end at row 85; native crouch ends at 125.
-		const float prone_baseline_offset = 40.0f / 128.0f;
+		// Low-detail v3 128px silhouettes: neutral/MI6 end at row 92,
+		// Organisation at 87. Native crouch ends at 125. Identical adjustments
+		// apply to the full icon, health tint and stance flash.
+		const float prone_baseline_offsets[] = {33.0f / 128.0f, 33.0f / 128.0f, 38.0f / 128.0f};
 		const char* const prone_material_names[] = {
 			"qos_stance_prone", "qos_stance_prone_mi6", "qos_stance_prone_org"
 		};
@@ -116,8 +119,18 @@ namespace patches
 				mov eax, stance_state_address
 				test dword ptr[eax], 1
 				jz unchanged
+				xor edx, edx
+				mov eax, stance_faction_dvar_slot
+				mov eax, [eax]
+				test eax, eax
+				jz offset_ready
+				mov eax, [eax + 10h]
+				cmp eax, 3
+				jae offset_ready
+				mov edx, eax
+			offset_ready:
 				fld dword ptr[esi + 12]
-				fmul prone_baseline_offset
+				fmul dword ptr[prone_baseline_offsets + edx * 4]
 				fadd dword ptr[esp + 48]
 				fstp dword ptr[esp + 48]
 			unchanged:
@@ -136,8 +149,18 @@ namespace patches
 				mov eax, stance_state_address
 				test dword ptr[eax], 1
 				jz unchanged
+				xor edx, edx
+				mov eax, stance_faction_dvar_slot
+				mov eax, [eax]
+				test eax, eax
+				jz offset_ready
+				mov eax, [eax + 10h]
+				cmp eax, 3
+				jae offset_ready
+				mov edx, eax
+			offset_ready:
 				fld dword ptr[esi + 12]
-				fmul prone_baseline_offset
+				fmul dword ptr[prone_baseline_offsets + edx * 4]
 				fadd dword ptr[esp + 44]
 				fstp dword ptr[esp + 44]
 			unchanged:
@@ -579,6 +602,63 @@ namespace patches
 			}
 		}
 
+		std::uintptr_t final_camera_axis_address{};
+
+		// Compatibility boundary for QoS PC 1.1, not a replacement movement
+		// camera. 102A3D30 applies 102A1EE0 again AFTER the body-bone helper,
+		// then commits the final orientation at 102A41E0. falling.dmp proves
+		// finite predicted angles with non-finite rendered angles/axes.
+		// Guard this last boundary so later bob/offset work cannot undo the
+		// earlier repair. Remove after the producing animation/math is fixed.
+		void validate_final_airborne_camera()
+		{
+			const auto* body = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25E4));
+			const auto* third = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25F8));
+			const auto* ps = reinterpret_cast<const unsigned char*>(game::game_offset(0x12A4CDFC));
+			const bool eligible = body && body->current.enabled && (!third || third->current.integer != 2)
+				&& *reinterpret_cast<const int*>(ps + 4) == 0
+				&& *reinterpret_cast<const int*>(ps + 128) == 1023
+				&& (*reinterpret_cast<const unsigned int*>(ps + 12) & 8) == 0
+				&& (*reinterpret_cast<const unsigned int*>(ps + 4032) & 1) == 0
+				&& (*reinterpret_cast<const unsigned int*>(ps + 188) & 0x200) == 0;
+			static bool reported = false;
+			if (!eligible) { reported = false; return; }
+			auto* angles = reinterpret_cast<float*>(game::game_offset(0x12A54954));
+			const auto* predicted = reinterpret_cast<const float*>(ps + 284);
+			const bool repaired = camera_validation::restore_angles(std::span<float, 3>(angles, 3),
+				std::span<const float, 3>(predicted, 3));
+			if (!repaired) return;
+			// 102A1EE0 also publishes a relative viewmodel transform. A NaN
+			// orientation must not survive there and hide/detach the viewarms.
+			auto* delta_axis = reinterpret_cast<float*>(game::game_offset(0x129FE8C0) + 559008);
+			camera_validation::restore_relative_axis(std::span<float, 9>(delta_axis, 9));
+			if (!reported)
+			{
+				console::warn("camera: repaired non-finite final airborne orientation after native offsets\n");
+				reported = true;
+			}
+		}
+
+		__declspec(naked) void final_camera_axis_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				mov ebp, esp
+				sub esp, 528
+				and esp, -16
+				fxsave [esp]
+				call validate_final_airborne_camera
+				fxrstor [esp]
+				mov esp, ebp
+				popad
+				popfd
+				// Original AnglesToAxis usercall: ESI=angles, EDX=axis.
+				jmp dword ptr[final_camera_axis_address]
+			}
+		}
+
 		char player_bone_camera_stub(const int local_client_num)
 		{
 			const auto* third_person = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x113F25F8));
@@ -821,6 +901,13 @@ namespace patches
 			if (std::memcmp(reinterpret_cast<const void*>(bone_camera_site), expected_camera_bytes.data(), expected_camera_bytes.size()) == 0)
 				player_bone_camera_hook.create(bone_camera_site, player_bone_camera_stub);
 			else console::warn("[movement] prone camera patch skipped: unexpected engine instructions\n");
+			const auto final_axis_site = game::game_offset(0x102A41E0);
+			final_camera_axis_address = game::game_offset(0x10421490);
+			if (*reinterpret_cast<const unsigned char*>(final_axis_site) == 0xE8
+				&& final_axis_site + 5 + *reinterpret_cast<const std::int32_t*>(final_axis_site + 1)
+					== final_camera_axis_address)
+				utils::hook::call(final_axis_site, final_camera_axis_stub);
+			else console::warn("[camera] final airborne orientation guard skipped: unexpected call target\n");
 
 			const auto cover_site = game::game_offset(0x1020DC30);
 			const auto permission_site = game::game_offset(0x101FF670);
