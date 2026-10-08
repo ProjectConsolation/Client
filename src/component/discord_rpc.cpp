@@ -103,8 +103,14 @@ namespace discord_rpc
 				if (!value.image.empty())
 				{
 					writer.Key("assets"); writer.StartObject(); writer.Key("large_image"); writer.String(value.image.c_str());
-					writer.Key("large_text"); writer.String("Project: Consolation"); writer.EndObject();
+					writer.Key("large_text"); writer.String("Project: Consolation");
+					writer.Key("large_url"); writer.String("https://github.com/ProjectConsolation/Client");
+					writer.EndObject();
 				}
+				writer.Key("buttons"); writer.StartArray(); writer.StartObject();
+				writer.Key("label"); writer.String("Join Discord");
+				writer.Key("url"); writer.String("https://discord.gg/XSrTvXJcsw");
+				writer.EndObject(); writer.EndArray();
 				writer.EndObject();
 			}
 			writer.EndObject(); writer.Key("nonce"); writer.String(nonce.c_str()); writer.EndObject();
