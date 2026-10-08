@@ -37,6 +37,9 @@ If that file is missing or empty, Project: Consolation falls back to generated b
 Custom integer dvar with a default of `100` and a range of `1` to `1000`.
 
 This controls how much health bots receive when they spawn.
+Use `bot_maxHealth 100` for the default health. Runtime health checks only cap
+values above the configured maximum; they do not refill damage or restore
+zero/negative health. Changing the limit does not heal existing bots.
 
 ## Notes
 

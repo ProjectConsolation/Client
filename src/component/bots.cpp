@@ -643,30 +643,11 @@ namespace bots
 				return;
 			}
 
-			if (!client_is_dead(client_idx))
-			{
-				if (ent->health <= 0 || ent->health > maxhp)
-				{
-					ent->health = maxhp;
-				}
-
-				if (ps_health <= 0 || ps_health > maxhp)
-				{
-					ps_health = ent->health;
-				}
-			}
-			else
-			{
-				if (ent->health > maxhp)
-				{
-					ent->health = maxhp;
-				}
-
-				if (ps_health > maxhp)
-				{
-					ps_health = maxhp;
-				}
-			}
+			// Native damage/death owns current health. The snapshot death flag
+			// can lag a lethal hit: never turn zero/negative health back into a
+			// full-health bot while that flag still says alive.
+			if (ent->health > maxhp) ent->health = maxhp;
+			if (ps_health > maxhp) ps_health = maxhp;
 		}
 
 		void sync_bot_health_from_dvar()
@@ -687,7 +668,8 @@ namespace bots
 					continue;
 				}
 
-				sanitize_bot_health(i, true);
+				// A limit change must not heal wounded bots or resurrect dead ones.
+				sanitize_bot_health(i, false);
 			}
 
 			s_last_applied_bot_max_health = maxhp;
