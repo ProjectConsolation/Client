@@ -50,7 +50,7 @@
 
 `CLIENT_STRIDE = 688916`, `CLIENT_ENTITYPTR_OFF = 0x2128C`, `CLIENT_LAST_USERCMD_OFF = 0x20E9C`, and `CLIENT_USERINFO_OFF = 1604` define client-memory layout.
 
-`PS_ORIGIN_OFFSET = 0x20`, `PS_MAXHEALTH_OFFSET = 0x32C4`, and player-state health offset `0x1CC` define player-state fields.
+`PS_ORIGIN_OFFSET = 0x20`, `PS_MAXHEALTH_OFFSET = 0x32C4`, player-state health `0x16C`, replicated maximum health `0x178`, delta angles `0x74`, and aim angles `0x11C` define verified QoS client fields. Entity health remains at `0x1CC`; this is not the player-state health offset.
 
 `MAX_CLIENTS = 18`, `TARGET_MEMORY_MS = 5000`, `SEARCH_UPDATE_MS = 900`, `STUCK_REPATH_MS = 1400`, and `AIM_SETTLE_THRESHOLD = 1400` define bot-state and targeting lifetimes.
 

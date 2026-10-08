@@ -51,6 +51,7 @@ buttons together, diagonal movement and normal movement after leaving noclip.
 | `ui_bigFont` | Saved float dvar. Adjusts the large UI font scale. | Range: `0` to `1` |
 | `ui_extraBigFont` | Saved float dvar. Adjusts the extra-large UI font scale. | Range: `0` to `1` |
 | `cg_overheadNamesSize` | Saved float dvar. Adjusts the size of overhead player names. | Default: `0.5`, Range: `0` to `1` |
+| `cg_overheadNamesFont` | Saved, cheat-protected font selector: `0` native, `1` normal, `2` big, `3` small, `4` bold. Missing fonts fall back to native. Retains the native subtle drop shadow. | Default: `2`, Range: `0` to `4` |
 | `cg_drawWatermark` | Saved boolean dvar added by Project: Consolation. Draws the unshadowed Project: Consolation watermark at the top-right edge. | Default: `1` |
 | `cg_drawVersion` | Saved boolean dvar added by Project: Consolation. Draws the blue build-version string on the bottom status line. | Default: `1` |
 | `cg_drawVersionX` | Saved horizontal position from the left edge for the version string. | Default: `50`, Range: `-1024` to `1024` |
@@ -65,7 +66,7 @@ buttons together, diagonal movement and normal movement after leaving noclip.
 | `monkeytoy` | Registered as writable. Useful for modding and development-oriented workflows where the stock restrictions are not wanted. | N/A |
 | `g_debugVelocity` | Custom debug boolean dvar. Prints velocity-related debug information to the console. | Boolean |
 | `g_debugLocalization` | Custom debug boolean dvar. Prints information about unlocalized strings to the console. | Boolean |
-| `bot_maxHealth` | Custom integer dvar. Controls the health bots receive when they spawn. | Default: `100`, Range: `1` to `1000` |
+| `bot_maxHealth` | Cheat-protected integer dvar. Initialized from `scr_player_maxhealth` per server; later edits apply on each bot’s next respawn. | Fallback: `100`, Range: `1` to `1000` |
 
 ## Notes
 

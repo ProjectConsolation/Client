@@ -25,6 +25,33 @@ def function_body(text, signature):
 
 
 class DvarBindingContracts(unittest.TestCase):
+    def test_overhead_default_and_removed_cycle_command(self):
+        patches = source("src/component/engine/patches/patches.cpp")
+        self.assertRegex(patches, r'"cg_overheadNamesFont",\s*"[^"\n]*",\s*2, 0, 4, game::dvar_flags::saved \| game::dvar_flags::cheat_protected')
+        self.assertNotIn('command::add("overheadFontNext"', patches)
+
+    def test_bot_health_protection_and_life_boundary(self):
+        dvars = source("src/game/dvars.cpp")
+        self.assertRegex(dvars, r'"bot_maxHealth", "[^"\n]*", 100, 1, 1000, game::dvar_flags::cheat_protected')
+        bots = source("src/component/bots.cpp")
+        self.assertIn('game::Dvar_FindVar("scr_player_maxhealth")', bots)
+        self.assertIn('game::Dvar_FindVar("sv_serverid")', bots)
+        health = function_body(bots, "void sanitize_bot_health(")
+        self.assertIn("ps->spawnCount", health)
+        self.assertIn("const int maxhp = life.maximum", health)
+        self.assertIn("ps->health", health)
+        self.assertIn("ps->statsMaxHealth = maxhp", health)
+        self.assertNotIn("+ 0x1CC", health)
+
+    def test_bot_command_preserves_loadout_not_vertical_movement(self):
+        bots = source("src/component/bots.cpp")
+        self.assertIn("cmd.loadoutClass = static_cast<std::uint8_t>(ps->loadoutClass)", bots)
+        self.assertNotIn("cmd.upmove", bots)
+        structs = source("src/game/structs.hpp")
+        for field, offset in [("health", "0x16C"), ("statsMaxHealth", "0x178"), ("spawnCount", "0x180"), ("loadoutClass", "0x10A8")]:
+            self.assertIn(f"offsetof(playerState_t, {field}) == {offset}", structs)
+        self.assertIn("offsetof(usercmd_t, loadoutClass) == 0x1F", structs)
+
     def test_lookup_uses_locked_native_cdecl_entry(self):
         game = function_body(source("src/game/game.cpp"), "dvar_s* Dvar_FindMalleableVar(")
         shim = function_body(source("src_xlive/xlive_shim.cpp"), "dvar_s* find_dvar(")

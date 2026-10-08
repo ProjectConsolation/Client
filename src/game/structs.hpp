@@ -1140,10 +1140,11 @@ namespace game
 		std::int8_t     forwardmove;   // +0x1C [CONFIRMED] -127=full back, 127=full forward
 		std::uint8_t    unk_1D;        // +0x1D
 		std::int8_t     rightmove;     // +0x1E [CONFIRMED] -127=full left, 127=full right
-		std::uint8_t    upmove;        // +0x1F [INFERRED]
+		std::uint8_t    loadoutClass;  // +0x1F QoS 0x10195D35..55 compares class, then initializes health
 		int             unk_20[3];     // +0x20 [UNOBSERVED]
 	};
 	static_assert(sizeof(usercmd_t) == 0x2C, "usercmd_t size mismatch");
+	static_assert(offsetof(usercmd_t, loadoutClass) == 0x1F);
 
 	// ── clientState_t ─────────────────────────────────────────────────────────
 	// Stored in client_t::state. Transitions logged in SV_ClientEnterWorld.
@@ -1184,11 +1185,21 @@ namespace game
 		std::uint8_t    _pad_0038[0x24];
 		int             gravity;            // +0x005C [CONFIRMED] used in jump velocity calc
 		//  (Jump_Start: calculatedGravity = gravity * jumpHeight * 2)
-		std::uint8_t    _pad_0060[0x60];
+		std::uint8_t    _pad_0060[0x14];
+		float           deltaAngles[3];     // +0x74 QoS player-state netfields: delta_angles[0..2]
+		std::uint8_t    _pad_0080[0x40];
 		int             groundEntityNum;    // +0x00C0 [OBSERVED] 1023=ENTITYNUM_NONE (in air)
-		std::uint8_t    _pad_00C4[0xE8];
-		int             health;             // +0x01CC [CONFIRMED] current health, mirrors entity_t::health
-		std::uint8_t    _pad_01D0[0x304C]; // large gap to the maxHealth region
+		std::uint8_t    _pad_00C4[0x58];
+		float           aimAngles[3];       // +0x11C QoS player-state netfields: viewangles[0..2]
+		std::uint8_t    _pad_0128[0x44];
+		int             health;             // +0x16C stats health, verified by QoS 0x10446960
+		std::uint8_t    _pad_0170[0x08];
+		int             statsMaxHealth;     // +0x178, mirrored from pers maxHealth by 0x10446960
+		std::uint8_t    _pad_017C[0x04];
+		int             spawnCount;         // +0x180 saved/incremented by QoS ClientSpawn 0x10414D30
+		std::uint8_t    _pad_0184[0xF24];
+		int             loadoutClass;       // +0x10A8 QoS ClientThink compares usercmd +0x1F
+		std::uint8_t    _pad_10AC[0x2218];
 		int             maxHealth;          // +0x32C4 [CONFIRMED] maximum health cap
 		std::uint8_t    _pad_32C8[0x7C];
 		int             viewHeightTarget;   // +0x3344 [OBSERVED] related to stance transitions
@@ -1201,6 +1212,13 @@ namespace game
 	};
 	static_assert(offsetof(playerState_t, origin) == 0x20, "playerState_t origin offset mismatch");
 	static_assert(offsetof(playerState_t, velocity) == 0x2C, "playerState_t velocity offset mismatch");
+	static_assert(offsetof(playerState_t, deltaAngles) == 0x74);
+	static_assert(offsetof(playerState_t, aimAngles) == 0x11C);
+	static_assert(offsetof(playerState_t, health) == 0x16C);
+	static_assert(offsetof(playerState_t, statsMaxHealth) == 0x178);
+	static_assert(offsetof(playerState_t, spawnCount) == 0x180);
+	static_assert(offsetof(playerState_t, loadoutClass) == 0x10A8);
+	static_assert(offsetof(playerState_t, maxHealth) == 0x32C4);
 
 	// ── entity_t ──────────────────────────────────────────────────────────────
 	// stride = 0x290 (656 bytes). Static array at g_entities (game_offset 0x11961F80).

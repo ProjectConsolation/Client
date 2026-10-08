@@ -834,7 +834,9 @@ namespace patches
 		}
 
 		// Replace only the font load. Native name/team/occlusion/projection and
-		// normalized cg_overheadNamesSize scaling continue unchanged.
+		// normalized cg_overheadNamesSize scaling continue unchanged. QoS's
+		// draw at 0x102851BF already uses style 3: the same subtle 1px drop
+		// shadow as KisakCOD R_AddCmdDrawText / RB_DrawText (render flag 4).
 		__declspec(naked) void overhead_font_stub()
 		{
 			__asm
@@ -2217,21 +2219,7 @@ namespace patches
 				scheduler::loop(apply_movement_preset, scheduler::main);
 				overhead_font_dvar = dvars::Dvar_RegisterInt("cg_overheadNamesFont",
 					"Overhead font: 0 native, 1 normal, 2 big, 3 small, 4 bold (missing fonts use native).",
-					0, 0, 4, game::dvar_flags::saved | game::dvar_flags::cheat_protected);
-				command::add("overheadFontNext", [](const command::params&)
-				{
-					// Dvar_SetString uses the INTERNAL engine setter, so the command
-					// needs its own gate as well as the dvar's native cheat flag.
-					const auto* const cheats = game::Dvar_FindVar("sv_cheats");
-					if (!cheats || !cheats->current.enabled)
-					{
-						console::info("overheadFontNext: cheats are not enabled\n");
-						return;
-					}
-					const int next = overhead_font_dvar ? (overhead_font_dvar->current.integer + 1) % 5 : 0;
-					game::Dvar_SetString("cg_overheadNamesFont", utils::string::va("%d", next));
-					console::info("cg_overheadNamesFont = %d\n", next);
-				});
+					2, 0, 4, game::dvar_flags::saved | game::dvar_flags::cheat_protected);
 				pm_noclipScale = dvars::Dvar_RegisterFloat("pm_noclipScale",
 					"Noclip movement speed multiplier (1 = native speed).",
 					1.0f, 0.0f, 20.0f, game::dvar_flags::saved);

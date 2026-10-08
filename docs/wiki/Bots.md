@@ -34,12 +34,19 @@ If that file is missing or empty, Project: Consolation falls back to generated b
 
 ### `bot_maxHealth`
 
-Custom integer dvar with a default of `100` and a range of `1` to `1000`.
+Cheat-protected integer dvar with a range of `1` to `1000`. Each new server
+initializes it from `scr_player_maxhealth` after script initialization; an absent,
+invalid or out-of-range setting falls back to `100`. Bot entity health, the
+actual player-state health stat and both maximum-health fields use this limit,
+even if a native loadout would otherwise supply a different maximum.
+Bot commands preserve the selected loadout; stuck recovery no longer writes
+a bogus class index that could trigger native loadout/health initialization.
 
-This controls how much health bots receive when they spawn.
-Use `bot_maxHealth 100` for the default health. Runtime health checks only cap
-values above the configured maximum; they do not refill damage or restore
-zero/negative health. Changing the limit does not heal existing bots.
+After server startup, enable `sv_cheats 1` and set `bot_maxHealth 200` (for
+example). The new value applies when each bot next respawns, not to its current
+life. Kill existing bots once to test the changed spawn health. Runtime checks
+retain each life’s chosen maximum without healing wounds or reviving dead bots.
+Starting another server/map initializes the setting from game settings again.
 
 ## Notes
 
@@ -54,6 +61,16 @@ instead of automatically pursuing every unseen player.
 
 This is not a complete Combat Training port: BO1 navigation, damage-threat
 callbacks and the full perception/weapon subsystem are not implemented here.
+
+Combat commands compensate for native spawn angle offsets and check actual
+view angles before firing. Bots stop sprinting when engaging within firing
+range. Timed 250 ms fire bursts with 100 ms releases allow semi-automatic
+weapons to retrigger; the native `sv_botsPressAttackBtn` gate also disables
+close-range melee. This timing policy adapts KisakBlack's fire-delay approach,
+but does not import BO1 weapon definitions or ammo-management logic.
+
+Health synchronization caps both entity health and QoS's actual player-state
+health stat, and updates its persistent and replicated maximum-health fields.
 
 - Bots are mainly intended for testing, casual play, and local experimentation right now.
 - They are not a replacement for polished single-player-style AI.

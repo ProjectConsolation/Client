@@ -7,6 +7,7 @@
 #include "game/game.hpp"
 #include "game/dvars.hpp"
 #include "bot_targeting.hpp"
+#include "bot_combat.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
@@ -43,7 +44,6 @@ namespace bots
 		constexpr float COVER_COMMIT_RANGE = 80.0f;
 		constexpr float MELEE_RANGE = 96.0f;
 		constexpr float CROUCH_RANGE = 384.0f;
-		constexpr float SPRINT_RANGE = 700.0f;
 		constexpr float FIRE_RANGE = 1400.0f;
 		constexpr float STUCK_DIST_EPSILON = 24.0f;
 
@@ -295,7 +295,7 @@ namespace bots
 		}
 
 		static std::uintptr_t s_client_think_real_addr = 0;
-		static bool s_attack_phase[MAX_CLIENTS] = {};
+		static combat::fire_control s_fire_control[MAX_CLIENTS] = {};
 		static int s_tracked_target[MAX_CLIENTS] = {};
 		static int s_last_visible_time[MAX_CLIENTS] = {};
 		static float s_last_seen_origin[MAX_CLIENTS][3] = {};
@@ -305,7 +305,9 @@ namespace bots
 		static int s_next_search_time[MAX_CLIENTS] = {};
 		static int s_last_progress_time[MAX_CLIENTS] = {};
 		static float s_last_progress_origin[MAX_CLIENTS][3] = {};
-		static int s_last_applied_bot_max_health = 0;
+		static combat::life_health s_life_health[MAX_CLIENTS]{};
+		static bool s_health_server_initialized = false;
+		static int s_health_server_id = 0;
 		static targeting::sight_sample s_sight[MAX_CLIENTS][MAX_CLIENTS]{};
 
 		int bot_state_index(int client_idx)
@@ -336,7 +338,7 @@ namespace bots
 				return;
 			}
 
-			s_attack_phase[idx] = false;
+			s_fire_control[idx] = {};
 			s_tracked_target[idx] = -1;
 			s_last_visible_time[idx] = 0;
 			s_last_seen_origin[idx][0] = 0.0f;
@@ -629,14 +631,55 @@ namespace bots
 				: 100;
 		}
 
-		void sanitize_bot_health(int client_idx, bool force_full_health, bool assume_bot = false)
+		int server_player_max_health()
 		{
+			const auto* setting = game::Dvar_FindVar("scr_player_maxhealth");
+			if (!setting) return 100;
+			int value = 100;
+			if (setting->type == game::dvar_type::integer) value = setting->current.integer;
+			else if (setting->type == game::dvar_type::string && setting->current.string)
+			{
+				char* end = nullptr;
+				const long parsed = std::strtol(setting->current.string, &end, 10);
+				if (end == setting->current.string || *end || parsed < 1 || parsed > 1000) return 100;
+				value = static_cast<int>(parsed);
+			}
+			return value >= 1 && value <= 1000 ? value : 100;
+		}
+
+		void initialize_server_bot_health(bool allow_fallback = false)
+		{
+			const auto* running = game::Dvar_FindVar("sv_running");
+			if (!running || !running->current.enabled)
+			{
+				s_health_server_initialized = false;
+				for (auto& life : s_life_health) life = {};
+				return;
+			}
+			const auto* id = game::Dvar_FindVar("sv_serverid");
+			const int server_id = id ? id->current.integer : 0;
+			if (s_health_server_initialized && server_id == s_health_server_id) return;
+			// Defer script-created settings until game initialization is ready.
+			if (!dvars::bot_maxHealth || (!allow_fallback && !game::Dvar_FindVar("scr_player_maxhealth"))) return;
+			const int maximum = server_player_max_health();
+			// Internal server initialization may set a baseline without cheats.
+			// Console edits remain cheat-protected and apply on the next life.
+			dvars::bot_maxHealth->reset.integer = maximum;
+			game::Dvar_SetString("bot_maxHealth", utils::string::va("%d", maximum));
+			s_health_server_id = server_id;
+			s_health_server_initialized = true;
+			for (auto& life : s_life_health) life = {};
+			console::info("Bots: server spawn health initialized to %d\n", maximum);
+		}
+
+		void sanitize_bot_health(int client_idx, bool assume_bot = false)
+		{
+			if (bot_state_index(client_idx) < 0) return;
 			if (!assume_bot && client_is_real_player(client_idx))
 			{
 				return;
 			}
 
-			const int maxhp = get_bot_max_health();
 			auto* const ent = entity_at(client_idx);
 			if (!ent)
 			{
@@ -649,47 +692,28 @@ namespace bots
 				return;
 			}
 
-			auto& ps_health = *reinterpret_cast<int*>(reinterpret_cast<std::uint8_t*>(ps) + 0x1CC);
+			auto& life = s_life_health[client_idx];
+			const bool new_life = combat::begin_life(life, ps->spawnCount, get_bot_max_health(), ent->health, ps->health);
+			if (!life.initialized) return;
+			const int maxhp = life.maximum;
+			auto& ps_health = ps->health;
 			auto& ps_max_health = *reinterpret_cast<int*>(reinterpret_cast<std::uint8_t*>(ps) + PS_MAXHEALTH_OFFSET);
 			ps_max_health = maxhp;
+			ps->statsMaxHealth = maxhp;
 
-			if (force_full_health)
+			if (new_life)
 			{
 				ent->health = maxhp;
 				ps_health = maxhp;
+				console::info("Bot %d spawn %d: health=%d stats=%d max=%d\n",
+					client_idx, ps->spawnCount, ent->health, ps_health, ps_max_health);
 				return;
 			}
 
 			// Native damage/death owns current health. The snapshot death flag
 			// can lag a lethal hit: never turn zero/negative health back into a
 			// full-health bot while that flag still says alive.
-			if (ent->health > maxhp) ent->health = maxhp;
-			if (ps_health > maxhp) ps_health = maxhp;
-		}
-
-		void sync_bot_health_from_dvar()
-		{
-			const int maxhp = get_bot_max_health();
-			if (maxhp == s_last_applied_bot_max_health)
-			{
-				return;
-			}
-
-			const auto* const maxcl_dvar = sv_maxclients_dvar();
-			const int maxcl = maxcl_dvar ? maxcl_dvar->current.integer : MAX_CLIENTS;
-
-			for (int i = 0; i < maxcl; ++i)
-			{
-				if (client_state(i) < game::CS_CONNECTED || client_is_real_player(i))
-				{
-					continue;
-				}
-
-				// A limit change must not heal wounded bots or resurrect dead ones.
-				sanitize_bot_health(i, false);
-			}
-
-			s_last_applied_bot_max_health = maxhp;
+			combat::cap_health(ent->health, ps_health, maxhp);
 		}
 
 		void __cdecl client_enter_world_hook()
@@ -701,10 +725,10 @@ namespace bots
 			int client_idx = 0;
 			__asm { mov client_idx, esi }
 			if (bot_state_index(client_idx) >= 0)
+			{
 				for (int i = 0; i < MAX_CLIENTS; ++i) { s_sight[client_idx][i] = {}; s_sight[i][client_idx] = {}; }
-
-			s_last_applied_bot_max_health = get_bot_max_health();
-			sanitize_bot_health(client_idx, true);
+				s_life_health[client_idx] = {};
+			}
 		}
 
 		void bot_user_move_impl(std::uintptr_t client);
@@ -730,13 +754,17 @@ namespace bots
 				return;
 			}
 
-			sync_bot_health_from_dvar();
+			initialize_server_bot_health(true);
 
 			const int bot_idx = static_cast<int>((client - clients_base) / CLIENT_STRIDE);
 			if (bot_state_index(bot_idx) < 0) return;
-			sanitize_bot_health(bot_idx, false, true);
+			sanitize_bot_health(bot_idx, true);
 
 			game::usercmd_t cmd = {};
+			// QoS command byte 0x1F selects a loadout, not vertical movement.
+			// Changing it runs 0x101E6960 and restores class-defined health.
+			if (const auto* ps = entity_ps(entity_at(bot_idx)))
+				cmd.loadoutClass = static_cast<std::uint8_t>(ps->loadoutClass);
 
 			{
 				auto* const arch = g_archived_snap_base();
@@ -923,10 +951,13 @@ namespace bots
 					const int behavior_tick = bot_ps->commandTime / 250;
 					const bool stuck = bot_is_stuck(bot_idx, bot_ps);
 					const int desired_yaw = vector_to_yaw_units(dx, dy);
-					const int desired_pitch = std::clamp(static_cast<int>(std::atan2f(-dz, hdist) * IW_RAD_TO_ANGLE), -1400, 1400);
+					const int desired_pitch = std::clamp(static_cast<int>(std::atan2f(-dz, hdist) * IW_RAD_TO_ANGLE), -15474, 15474);
 					int move_yaw = vector_to_yaw_units(move_dx, move_dy);
-					const int yaw_delta = state_idx >= 0 ? std::abs(normalize_angle_units(desired_yaw - s_last_cmd_yaw[state_idx])) : 0;
-					const int pitch_delta = state_idx >= 0 ? std::abs(normalize_angle_units(desired_pitch - s_last_cmd_pitch[state_idx])) : 0;
+					// KisakBlack Bot_UpdateAngles subtracts delta_angles before
+					// submitting a usercmd. QoS netfields verify delta at 0x74 and
+					// actual viewangles at 0x11C; last command is not actual aim.
+					const int yaw_delta = std::abs(normalize_angle_units(desired_yaw - combat::angle_units(bot_ps->aimAngles[1])));
+					const int pitch_delta = std::abs(normalize_angle_units(desired_pitch - combat::angle_units(bot_ps->aimAngles[0])));
 					const bool aim_settled = yaw_delta <= AIM_SETTLE_THRESHOLD && pitch_delta <= AIM_SETTLE_THRESHOLD;
 
 					if (stuck)
@@ -945,9 +976,9 @@ namespace bots
 						}
 					}
 
-					cmd.angles[1] = desired_yaw;
-					cmd.angles[0] = desired_pitch;
-					cmd.angles[2] = 0;
+					cmd.angles[1] = combat::command_angle(desired_yaw, bot_ps->deltaAngles[1]);
+					cmd.angles[0] = combat::command_angle(desired_pitch, bot_ps->deltaAngles[0]);
+					cmd.angles[2] = combat::command_angle(0, bot_ps->deltaAngles[2]);
 
 					if (state_idx >= 0)
 					{
@@ -967,10 +998,6 @@ namespace bots
 					{
 						cmd.forwardmove = ((behavior_tick + bot_idx) & 1) ? 127 : static_cast<std::int8_t>(-96);
 						cmd.rightmove = ((behavior_tick + bot_idx) & 2) ? 96 : -96;
-						if (bot_ps->groundEntityNum != ENTITYNUM_NONE)
-						{
-							cmd.upmove = 127;
-						}
 						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_SPRINT);
 					}
 
@@ -991,7 +1018,7 @@ namespace bots
 						}
 					}
 
-					if (!target_visible || dist > SPRINT_RANGE)
+					if (!target_visible || dist > FIRE_RANGE)
 					{
 						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_SPRINT);
 					}
@@ -1003,8 +1030,10 @@ namespace bots
 
 					if (target_visible && best_visibility > 0.0f && dist <= (MELEE_RANGE * 1.5f))
 					{
-						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_MELEE_BREATH);
-						cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
+						const auto* const atk = sv_bots_press_attack_dvar();
+						if (atk && atk->current.enabled)
+							cmd.buttons = static_cast<game::usercmd_buttons>((cmd.buttons & ~game::BUTTON_SPRINT) | game::BUTTON_MELEE_BREATH);
+						s_fire_control[state_idx] = {};
 						cmd.forwardmove = 127;
 					}
 					else
@@ -1015,14 +1044,17 @@ namespace bots
 						}
 
 						const auto* const atk = sv_bots_press_attack_dvar();
-						if (atk
+						const bool can_fire = atk
 							&& atk->current.enabled
 							&& target_visible
 							&& best_visibility > 0.0f
 							&& dist <= FIRE_RANGE
 							&& (aim_settled
 								|| (yaw_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)
-									&& pitch_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2))))
+									&& pitch_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)));
+						if (can_fire)
+							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons & ~game::BUTTON_SPRINT);
+						if (combat::attack(s_fire_control[state_idx], bot_ps->commandTime, can_fire))
 						{
 							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
 
@@ -1039,10 +1071,6 @@ namespace bots
 								}
 							}
 						}
-						else if (state_idx >= 0)
-						{
-							s_attack_phase[state_idx] = false;
-						}
 					}
 				}
 				else
@@ -1051,6 +1079,8 @@ namespace bots
 					if (bot_ps)
 					{
 						apply_search_movement(cmd, bot_idx, bot_ps->commandTime);
+						for (int axis = 0; axis < 3; ++axis)
+							cmd.angles[axis] = combat::command_angle(cmd.angles[axis], bot_ps->deltaAngles[axis]);
 					}
 				}
 			}
@@ -1062,7 +1092,7 @@ namespace bots
 			}
 			*reinterpret_cast<int*>(client + 0x08) = *reinterpret_cast<int*>(client + 0x10) - 1;
 			call_sv_client_think_real(client, &cmd);
-			sanitize_bot_health(bot_idx, false, true);
+			sanitize_bot_health(bot_idx, true);
 		}
 	}
 
@@ -1077,10 +1107,11 @@ namespace bots
 			utils::hook::jump(reinterpret_cast<std::uintptr_t>(game::SV_BotUserMove.get()), sv_bot_user_move_hook);
 
 			std::fill_n(s_tracked_target, MAX_CLIENTS, -1);
+			scheduler::loop([] { initialize_server_bot_health(); }, scheduler::main);
 
 			scheduler::on_shutdown([]
 				{
-					std::memset(s_attack_phase, 0, sizeof(s_attack_phase));
+					for (auto& state : s_fire_control) state = {};
 					std::fill_n(s_tracked_target, MAX_CLIENTS, -1);
 					std::memset(s_last_visible_time, 0, sizeof(s_last_visible_time));
 					std::memset(s_last_seen_origin, 0, sizeof(s_last_seen_origin));
@@ -1090,7 +1121,8 @@ namespace bots
 					std::memset(s_next_search_time, 0, sizeof(s_next_search_time));
 					std::memset(s_last_progress_time, 0, sizeof(s_last_progress_time));
 					std::memset(s_last_progress_origin, 0, sizeof(s_last_progress_origin));
-					s_last_applied_bot_max_health = 0;
+					s_health_server_initialized = false;
+					for (auto& life : s_life_health) life = {};
 					for (auto& row : s_sight) for (auto& sample : row) sample = {};
 				});
 		}
