@@ -59,6 +59,7 @@ namespace fastfiles
 		std::uintptr_t renderer_reflection_probe_secondary_continue = 0;
 		std::uintptr_t renderer_reflection_probe_secondary_skip = 0;
 		std::uintptr_t gfx_world_pointer_address = 0;
+		std::uintptr_t reflection_probe_table_pointer_address = 0;
 		std::uintptr_t cg_initialized_address = 0;
 
 		bool common_fastfiles_seen = false;
@@ -1213,7 +1214,10 @@ namespace fastfiles
 				// has no complete PC probe image table. Complete native worlds retain
 				// the original lookup; absent tables and null image records take the
 				// function's native no-binding branch.
-				mov edx, dword ptr[10E29B3Ch]
+				// MSVC inline assembly encoded the numeric operand as an immediate
+				// address (BA), not a memory read. Dereference the rebased global.
+				mov edx, dword ptr[reflection_probe_table_pointer_address]
+				mov edx, dword ptr[edx]
 				shrd eax, edi, 15h
 				and eax, 0FFh
 				shl eax, 4
@@ -1237,7 +1241,8 @@ namespace fastfiles
 				// reflection-probe lookup. It has different continuation and skip
 				// addresses, so keep a distinct trampoline while applying the same
 				// reduced-world guard.
-				mov edx, dword ptr[10E29B3Ch]
+				mov edx, dword ptr[reflection_probe_table_pointer_address]
+				mov edx, dword ptr[edx]
 				shrd eax, edi, 15h
 				and eax, 0FFh
 				shl eax, 4
@@ -1508,6 +1513,7 @@ namespace fastfiles
 			extend_asset_pools();
 			scheduler::loop(draw_common_xenon_preload, scheduler::pipeline::renderer);
 			gfx_world_pointer_address = game::game_offset(0x10C4A354);
+			reflection_probe_table_pointer_address = game::game_offset(0x10E29B3C);
 			cg_initialized_address = game::game_offset(0x129FE8E4);
 			// PC sub_103ABCF0 dispatches this job to sub_1036E8B0 with
 			// its pointer in ECX; byte +12 enables surface visibility marking.
