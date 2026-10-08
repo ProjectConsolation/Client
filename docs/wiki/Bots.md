@@ -43,6 +43,18 @@ zero/negative health. Changing the limit does not heal existing bots.
 
 ## Notes
 
+Target selection adapts threat/sight separation and close-target retention from
+KisakBlack's Combat Training source, using QoS's own trace helper and client
+layouts rather than BO1 bindings. Candidate visibility is reused for up to
+150 ms, invalidated by significant observer/target movement, and limited to
+2800 world units. The selected enemy is checked freshly before firing; both
+pitch and yaw must be aligned. Bots favor keeping close visible enemies and
+only investigate hidden enemies from remembered sightings or recent gunfire,
+instead of automatically pursuing every unseen player.
+
+This is not a complete Combat Training port: BO1 navigation, damage-threat
+callbacks and the full perception/weapon subsystem are not implemented here.
+
 - Bots are mainly intended for testing, casual play, and local experimentation right now.
 - They are not a replacement for polished single-player-style AI.
 - Some maps, modes, or edge cases may still expose rough behavior.

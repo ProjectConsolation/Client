@@ -6,6 +6,7 @@
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"
+#include "bot_targeting.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
@@ -305,6 +306,7 @@ namespace bots
 		static int s_last_progress_time[MAX_CLIENTS] = {};
 		static float s_last_progress_origin[MAX_CLIENTS][3] = {};
 		static int s_last_applied_bot_max_health = 0;
+		static targeting::sight_sample s_sight[MAX_CLIENTS][MAX_CLIENTS]{};
 
 		int bot_state_index(int client_idx)
 		{
@@ -355,10 +357,9 @@ namespace bots
 			out[2] = ps_origin(ps, 2) + eye_height;
 		}
 
-		bool trace_passed(const float* start, const float* end, int pass_entity_num)
+		bool trace_passed(const float* start, const float* end, int pass_entity_num, int pass_entity_num_2 = ENTITYNUM_NONE)
 		{
 			const int func_loc = game::game_offset(0x101AA870);
-			const int pass_entity_num_2 = ENTITYNUM_NONE;
 			const int content_mask = CONTENTS_SOLID_SHOT;
 			int result = 0;
 
@@ -452,7 +453,7 @@ namespace bots
 			set_vec3(samples[4], ps_origin(target_ps, 0), ps_origin(target_ps, 1), ps_origin(target_ps, 2) + 8.0f);
 		}
 
-		float sample_target_visibility(const float* bot_eye, int bot_idx, const game::playerState_t* target_ps)
+		float sample_target_visibility(const float* bot_eye, int bot_idx, int target_idx, const game::playerState_t* target_ps)
 		{
 			float samples[5][3] = {};
 			build_target_sample_points(bot_eye, target_ps, samples);
@@ -460,13 +461,29 @@ namespace bots
 			int visible_samples = 0;
 			for (const auto& sample : samples)
 			{
-				if (trace_passed(bot_eye, sample, bot_idx))
+				// QoS 101AA870 supports two excluded entities; BO1's
+				// Bot_ThreatSightCheck likewise excludes self and intended target.
+				if (trace_passed(bot_eye, sample, bot_idx, target_idx))
 				{
 					++visible_samples;
 				}
 			}
 
 			return static_cast<float>(visible_samples) / 5.0f;
+		}
+
+		float target_visibility(const float* bot_eye, int bot_idx, int target_idx,
+			const game::playerState_t* target_ps, int now, bool fresh)
+		{
+			float target_eye[3]{};
+			get_eye_position(target_ps, TARGET_EYE_HEIGHT, target_eye);
+			auto& sample = s_sight[bot_idx][target_idx];
+			if ((!fresh || sample.time == now) && targeting::reusable(sample, now, bot_eye, target_eye))
+				return sample.visibility;
+			sample.visibility = sample_target_visibility(bot_eye, bot_idx, target_idx, target_ps);
+			sample.time = now; sample.valid = true;
+			copy_vec3(sample.observer, bot_eye); copy_vec3(sample.target, target_eye);
+			return sample.visibility;
 		}
 
 		bool find_cover_goal(const float* bot_eye, int bot_idx, const float* enemy_eye, int enemy_idx, float* out_goal)
@@ -683,6 +700,8 @@ namespace bots
 
 			int client_idx = 0;
 			__asm { mov client_idx, esi }
+			if (bot_state_index(client_idx) >= 0)
+				for (int i = 0; i < MAX_CLIENTS; ++i) { s_sight[client_idx][i] = {}; s_sight[i][client_idx] = {}; }
 
 			s_last_applied_bot_max_health = get_bot_max_health();
 			sanitize_bot_health(client_idx, true);
@@ -714,6 +733,7 @@ namespace bots
 			sync_bot_health_from_dvar();
 
 			const int bot_idx = static_cast<int>((client - clients_base) / CLIENT_STRIDE);
+			if (bot_state_index(bot_idx) < 0) return;
 			sanitize_bot_health(bot_idx, false, true);
 
 			game::usercmd_t cmd = {};
@@ -730,7 +750,7 @@ namespace bots
 			if (!client_is_dead(bot_idx))
 			{
 				const auto* const maxcl_dvar = sv_maxclients_dvar();
-				const int maxcl = maxcl_dvar ? maxcl_dvar->current.integer : 12;
+				const int maxcl = std::clamp(maxcl_dvar ? maxcl_dvar->current.integer : 12, 0, MAX_CLIENTS);
 				const int state_idx = bot_state_index(bot_idx);
 
 				auto* const bot_ent = entity_at(bot_idx);
@@ -752,6 +772,7 @@ namespace bots
 					{
 						if (!should_target_client(bot_idx, i))
 						{
+							s_sight[bot_idx][i] = {};
 							continue;
 						}
 
@@ -766,15 +787,13 @@ namespace bots
 						get_eye_position(tgt_ps, TARGET_EYE_HEIGHT, target_eye);
 
 						const float d2 = distance_squared_3d(bot_eye, target_eye);
-						const float visibility = sample_target_visibility(bot_eye, bot_idx, tgt_ps);
+						if (d2 > targeting::perception_range * targeting::perception_range) continue;
+						const bool current = s_tracked_target[state_idx] == i;
+						const float visibility = target_visibility(bot_eye, bot_idx, i, tgt_ps, bot_ps->commandTime, current);
 
 						if (visibility > 0.0f)
 						{
-							float score = (visibility * 600000.0f) - d2;
-							if (state_idx >= 0 && s_tracked_target[state_idx] == i)
-							{
-								score += 60000.0f;
-							}
+							const float score = targeting::threat_score(visibility, d2, current);
 
 							if (score > best_visible_score)
 							{
@@ -783,7 +802,7 @@ namespace bots
 								best_visibility = visibility;
 							}
 						}
-						else
+						else if (client_recently_fired(i, bot_ps->commandTime))
 						{
 							float score = -d2;
 							if (state_idx >= 0 && s_tracked_target[state_idx] == i)
@@ -805,6 +824,13 @@ namespace bots
 					}
 				}
 
+				// Cached threats never authorize firing or update last-seen positions.
+				if (best_visible_idx >= 0)
+				{
+					best_visibility = target_visibility(bot_eye, bot_idx, best_visible_idx,
+						entity_ps(entity_at(best_visible_idx)), bot_ps->commandTime, true);
+					if (best_visibility <= 0) best_visible_idx = -1;
+				}
 				int target_idx = best_visible_idx;
 				bool target_visible = best_visible_idx >= 0;
 				float goal[3] = {};
@@ -995,8 +1021,8 @@ namespace bots
 							&& best_visibility > 0.0f
 							&& dist <= FIRE_RANGE
 							&& (aim_settled
-								|| yaw_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)
-								|| pitch_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)))
+								|| (yaw_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)
+									&& pitch_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2))))
 						{
 							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
 
@@ -1029,6 +1055,11 @@ namespace bots
 				}
 			}
 
+			if (client_is_dead(bot_idx))
+			{
+				clear_bot_target_state(bot_idx);
+				for (auto& sample : s_sight[bot_idx]) sample = {};
+			}
 			*reinterpret_cast<int*>(client + 0x08) = *reinterpret_cast<int*>(client + 0x10) - 1;
 			call_sv_client_think_real(client, &cmd);
 			sanitize_bot_health(bot_idx, false, true);
@@ -1060,6 +1091,7 @@ namespace bots
 					std::memset(s_last_progress_time, 0, sizeof(s_last_progress_time));
 					std::memset(s_last_progress_origin, 0, sizeof(s_last_progress_origin));
 					s_last_applied_bot_max_health = 0;
+					for (auto& row : s_sight) for (auto& sample : row) sample = {};
 				});
 		}
 
