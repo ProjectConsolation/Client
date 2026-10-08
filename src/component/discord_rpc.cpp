@@ -46,6 +46,50 @@ namespace discord_rpc
 			const auto* dvar = game::Dvar_FindVar(name);
 			return dvar && dvar->current.string ? std::string(dvar->current.string).substr(0, 128) : "";
 		}
+		static std::string display_name(const std::string& id, bool map)
+		{
+			if (id.empty()) return {};
+			const char* reference = id.c_str();
+			if (map)
+			{
+				// QoS UI arena parser 102CBA30: 128 entries, 64 bytes each,
+				// longname at +0 and map identifier at +32. Use the active PC/DLC
+				// arena list, not a hard-coded English dictionary.
+				const auto count = *reinterpret_cast<const int*>(game::game_offset(0x113D3770));
+				if (count > 0 && count <= 128)
+					for (int i = 0; i < count; ++i)
+					{
+						const auto* entry = reinterpret_cast<const char*>(game::game_offset(0x113D3774)) + i * 64;
+						if (!_stricmp(entry + 32, id.c_str())) { reference = entry; break; }
+					}
+			}
+			else
+			{
+				// QoS 102D9A20 returns the matching UI gametype display reference
+				// or the supplied identifier (cdecl). Compared with KisakCOD's
+				// UI_GetGameTypeDisplayName; QoS translates in a separate call.
+				reference = reinterpret_cast<const char*(__cdecl*)(const char*)>(
+					game::game_offset(0x102D9A20))(id.c_str());
+			}
+			if (!reference || !*reference) return id;
+			if (*reference == '\x15') ++reference; // Native literal/nonlocalized marker.
+			else
+			{
+				// QoS SEH_StringEd_GetString 103C9F20 (cdecl), validated against
+				// KisakCOD stringed_hooks.cpp. Missing keys return null: retain the
+				// display reference without triggering UI's localization error path.
+				const auto* translated = reinterpret_cast<const char*(__cdecl*)(const char*)>(
+					game::game_offset(0x103C9F20))(reference);
+				if (translated && *translated) reference = translated;
+			}
+			std::string result;
+			for (std::size_t i = 0; reference[i] && i < 128; ++i)
+			{
+				if (reference[i] == '^' && reference[i + 1] >= '0' && reference[i + 1] <= '9') { ++i; continue; }
+				result += reference[i];
+			}
+			return result.empty() ? id : result;
+		}
 		// Overlapped transfers have a deadline. Cancellation completes before
 		// stack buffers/events go away; the worker exclusively owns its handle.
 		static bool transfer(HANDLE pipe, void* data, DWORD size, bool writing)
@@ -250,8 +294,21 @@ namespace discord_rpc
 				value.app = application_->current.string ? application_->current.string : "";
 				value.image = image_->current.string ? std::string(image_->current.string).substr(0, 128) : "";
 				const auto* ingame = game::Dvar_FindVar("cl_ingame");
-				value.details = ingame && ingame->current.enabled ? "Playing Quantum of Solace" : "In the menus";
-				value.state = ingame && ingame->current.enabled ? text_dvar("mapname") + " / " + text_dvar("g_gametype") : "Project: Consolation";
+				if (ingame && ingame->current.enabled)
+				{
+					const auto mode = display_name(text_dvar("g_gametype"), false);
+					// mapname is the active server map; ui_mapname can be a stale
+					// frontend selection. Resolve/translate only on the main thread,
+					// then copy strings into the worker snapshot.
+					const auto map = display_name(text_dvar("mapname"), true);
+					value.details = "Playing " + mode + " on " + map;
+					value.state = "Project: Consolation";
+				}
+				else
+				{
+					value.details = "In the menus";
+					value.state = "Project: Consolation";
+				}
 				{ std::lock_guard lock(mutex_); pending_ = std::move(value); }
 				return scheduler::cond_continue;
 			}, scheduler::main, 1s);
