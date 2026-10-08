@@ -21,6 +21,12 @@ namespace fastfiles::dlc
     // their intentional global override behavior. Inputs are lowercase.
     constexpr bool allows_image_archive(std::string_view archive, std::string_view loading_zone)
     {
-        return archive != "csl_dlc01.iwd" || requires_donor(loading_zone);
+        if (archive == "csl_dlc01.iwd") return requires_donor(loading_zone);
+        // Older installs retain the prototype Canals package. Its concrete
+        // textures and generic lightmap names must never override PC/common
+        // assets or the other DLC maps.
+        if (archive == "csl_canals.iwd")
+            return loading_zone == "mp_canals" || loading_zone == "mp_canals_load";
+        return true;
     }
 }

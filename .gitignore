@@ -861,6 +861,8 @@ tools/dumps/
 /_tmp_*/
 /.pytest_cache/
 /test-temp/
+# Local regression tests; already tracked tests remain tracked.
+/tests/
 *.sum
 /.agents-reverse-engineer/logs/
 /.agents-reverse-engineer/GENERATION-PLAN.md
