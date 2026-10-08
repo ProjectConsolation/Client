@@ -96,6 +96,10 @@ namespace discord_rpc
 			if (*reference == '\x15') ++reference; // Native literal/nonlocalized marker.
 			else
 			{
+				// QoS String_Parse 102CEC80 strips the menu-reference '@'
+				// before calling 103C9F20, exactly as KisakCOD ui_shared.cpp.
+				// Arena longnames retain that marker; StringEd keys do not.
+				if (*reference == '@') ++reference;
 				// QoS SEH_StringEd_GetString 103C9F20 (cdecl), validated against
 				// KisakCOD stringed_hooks.cpp. Missing keys return null: retain the
 				// display reference without triggering UI's localization error path.
@@ -168,8 +172,7 @@ namespace discord_rpc
 				if (!value.image.empty())
 				{
 					writer.Key("assets"); writer.StartObject(); writer.Key("large_image"); writer.String(value.image.c_str());
-					writer.Key("large_text"); writer.String(value.image_text.empty()
-						? "Project: Consolation" : value.image_text.c_str());
+					writer.Key("large_text"); writer.String("Click to visit on GitHub.");
 					writer.Key("large_url"); writer.String("https://github.com/ProjectConsolation/Client");
 					writer.EndObject();
 				}
