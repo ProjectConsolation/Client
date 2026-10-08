@@ -32,6 +32,8 @@ namespace discord_rpc
 			std::string app, image, details, state;
 			std::string image_text;
 			int players{}, max_players{};
+			int privacy{-1}; // Discord: private=0, public=1; -1 outside matches.
+			std::time_t match_start{};
 		};
 		std::mutex mutex_;
 		snapshot pending_;
@@ -39,6 +41,8 @@ namespace discord_rpc
 		std::atomic_bool stop_{false};
 		std::atomic_int status_{0}; // disconnected, READY, activity acknowledged, error
 		std::thread worker_;
+		std::string match_map_;
+		std::time_t match_start_{};
 		game::dvar_s *enabled_{}, *application_{}, *image_{};
 
 		static bool valid_id(const std::string& id)
@@ -99,6 +103,30 @@ namespace discord_rpc
 				value.max_players = maximum;
 			}
 			value.state = std::to_string(value.players) + " of " + std::to_string(value.max_players) + " players";
+		}
+		void match_session(snapshot& value, bool ingame, const std::string& map, std::time_t now)
+		{
+			if (!ingame)
+			{
+				match_start_ = 0; match_map_.clear();
+				return;
+			}
+			if (!match_start_ || match_map_ != map)
+			{
+				match_start_ = now; match_map_ = map;
+			}
+			value.match_start = match_start_;
+			// QoS 1024D860 registers xblive_privatematch as "Current game is
+			// a private match". 1015E920 treats System Link as private too.
+			const auto* systemlink = game::Dvar_FindVar("systemlink");
+			const auto* private_match = game::Dvar_FindVar("xblive_privatematch");
+			const auto* online = game::Dvar_FindVar("onlinegame");
+			const bool private_game = (systemlink && systemlink->current.enabled)
+				|| (private_match && private_match->current.enabled)
+				|| !online || !online->current.enabled;
+			value.privacy = private_game ? 0 : 1;
+			value.state = std::string(private_game ? "Private Match" : "Public Match")
+				+ (value.max_players > 0 ? " | " + value.state : "");
 		}
 		static std::string display_name(const std::string& id, bool map)
 		{
@@ -203,12 +231,16 @@ namespace discord_rpc
 				if (value.max_players > 0)
 				{
 					writer.Key("party"); writer.StartObject();
+					if (value.privacy >= 0) { writer.Key("privacy"); writer.Int(value.privacy); }
 					writer.Key("size"); writer.StartArray();
 					writer.Int(value.players); writer.Int(value.max_players);
 					writer.EndArray(); writer.EndObject();
 				}
-				writer.Key("timestamps"); writer.StartObject(); writer.Key("start");
-				writer.Int64(static_cast<int64_t>(start)); writer.EndObject();
+				if (start > 0)
+				{
+					writer.Key("timestamps"); writer.StartObject(); writer.Key("start");
+					writer.Int64(static_cast<int64_t>(start)); writer.EndObject();
+				}
 				if (!value.image.empty())
 				{
 					writer.Key("assets"); writer.StartObject(); writer.Key("large_image"); writer.String(value.image.c_str());
@@ -230,7 +262,6 @@ namespace discord_rpc
 			HANDLE pipe = INVALID_HANDLE_VALUE;
 			std::string app, nonce, last;
 			std::uint64_t sequence{};
-			const auto start = std::time(nullptr);
 			auto retry = std::chrono::steady_clock::time_point{};
 			auto sent = retry, connected = retry;
 			const auto disconnect = [&]
@@ -250,7 +281,7 @@ namespace discord_rpc
 					{
 						if (pipe != INVALID_HANDLE_VALUE)
 						{
-							value.enabled = false; send(pipe, 1, activity(value, "clear", start)); disconnect();
+							value.enabled = false; send(pipe, 1, activity(value, "clear", 0)); disconnect();
 						}
 					}
 					else if (pipe == INVALID_HANDLE_VALUE && now >= retry)
@@ -316,11 +347,12 @@ namespace discord_rpc
 						if (status_ == 3) { disconnect(); status_ = 3; }
 						if (pipe != INVALID_HANDLE_VALUE)
 						{
-							const auto key = value.details + '\n' + value.state + '\n' + value.image + '\n' + value.image_text;
+							const auto key = value.details + '\n' + value.state + '\n' + value.image + '\n' + value.image_text
+								+ '\n' + std::to_string(value.match_start) + '\n' + std::to_string(value.privacy);
 							if (status_ > 0 && nonce.empty() && (key != last || now - sent >= 60s) && now - sent >= 15s)
 							{
 								nonce = std::to_string(++sequence); sent = now; last = key;
-								if (!send(pipe, 1, activity(value, nonce, start))) disconnect();
+								if (!send(pipe, 1, activity(value, nonce, value.match_start))) disconnect();
 							}
 							if ((!status_ && now - connected > 10s) || (!nonce.empty() && now - sent > 10s)) disconnect();
 						}
@@ -331,7 +363,7 @@ namespace discord_rpc
 			catch (...) { status_ = 3; }
 			if (pipe != INVALID_HANDLE_VALUE)
 			{
-				snapshot clear; send(pipe, 1, activity(clear, "shutdown", start)); CloseHandle(pipe);
+				snapshot clear; send(pipe, 1, activity(clear, "shutdown", 0)); CloseHandle(pipe);
 			}
 		}
 	public:
@@ -375,11 +407,13 @@ namespace discord_rpc
 					value.details = "Playing " + mode + " on " + map;
 					value.state = "Project: Consolation";
 					player_counts(value);
+					match_session(value, true, map_id, std::time(nullptr));
 				}
 				else
 				{
 					value.details = "In the menus";
 					value.state = "Project: Consolation";
+					match_session(value, false, {}, 0);
 				}
 				{ std::lock_guard lock(mutex_); pending_ = std::move(value); }
 				return scheduler::cond_continue;
