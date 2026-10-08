@@ -246,6 +246,20 @@ namespace bots
 
 		game::bot_team client_team(int idx)
 		{
+			// QoS sessionteam getter/setter 10446C60/104471B0 read/write
+			// gclient + 13036. Teams are server-owned, not reliable userinfo.
+			if (const auto* ps = entity_ps(entity_at(idx)))
+			{
+				const int team = *reinterpret_cast<const int*>(
+					reinterpret_cast<const std::uint8_t*>(ps) + 13036);
+				switch (team)
+				{
+				case 0: return game::bot_team::free;
+				case 1: return game::bot_team::axis;
+				case 2: return game::bot_team::allies;
+				case 3: return game::bot_team::spectator;
+				}
+			}
 			const auto team_num = parse_team_value(get_info_value(client_userinfo(idx), "teamNum"));
 			if (team_num != game::bot_team::unknown)
 			{
@@ -665,7 +679,7 @@ namespace bots
 			// Internal server initialization may set a baseline without cheats.
 			// Console edits remain cheat-protected and apply on the next life.
 			dvars::bot_maxHealth->reset.integer = maximum;
-			game::Dvar_SetString("bot_maxHealth", utils::string::va("%d", maximum));
+			game::Dvar_SetFromStringByName("bot_maxHealth", utils::string::va("%d", maximum));
 			s_health_server_id = server_id;
 			s_health_server_initialized = true;
 			for (auto& life : s_life_health) life = {};
@@ -761,6 +775,11 @@ namespace bots
 			sanitize_bot_health(bot_idx, true);
 
 			game::usercmd_t cmd = {};
+			// QoS SV_ClientThink (102F0BD0) validates against this server clock.
+			// ClientThink_real (10195C90) skips same-time commands, and Pmove
+			// (101E6020) cannot run weapons without elapsed command time.
+			// KisakBlack Bot_UserMove likewise stamps commands with svs.time.
+			cmd.serverTime = *reinterpret_cast<const int*>(game::game_offset(0x11CA5D84));
 			// QoS command byte 0x1F selects a loadout, not vertical movement.
 			// Changing it runs 0x101E6960 and restores class-defined health.
 			if (const auto* ps = entity_ps(entity_at(bot_idx)))
@@ -793,7 +812,6 @@ namespace bots
 
 				if (bot_ps)
 				{
-					cmd.serverTime = bot_ps->commandTime;
 					get_eye_position(bot_ps, BOT_EYE_HEIGHT, bot_eye);
 
 					for (int i = 0; i < maxcl; ++i)

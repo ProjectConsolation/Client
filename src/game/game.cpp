@@ -294,6 +294,25 @@ namespace game
 		}
 	}
 
+	void Dvar_SetFromStringByName(const char* dvarName, const char* value)
+	{
+		if (!dvarName || !*dvarName || !value)
+			return;
+
+		// QoS PC: 10278F80 takes text in EAX, name and source on the stack.
+		// Like KisakCOD's Dvar_SetFromStringByNameFromSource, this parses the
+		// actual type/domain before SetVariant. 10278FD0 is string/enum only.
+		const int func_loc = game::game_offset(0x10278F80);
+		__asm
+		{
+			push 0 // DVAR_SOURCE_INTERNAL; console assignments retain native protection.
+			push dvarName
+			mov eax, value
+			call func_loc
+			add esp, 8
+		}
+	}
+
 	void GamerProfile_UpdateProfileFromDvars(int profileIndex, int updateState)
 	{
 		int func_loc = game::game_offset(0x102439B0);

@@ -292,7 +292,7 @@ namespace patches
 				{ "pm_airborneBobScale", "1", "0" },
 			};
 			for (const auto& setting : settings)
-				game::Dvar_SetString(setting.name, mode == 0 ? setting.stock : setting.iw3);
+				game::Dvar_SetFromStringByName(setting.name, mode == 0 ? setting.stock : setting.iw3);
 			applied_movement_mode = mode;
 			console::info("[movement] applied %s preset\n", movement_mode_names[mode]);
 		}
@@ -1503,7 +1503,7 @@ namespace patches
 
 		void private_match_set_unpaused()
 		{
-			game::Dvar_SetString("cl_paused", "0");
+			game::Dvar_SetFromStringByName("cl_paused", "0");
 		}
 
 		void apply_private_match_unpause()
