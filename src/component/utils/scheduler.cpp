@@ -2,6 +2,7 @@
 #include "loader/component_loader.hpp"
 
 #include "scheduler.hpp"
+#include "quit_boundary.hpp"
 #include "game/game.hpp"
 
 #include <utils/hook.hpp>
@@ -94,6 +95,62 @@ namespace scheduler
 		utils::hook::detour g_shutdown_game_hook;
 
 		std::vector<std::function<void()>> shutdown_callbacks;
+		quit_boundary pending_quit;
+		utils::hook::detour quit_command_hook;
+		utils::hook::detour outer_frame_hook;
+		void* outer_frame_original = nullptr;
+
+		void stop_async_scheduler()
+		{
+			kill = true;
+			const auto scheduler_thread = std::exchange(thread, nullptr);
+			if (!scheduler_thread) return;
+			if (scheduler_thread->joinable()) scheduler_thread->join();
+			delete scheduler_thread;
+		}
+
+		int quit_command_stub()
+		{
+			pending_quit.request();
+			return 0;
+		}
+
+		bool quit_at_frame_boundary()
+		{
+			if (pending_quit.begin_quit())
+			{
+				// Stop engine-using async callbacks before native shutdown deletes
+				// the dvar hash table and all Sys critical sections.
+				stop_async_scheduler();
+				quit_command_hook.invoke<int>();
+			}
+			return pending_quit.stopped();
+		}
+
+		__declspec(naked) void outer_frame_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				mov esi, esp
+				sub esp, 528
+				and esp, -16
+				fxsave [esp]
+				call quit_at_frame_boundary
+				test al, al
+				fxrstor [esp]
+				mov esp, esi
+				jnz finished
+				popad
+				popfd
+				jmp dword ptr [outer_frame_original]
+			finished:
+				popad
+				popfd
+				ret
+			}
+		}
 
 		bool game_window_closed()
 		{
@@ -124,6 +181,7 @@ namespace scheduler
 
 		void execute(const pipeline type)
 		{
+			if (pending_quit.stopped()) return;
 			assert(type >= 0 && type < pipeline::count);
 			if (type < 0 || type >= pipeline::count)
 			{
@@ -224,6 +282,17 @@ namespace scheduler
 
 		void post_load() override
 		{
+			// QoS PC 1.1: 0x103F8660 is registered as quit;
+			// its returning Sys_Quit (0x102453F0) deletes critical sections.
+			// ntdll.dmp captured Dvar_FindVar from UI_SetActiveMenu AFTER that
+			// teardown. The outer frame (0x103F9740), called by startMainMP,
+			// is outside UI and Cbuf execution. Defer quit there and return to
+			// the native loop, which checks exit byte 0x11A76581 immediately.
+			// Unlike IW3's exit(0), QoS returns; never resume its current frame.
+			// Keep this adapter until native quit/frame ownership is replaced.
+			quit_command_hook.create(game::game_offset(0x103F8660), quit_command_stub);
+			outer_frame_hook.create(game::game_offset(0x103F9740), outer_frame_stub);
+			outer_frame_original = outer_frame_hook.get_original();
 			//utils::hook::call(0x4FD7AB, scheduler::server_frame_stub);
 			//r_end_frame_hook.create(0x102DFB60, scheduler::render_frame_stub); //this is actually CL_DrawActive
 			r_end_frame_hook.create(game::game_offset(0x103C1050), scheduler::render_frame_stub);
@@ -234,19 +303,7 @@ namespace scheduler
 
 		void pre_destroy() override
 		{
-			kill = true;
-			const auto scheduler_thread = std::exchange(thread, nullptr);
-			if (!scheduler_thread)
-			{
-				return;
-			}
-
-			if (scheduler_thread->joinable())
-			{
-				scheduler_thread->join();
-			}
-
-			delete scheduler_thread;
+			stop_async_scheduler();
 		}
 	};
 }

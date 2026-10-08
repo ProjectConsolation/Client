@@ -1,5 +1,7 @@
-#ifndef CONSOLATION_RPC_PROTOCOL_TEST
 #include <std_include.hpp>
+// MSVC /Yu skips directives before this PCH include. Keep the test guard
+// after it, otherwise the matching #endif becomes unexpected in client builds.
+#ifndef CONSOLATION_RPC_PROTOCOL_TEST
 #include "loader/component_loader.hpp"
 #include "component/utils/scheduler.hpp"
 #include "component/engine/console/command.hpp"
