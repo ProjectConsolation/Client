@@ -97,17 +97,23 @@ namespace game
 
 	bool DB_IsXAssetDefault(XAssetType type, const char* name)
 	{
+		if (!name || !*name) return true;
+		// QoS 103DFC00: type in EDI, name as the caller-cleaned stack
+		// argument, result in AL. KisakCOD has the same lookup semantics,
+		// but its cdecl ABI cannot be used directly for this QoS helper.
 		int func_loc = game_offset(0x103DFC00);
 		bool answer = false;
 		int type_ = static_cast<int>(type);
 
 		__asm
 		{
-			push ebx
+			push edi
+			push name
 			mov edi, type_
 			call func_loc
 			add esp, 4
 			mov answer, al
+			pop edi
 		}
 
 		return answer;
