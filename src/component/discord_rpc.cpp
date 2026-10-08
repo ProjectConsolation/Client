@@ -31,6 +31,7 @@ namespace discord_rpc
 			bool enabled{};
 			std::string app, image, details, state;
 			std::string image_text;
+			int players{}, max_players{};
 		};
 		std::mutex mutex_;
 		snapshot pending_;
@@ -66,6 +67,38 @@ namespace discord_rpc
 					&& !_strnicmp(map.data(), stock, map.size()))
 					return std::string(stock) + "_preview";
 			return fallback;
+		}
+		static void player_counts(snapshot& value)
+		{
+			// Sample on the main thread only. QoS 102EF480 sets client_t.state
+			// to CS_ACTIVE (4); 102F5D00 allocates sv_maxclients slots, stride 688916.
+			const auto* running = game::Dvar_FindVar("sv_running");
+			if (running && running->current.enabled)
+			{
+				const auto* limit = game::Dvar_FindVar("sv_maxclients");
+				if (!limit) return;
+				const int maximum = limit->current.integer;
+				if (maximum < 1 || maximum > 12) return; // Verified retail allocation bound.
+				const auto clients = *reinterpret_cast<const std::uintptr_t*>(game::game_offset(0x11CA5D8C));
+				if (!clients) return;
+				value.max_players = maximum;
+				for (int i = 0; i < maximum; ++i)
+					if (*reinterpret_cast<const int*>(clients + i * 688916) == 4) ++value.players;
+			}
+			else
+			{
+				// QoS CL_GetClientName 102FFEC0 reads snap.valid/numClients.
+				// Matches KisakCOD cl_ui_mp.cpp's received snapshot roster, not
+				// the local server slots or a scoreboard requiring score requests.
+				if (!*reinterpret_cast<const int*>(game::game_offset(0x11A7AB90))) return;
+				const int count = *reinterpret_cast<const int*>(game::game_offset(0x11A7DDCC));
+				// 1028BD50 caches the remote serverinfo sv_maxclients here.
+				const int maximum = *reinterpret_cast<const int*>(game::game_offset(0x113F60D0));
+				if (maximum < 1 || maximum > 12 || count < 0 || count > maximum) return;
+				value.players = count;
+				value.max_players = maximum;
+			}
+			value.state = std::to_string(value.players) + " of " + std::to_string(value.max_players) + " players";
 		}
 		static std::string display_name(const std::string& id, bool map)
 		{
@@ -167,6 +200,13 @@ namespace discord_rpc
 			{
 				writer.StartObject(); writer.Key("details"); writer.String(value.details.c_str());
 				writer.Key("state"); writer.String(value.state.c_str());
+				if (value.max_players > 0)
+				{
+					writer.Key("party"); writer.StartObject();
+					writer.Key("size"); writer.StartArray();
+					writer.Int(value.players); writer.Int(value.max_players);
+					writer.EndArray(); writer.EndObject();
+				}
 				writer.Key("timestamps"); writer.StartObject(); writer.Key("start");
 				writer.Int64(static_cast<int64_t>(start)); writer.EndObject();
 				if (!value.image.empty())
@@ -309,6 +349,7 @@ namespace discord_rpc
 					game::Com_Printf(0, "[Discord] %s\n", states[status_.load()]);
 					std::lock_guard lock(mutex_);
 					game::Com_Printf(0, "[Discord] Selected image: %s\n", pending_.image.empty() ? "<disabled>" : pending_.image.c_str());
+					game::Com_Printf(0, "[Discord] Players: %d of %d (0 maximum = unavailable)\n", pending_.players, pending_.max_players);
 					if (!last_error_.empty()) game::Com_Printf(0, "[Discord] Last error: %s\n", last_error_.c_str());
 				});
 			}, scheduler::main);
@@ -333,6 +374,7 @@ namespace discord_rpc
 					if (value.image != fallback) value.image_text = map;
 					value.details = "Playing " + mode + " on " + map;
 					value.state = "Project: Consolation";
+					player_counts(value);
 				}
 				else
 				{
