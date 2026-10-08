@@ -170,6 +170,10 @@ The supplied `csl_dlc01.iwd` image replacements are scoped to Camille Pack
 map and load-zone deserialization (`mp_bags`, `mp_canals`, `mp_cistern`,
 `mp_dam` and their `_load` zones). They do not replace stock PC or shared
 donor-zone textures. Other user-created IWDs retain global image overrides.
+The supplied DLC archives also cannot override generated `*lightmap` or
+`*reflection_probe` images (including their percent-encoded filenames). These
+belong to the individual zone; prototype Canals lighting must not replace the
+released map's embedded lighting.
 Restart after rebuilding the client so already-uploaded textures are discarded.
 
 The client adds `consolation/main` archives to QoS's native search paths during

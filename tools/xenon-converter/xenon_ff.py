@@ -3128,8 +3128,13 @@ def _write_pc_gfx_cell_nested(payload, cell, include_static_models=False,
             raise FormatError(
                 f"unrelocated GfxPortal cell reference {source_cell_pointer:#x}; "
                 "PC portal-to-cell relocation is required")
-        converted = _little_endian_words(raw, 0, 32)
-        converted[40:68] = raw[40:68]
+        # QoS PC R_AddVertToPortalHullPoints (103A9A30) projects
+        # vertices onto the six float axes at +44..+64. Preserve the
+        # byte-sized plane sides (+28) and vertex count (+40), not the
+        # Xbox-endian hull axes. KisakCOD GfxPortal confirms this boundary.
+        converted = bytearray(raw)
+        converted[:28] = _little_endian_words(raw[:28])
+        converted[44:68] = _little_endian_words(raw[44:68])
         struct.pack_into("<2I", converted, 32,
                          INLINE if portal["cell"] else 0,
                          INLINE if portal["vertices"] else 0)

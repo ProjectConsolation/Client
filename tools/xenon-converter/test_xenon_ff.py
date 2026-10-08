@@ -1742,6 +1742,23 @@ class FastfileTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<6f", header),
                          (-10, -20, -30, 40, 50, 60))
 
+    def test_pc_portal_converts_hull_axes_without_swapping_byte_fields(self):
+        raw = bytearray(68)
+        struct.pack_into(">4f", raw, 12, 0.5, -1.0, 0.25, 128.0)
+        raw[28:32] = bytes((0, 4, 8, 0))
+        raw[40:44] = bytes((3, 0, 0, 0))
+        axes = (1.0, -0.5, 0.25, 0.0, 1.0, -1.0)
+        struct.pack_into(">6f", raw, 44, *axes)
+        cell = {"tree": None, "cull_groups": "", "portals": [
+            {"raw": raw.hex(), "cell": None, "vertices": ""}]}
+        payload = bytearray()
+        xenon_ff._write_pc_gfx_cell_nested(payload, cell)
+        self.assertEqual(struct.unpack_from("<4f", payload, 12),
+                         (0.5, -1.0, 0.25, 128.0))
+        self.assertEqual(payload[28:32], raw[28:32])
+        self.assertEqual(payload[40:44], raw[40:44])
+        self.assertEqual(struct.unpack_from("<6f", payload, 44), axes)
+
     def test_pc_portal_rejects_unrelocated_cell_instead_of_nulling_it(self):
         raw = bytearray(68)
         struct.pack_into(">I", raw, 32, 0x407FA8E9)

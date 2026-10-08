@@ -29,4 +29,14 @@ namespace fastfiles::dlc
             return loading_zone == "mp_canals" || loading_zone == "mp_canals_load";
         return true;
     }
+
+    constexpr bool allows_image_entry(std::string_view archive, std::string_view filename)
+    {
+        // These names identify map-local generated lighting, not shared DLC
+        // textures. In particular the old prototype archive contains Canals
+        // lightmaps that must not replace the released map's embedded images.
+        if (archive != "csl_canals.iwd" && archive != "csl_dlc01.iwd") return true;
+        if (filename.starts_with("images/")) filename.remove_prefix(7);
+        return !filename.starts_with("*") && !filename.starts_with("%2a");
+    }
 }

@@ -15,6 +15,9 @@
 #include <thread>
 #include <ctime>
 #include <cstdint>
+#include <array>
+#include <cstring>
+#include <string_view>
 
 namespace discord_rpc
 {
@@ -27,6 +30,7 @@ namespace discord_rpc
 		{
 			bool enabled{};
 			std::string app, image, details, state;
+			std::string image_text;
 		};
 		std::mutex mutex_;
 		snapshot pending_;
@@ -45,6 +49,23 @@ namespace discord_rpc
 		{
 			const auto* dvar = game::Dvar_FindVar(name);
 			return dvar && dvar->current.string ? std::string(dvar->current.string).substr(0, 128) : "";
+		}
+		static std::string map_image(std::string_view map, const std::string& fallback)
+		{
+			if (fallback.empty()) return {}; // Preserve the saved artwork opt-out.
+			// Uploaded Discord asset keys, not local IWI filenames. The retail
+			// PC maps use <mapname>_preview; DLC/custom artwork is not uploaded
+			// yet, so do not send nonexistent keys for those maps.
+			static constexpr std::array maps{
+				"mp_barge", "mp_constructionsite", "mp_docks", "mp_ecohotel",
+				"mp_embassy", "mp_facility", "mp_italia", "mp_miamiconcourse",
+				"mp_rooftop", "mp_sauna", "mp_sciencecenter", "mp_siena"
+			};
+			for (const auto* stock : maps)
+				if (map.size() == std::strlen(stock)
+					&& !_strnicmp(map.data(), stock, map.size()))
+					return std::string(stock) + "_preview";
+			return fallback;
 		}
 		static std::string display_name(const std::string& id, bool map)
 		{
@@ -147,7 +168,8 @@ namespace discord_rpc
 				if (!value.image.empty())
 				{
 					writer.Key("assets"); writer.StartObject(); writer.Key("large_image"); writer.String(value.image.c_str());
-					writer.Key("large_text"); writer.String("Project: Consolation");
+					writer.Key("large_text"); writer.String(value.image_text.empty()
+						? "Project: Consolation" : value.image_text.c_str());
 					writer.Key("large_url"); writer.String("https://github.com/ProjectConsolation/Client");
 					writer.EndObject();
 				}
@@ -251,7 +273,7 @@ namespace discord_rpc
 						if (status_ == 3) { disconnect(); status_ = 3; }
 						if (pipe != INVALID_HANDLE_VALUE)
 						{
-							const auto key = value.details + '\n' + value.state + '\n' + value.image;
+							const auto key = value.details + '\n' + value.state + '\n' + value.image + '\n' + value.image_text;
 							if (status_ > 0 && nonce.empty() && (key != last || now - sent >= 60s) && now - sent >= 15s)
 							{
 								nonce = std::to_string(++sequence); sent = now; last = key;
@@ -277,12 +299,13 @@ namespace discord_rpc
 			{
 				enabled_ = dvars::Dvar_RegisterBool("cl_discordRichPresence", 1, "Publish local Discord Rich Presence", game::dvar_flags::saved);
 				application_ = dvars::Dvar_RegisterString("cl_discordApplicationId", "1469023860073693278", "Discord public application ID", game::dvar_flags::saved);
-				image_ = dvars::Dvar_RegisterString("cl_discordImage", "consolation", "Discord uploaded large image key (empty disables)", game::dvar_flags::saved);
+				image_ = dvars::Dvar_RegisterString("cl_discordImage", "consolation", "Discord menu/fallback image key; maps use preview artwork (empty disables)", game::dvar_flags::saved);
 				command::add("discordRpcStatus", [this]
 				{
 					const char* states[]{"disconnected/disabled", "Discord READY", "activity acknowledged", "Discord error"};
 					game::Com_Printf(0, "[Discord] %s\n", states[status_.load()]);
 					std::lock_guard lock(mutex_);
+					game::Com_Printf(0, "[Discord] Selected image: %s\n", pending_.image.empty() ? "<disabled>" : pending_.image.c_str());
 					if (!last_error_.empty()) game::Com_Printf(0, "[Discord] Last error: %s\n", last_error_.c_str());
 				});
 			}, scheduler::main);
@@ -300,7 +323,11 @@ namespace discord_rpc
 					// mapname is the active server map; ui_mapname can be a stale
 					// frontend selection. Resolve/translate only on the main thread,
 					// then copy strings into the worker snapshot.
-					const auto map = display_name(text_dvar("mapname"), true);
+					const auto map_id = text_dvar("mapname");
+					const auto map = display_name(map_id, true);
+					const auto fallback = value.image;
+					value.image = map_image(map_id, fallback);
+					if (value.image != fallback) value.image_text = map;
 					value.details = "Playing " + mode + " on " + map;
 					value.state = "Project: Consolation";
 				}

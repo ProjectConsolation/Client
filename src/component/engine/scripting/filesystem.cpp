@@ -109,6 +109,7 @@ namespace filesystem
 				std::string(reinterpret_cast<const char*>(iwd), strnlen(reinterpret_cast<const char*>(iwd), 256))).filename().string());
 			if (!fastfiles::dlc::allows_image_archive(archive,
 				utils::string::to_lower(std::string(zone_name, strnlen(zone_name, 67))))) return false;
+			if (!fastfiles::dlc::allows_image_entry(archive, utils::string::to_lower(filename))) return false;
 			source = std::string(reinterpret_cast<const char*>(iwd), strnlen(reinterpret_cast<const char*>(iwd), 256))
 				+ "::" + filename;
 			if (size < 8 || static_cast<std::size_t>(size) > (64u * 1024u * 1024u))
