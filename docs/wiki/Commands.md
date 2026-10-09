@@ -9,6 +9,35 @@ Project: Consolation includes a small set of utility and debugging commands that
 
 ## Commands
 
+### Renderer timing
+
+`gfxperf start [frames]` starts an opt-in CPU wall-clock capture of successful
+native swaps (default `600`, range `30` to `4096`). It stops automatically at
+the sample limit, or after that many failed presents. `gfxperf stop`,
+`gfxperf report`, or bare `gfxperf` stops capture and prints the retained results.
+Starting again clears the previous capture. No files are written.
+
+The report includes mean, median, p95, p99 and maximum milliseconds for:
+
+- Swap-end intervals: cadence including rendering, simulation, caps and waits.
+- Native swap phase: includes QoS's focus/critical-section wait and Present.
+- Inside Present: CPU time in the swap-chain call, not GPU execution duration.
+- Swap outside Present: native phase overhead/waits outside that call.
+
+The first interval and intervals above 250 ms are excluded from cadence stats
+to avoid counting debugger pauses or map-load gaps; long swap durations remain
+visible. Failed presents are counted separately and break the cadence chain.
+Zero sample counts mean no valid timing data for that metric. Settings printed
+at report time are context only, not a history of changes during the capture.
+
+For comparison, keep map, camera, bots, resolution, AA, focus, frame cap and
+VSync unchanged. Capture with the console closed, then reopen it to report.
+A long Present can reflect VSync or queued GPU work; these timings alone do
+not prove CPU/GPU saturation or predict a D3D9Ex speedup. Profiling is off by
+default and performs no GPU queries, forced flushes, or resource/device changes.
+The QoS PC 1.1 patch sites are guarded; this requires an updated client and
+in-game validation.
+
 `gfxinfo` prints the D3D9 AA request, pending latched request, actual sample
 type (`0` means disabled), quality index, native depth format, AF settings and
 hardware/effective filtering limits. It lists sample counts supported by both

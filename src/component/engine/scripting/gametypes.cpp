@@ -267,10 +267,17 @@ namespace gametypes
 					{
 						std::string data(fastfile_header.rawfile->buffer, fastfile_header.rawfile->len);
 						while (!data.empty() && data.back() == '\0') data.pop_back();
-						const bool patched = normalized_name == "maps/mp/gametypes/_tweakables.gsc"
+						bool patched = normalized_name == "maps/mp/gametypes/_tweakables.gsc"
 							? respawn_script::make_delay_live(data)
 							: normalized_name == "maps/mp/gametypes/_killcam.gsc"
 								? respawn_script::make_killcam_live(data) : respawn_script::make_wait_live(data);
+						if (normalized_name == "maps/mp/gametypes/_globallogic.gsc")
+						{
+							// Independent adaptations: unsupported respawn anchors must
+							// not prevent the verified match-clock visibility fix.
+							const bool clock_patched = respawn_script::make_match_clock_hud(data);
+							patched = patched || clock_patched;
+						}
 						if (patched)
 						{
 							const auto key = std::string("live-respawn:") + data;

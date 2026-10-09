@@ -4,6 +4,20 @@
 
 namespace gametypes::respawn_script
 {
+	inline bool make_match_clock_hud(std::string& source)
+	{
+		// QoS common_mp _globallogic.gsc getClock(), recovered from invis.dmp:
+		// the shared level.clock is foreground, bypassing CG_Draw2D's
+		// cg_drawHud gate (10285700 -> 102BC580(1)). Move only this clock
+		// to the normal HUD pass; never hide the shared element server-wide.
+		const std::string anchor = "level.clock.foreground = true;";
+		const auto at = source.find(anchor);
+		if (at == std::string::npos || source.find(anchor, at + anchor.size()) != std::string::npos)
+			return false;
+		source.replace(at, anchor.size(), "level.clock.foreground = false; // Consolation: respect client HUD visibility.");
+		return true;
+	}
+
 	inline bool make_killcam_live(std::string& source)
 	{
 		// QoS PC archives snapshots in 102EE4E0 and consumes archived player
