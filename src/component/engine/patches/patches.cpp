@@ -6,6 +6,7 @@
 #include "component/engine/patches/xlive.hpp"
 #include "camera_validation.hpp"
 #include "traversal_camera_policy.hpp"
+#include "ui_directive_abi.hpp"
 #include "component/utils/resources.hpp"
 #include "component/utils/scheduler.hpp"
 
@@ -1664,11 +1665,10 @@ namespace patches
 			return original(a1, a2);
 		}
 
-		using ui_replace_directive_t = char*(__fastcall*)(int, char*, int, unsigned __int8);
 		utils::hook::detour ui_replace_directive_hook;
-		char* __fastcall UI_ReplaceDirective_guard(int ArgList, char* a2, int a3, unsigned __int8 a4)
+		char* __cdecl UI_ReplaceDirective_guard(int ArgList, char* a2, int a3, unsigned __int8 a4)
 		{
-			const ui_replace_directive_t original = reinterpret_cast<ui_replace_directive_t>(ui_replace_directive_hook.get_original());
+			const auto original = reinterpret_cast<std::uintptr_t>(ui_replace_directive_hook.get_original());
 			const auto* const arg_list = reinterpret_cast<const char*>(ArgList);
 			if (bounded_length(arg_list, k_ui_replace_directive_max_len + 1) > k_ui_replace_directive_max_len
 				|| bounded_length(a2, k_ui_replace_directive_max_len + 1) > k_ui_replace_directive_max_len)
@@ -1677,7 +1677,23 @@ namespace patches
 				return a2;
 			}
 
-			return original(ArgList, a2, a3, a4);
+			return ui_directive_abi::call_native(original, ArgList, a2, a3, a4);
+		}
+
+		__declspec(naked) void UI_ReplaceDirective_entry()
+		{
+			// Native callers retain ownership of their two stack arguments.
+			// Copy those arguments, then bridge ECX/EDX to the cdecl guard.
+			__asm
+			{
+				push dword ptr[esp + 8]
+				push dword ptr[esp + 8]
+				push edx
+				push ecx
+				call UI_ReplaceDirective_guard
+				add esp, 16
+				ret
+			}
 		}
 
 		using party_atomic_host_handle_member_join_t = int(__cdecl*)(char, std::uint32_t*, int, __int64, int, std::uint32_t*);
@@ -2331,7 +2347,7 @@ namespace patches
 			}, scheduler::main);
 
 			cl_parse_server_message_huffman_hook.create(game::game_offset(0x1030D960), CL_ParseServerMessage_huffman_guard);
-			ui_replace_directive_hook.create(game::game_offset(0x102BB870), UI_ReplaceDirective_guard);
+			ui_replace_directive_hook.create(game::game_offset(0x102BB870), UI_ReplaceDirective_entry);
 			party_atomic_host_handle_member_join_hook.create(game::game_offset(0x103087B0), PartyAtomicHost_HandleMemberJoin_guard);
 			register_security_guard_self_test();
 			command::add("videoInfo", [this](const command::params&)
