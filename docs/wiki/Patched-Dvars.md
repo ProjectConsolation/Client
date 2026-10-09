@@ -4,6 +4,41 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 
 ## Patched Dvars
 
+### Anti-aliasing and texture filtering
+
+On the verified QoS PC 1.1 build, `r_aaSamples` accepts `1` through `16`.
+`1` disables MSAA; higher values request that sample count. The default stays
+`1`, and the dvar remains saved and latched. Apply with `vid_restart`, for example:
+
+```text
+seta r_aaSamples 8
+vid_restart
+gfxinfo
+```
+
+Requests of `1` through `4` retain the stock selector. Higher requests check
+both A8R8G8B8 and QoS's selected depth format, descending to a supported count
+or disabling MSAA if none works. Extended requests use quality index zero for
+compatibility with auxiliary depth surfaces. The saved request is not replaced
+by the fallback; `gfxinfo` distinguishes requested and actual settings.
+Capability support is not a guarantee of successful allocation or performance;
+test map loading, shadows, water, killcams, resizing and `vid_restart`. Revert
+to `r_aaSamples 1` if higher modes fail. Patch-byte mismatches skip the extension.
+
+Anisotropic filtering uses QoS's existing `r_texFilterAnisoMin` and
+`r_texFilterAnisoMax` dvars (`1` to `16`, defaults `1` and `16`). For stronger
+filtering of eligible mipped material samplers:
+
+```text
+seta r_texFilterAnisoMax 16
+seta r_texFilterAnisoMin 16
+```
+
+Native filtering refreshes these settings at runtime and clamps them to GPU
+support. Point-filtered/non-mipped samplers retain native policy; no global
+sampler override is applied. AF cannot repair incorrect mipmaps or materials.
+These changes retain D3D9, do not add D3D9Ex, and leave existing defaults intact.
+
 First-person traversal toggles now accept native camera mode `1`, including
 when snapshot parsing selects it for the native body camera. `pm_climbFirstPerson 1` requests first-person
 ladder/ledge/pipe cameras, and `pm_mantleFirstPerson 1` requests first-person

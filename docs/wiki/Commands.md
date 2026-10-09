@@ -9,6 +9,13 @@ Project: Consolation includes a small set of utility and debugging commands that
 
 ## Commands
 
+`gfxinfo` prints the D3D9 AA request, pending latched request, actual sample
+type (`0` means disabled), quality index, native depth format, AF settings and
+hardware/effective filtering limits. It lists sample counts supported by both
+the color and depth formats in the current window mode. It changes no settings.
+This command requires the updated client; capability queries do not establish
+that a mode has passed in-game testing.
+
 | Name | Description | Example |
 | :--- | :--- | :--- |
 | `addbot [count]` | Spawns one or more multiplayer bots and assigns names from `consolation/bots.txt` when available. | `addbot` `addbot 4` |

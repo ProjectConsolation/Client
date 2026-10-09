@@ -8,7 +8,7 @@ namespace gametypes::respawn_script
 	{
 		// QoS PC archives snapshots in 102EE4E0 and consumes archived player
 		// state in 102F3010. Its common_mp script disables the existing replay.
-		// Keep that replay/HUD/cleanup implementation; change only its policy.
+		// Keep that replay/cleanup implementation; adapt policy and HUD visibility.
 		if (source.find("consolationKillcamPolicy") != std::string::npos) return false;
 		auto patched = source;
 		for (auto at = patched.find('\r'); at != std::string::npos; at = patched.find('\r'))
@@ -17,15 +17,39 @@ namespace gametypes::respawn_script
 		const auto update = patched.find("\nupdateKillcamSettings()\n", init);
 		const std::string entry = "if(attackerNum < 0)";
 		const std::string timer = "self thread waitKillcamTime();";
+		const std::string hud_begin = "self.killcam = true;";
+		const std::string hud_end = "self.killcam = undefined;";
 		if (init != 0 || update == std::string::npos
 			|| patched.substr(init, update - init).find("level.killcam = 0;") == std::string::npos)
 			return false;
-		for (const auto& target : {entry, timer})
+		for (const auto& target : {entry, timer, hud_begin, hud_end})
 		{
 			const auto at = patched.find(target);
 			if (at == std::string::npos || patched.find(target, at + target.size()) != std::string::npos)
 				return false;
 		}
+		// Native QoS CG_Draw2D (10285700) gates gameplay drawing through
+		// 102A8ED0, but still draws foreground script elements (102BC580).
+		// cg_drawHud arrives through the native client command at 1028BED0.
+		// Foreground is flag bit 0 at +124 (setter 1015B320). Scaleform's HUD
+		// uses the same ui_hud_* controls restored by native player spawning.
+		for (const auto* element : {"kc_topbar", "kc_bottombar", "kc_title", "kc_skiptext", "kc_timer"})
+		{
+			const auto anchor = std::string("self.") + element + ".archived = false;";
+			const auto at = patched.find(anchor);
+			if (at == std::string::npos || patched.find(anchor, at + anchor.size()) != std::string::npos)
+				return false;
+		}
+		for (const auto* element : {"kc_topbar", "kc_bottombar", "kc_title", "kc_skiptext", "kc_timer"})
+		{
+			const auto anchor = std::string("self.") + element + ".archived = false;";
+			patched.replace(patched.find(anchor), anchor.size(),
+				anchor + "\n\t\tself." + element + ".foreground = true;");
+		}
+		patched.replace(patched.find(hud_begin), hud_begin.size(),
+			hud_begin + "\n\tself consolationKillcamHud( false );");
+		patched.replace(patched.find(hud_end), hud_end.size(),
+			hud_end + "\n\tself consolationKillcamHud( true );");
 		patched.replace(init, update - init,
 			"init()\n{\n\tprecacheString(&\"MP_KILLCAM\");\n"
 			"\tprecacheString(&\"PLATFORM_PRESS_TO_SKIP\");\n"
@@ -43,6 +67,13 @@ namespace gametypes::respawn_script
 			"\tself endon( \"end_killcam\" );\n\tself endon( \"spawned\" );\n"
 			"\twhile ( getDvarInt( \"sv_allowKillcams\" ) ) wait 0.05;\n"
 			"\tself notify( \"end_killcam\" );\n}\n";
+		patched += "\nconsolationKillcamHud( visible )\n{\n"
+			"\tvalue = \"0\";\n\tif ( visible ) value = \"1\";\n"
+			"\tself setClientDvar( \"cg_drawHud\", value );\n"
+			"\tself setClientDvar( \"ui_hud_showGPS\", value );\n"
+			"\tself setClientDvar( \"ui_hud_showscore\", value );\n"
+			"\tself setClientDvar( \"ui_hud_showweaponinfo\", value );\n"
+			"\tself setClientDvar( \"ui_hud_showstanceicon\", value );\n}\n";
 		source.swap(patched);
 		return true;
 	}
