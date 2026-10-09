@@ -1,5 +1,6 @@
 #include <std_include.hpp>
 #include "hook.hpp"
+#include "relative_branch.hpp"
 
 #include <MinHook.h>
 
@@ -127,9 +128,8 @@ namespace utils::hook
 
 	bool is_relatively_far(const void* pointer, const void* data, const int offset)
 	{
-		const int64_t diff = size_t(data) - (size_t(pointer) + offset);
-		const auto small_diff = int32_t(diff);
-		return diff != int64_t(small_diff);
+		return !detail::relative_branch_reachable(reinterpret_cast<std::uintptr_t>(pointer),
+			reinterpret_cast<std::uintptr_t>(data), offset);
 	}
 
 	void call(void* pointer, void* data)
@@ -141,7 +141,8 @@ namespace utils::hook
 
 		auto* patch_pointer = PBYTE(pointer);
 		set<uint8_t>(patch_pointer, 0xE8);
-		set<int32_t>(patch_pointer + 1, int32_t(size_t(data) - (size_t(pointer) + 5)));
+		set<std::uint32_t>(patch_pointer + 1, detail::relative_branch_bits(
+			reinterpret_cast<std::uintptr_t>(pointer), reinterpret_cast<std::uintptr_t>(data)));
 	}
 
 	void call(const size_t pointer, void* data)
@@ -164,7 +165,8 @@ namespace utils::hook
 		auto* patch_pointer = PBYTE(pointer);
 
 		set<uint8_t>(patch_pointer, 0xE9);
-		set<int32_t>(patch_pointer + 1, int32_t(size_t(data) - (size_t(pointer) + 5)));
+		set<std::uint32_t>(patch_pointer + 1, detail::relative_branch_bits(
+			reinterpret_cast<std::uintptr_t>(pointer), reinterpret_cast<std::uintptr_t>(data)));
 	}
 
 	void jump(const size_t pointer, void* data)

@@ -262,6 +262,63 @@ namespace patches
 		game::dvar_s* pm_climbFirstPerson{};
 		game::dvar_s* pm_airborneBobScale{};
 		game::dvar_s* pm_movement_mode{};
+		game::dvar_s* bg_improvedMeleeLunge{};
+		std::uintptr_t melee_scale_slot{};
+		std::uintptr_t melee_stock_continue{};
+		std::uintptr_t melee_improved_continue{};
+		const float melee_launch_factor = 2400.0f;
+
+		__declspec(naked) void melee_launch_stub()
+		{
+			// QoS PC 1.1 PM walking charge: EBP = playerState, +10BC is
+			// distance; the already-computed native direction stays on stack.
+			// KisakCOD PM_MeleeChargeUpdate launches at sqrt(2*1200*distance).
+			// This opt-in changes launch only, not targeting, damage or archive
+			// fields. Native movement/collision still owns subsequent frames.
+			__asm
+			{
+				pushfd
+				mov edx, dword ptr[bg_improvedMeleeLunge]
+				test edx, edx
+				jz stock_launch
+				cmp byte ptr[edx + 10h], 0
+				je stock_launch
+				cmp dword ptr[ebp + 10BCh], 0
+				jl stock_launch
+				cvtsi2ss xmm0, dword ptr[ebp + 10BCh]
+				mulss xmm0, dword ptr[melee_launch_factor]
+				sqrtss xmm0, xmm0
+				cvtss2sd xmm0, xmm0 // Native direction multiplication consumes a double.
+				popfd
+				jmp dword ptr[melee_improved_continue]
+			stock_launch:
+				cvtsi2ss xmm0, dword ptr[ebp + 10BCh]
+				mov edx, dword ptr[melee_scale_slot]
+				mov edx, [edx]
+				popfd
+				jmp dword ptr[melee_stock_continue]
+			}
+		}
+
+		void install_melee_launch_patch()
+		{
+			const auto site = game::game_offset(0x101E53D0);
+			constexpr unsigned char expected[] = {0xF3, 0x0F, 0x2A, 0x85, 0xBC, 0x10, 0x00, 0x00, 0x8B, 0x15};
+			constexpr unsigned char scale[] = {0xF3, 0x0F, 0x10, 0x4A, 0x10, 0x0F, 0x5A, 0xC9,
+				0xF3, 0x0F, 0x5A, 0xC0, 0xF2, 0x0F, 0x59, 0xC1};
+			if (std::memcmp(reinterpret_cast<void*>(site), expected, sizeof(expected)) != 0
+				|| *reinterpret_cast<std::uintptr_t*>(site + 10) != game::game_offset(0x118EC274)
+				|| std::memcmp(reinterpret_cast<void*>(site + 14), scale, sizeof(scale)) != 0)
+			{
+				console::warn("[movement] melee launch patch skipped: unexpected engine instructions\n");
+				return;
+			}
+			melee_scale_slot = game::game_offset(0x118EC274);
+			melee_stock_continue = game::game_offset(0x101E53DE);
+			melee_improved_continue = game::game_offset(0x101E53EE);
+			utils::hook::nop(site, 14);
+			utils::hook::jump(site, melee_launch_stub);
+		}
 		const char* movement_mode_names[] = { "stock", "iw3" };
 		int applied_movement_mode = -1;
 
@@ -2191,8 +2248,13 @@ namespace patches
 
 			scheduler::once([this]
 			{
+				dvars::Dvar_RegisterBool("sv_allowKillcams", 1,
+					"Enable native archived killcam replay; changes apply during the match.", game::dvar_flags::none);
 				pm_adsStopsSprint = dvars::Dvar_RegisterBool("pm_adsStopsSprint", 0,
 					"ADS ends sprint in shared player movement (0 = stock QoS).", game::dvar_flags::replicated);
+				bg_improvedMeleeLunge = dvars::Dvar_RegisterBool("bg_improvedMeleeLunge", 0,
+					"Use COD4 distance-based melee launch speed; subsequent movement remains native QoS.", game::dvar_flags::replicated);
+				install_melee_launch_patch();
 				pm_allowProne = dvars::Dvar_RegisterInt("pm_allowProne",
 					"Prone permission: 0 disabled, 1 enabled with native clearance, 2 stock weapon rules.",
 					2, 0, 2, game::dvar_flags::replicated);

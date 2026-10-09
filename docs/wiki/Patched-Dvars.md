@@ -31,6 +31,42 @@ buttons together, diagonal movement and normal movement after leaving noclip.
 
 ### Dvar Reference
 
+`bg_improvedMeleeLunge` is a server-replicated boolean, default `0` (stock QoS).
+`bg_improvedMeleeLunge 1` replaces the native distance-times-scale launch speed
+with COD4's distance-based `sqrt(2 * 1200 * distance)` launch. The shared
+movement path applies it to server simulation and client prediction. It does
+not widen hit range or targeting angles, change damage, or port COD4's entire
+friction-timed charge state machine. Native QoS collision and subsequent
+movement remain active. Verify player and bot melee on a listen server and
+with remote clients before relying on the experimental option.
+
+`scr_player_respawndelay` controls the player respawn wait in seconds. The
+client adapts the original QoS `_tweakables.gsc` getter to read this setting
+live instead of its server-start cache; changes also shorten an already-running
+player-delay wait. Negative values are treated as zero.
+Restart the client after installing the DLL so scripts are compiled with the
+adaptation. Custom disk `_tweakables.gsc` overrides retain their own behavior.
+`scr_player_forcerespawn 1` bypasses the native use-button prompt, including an
+already-running prompt. `0` retains manual spawning. For immediate automatic
+respawn use `set scr_player_respawndelay 0` and
+`set scr_player_forcerespawn 1`. With killcam inactive, zero delay also skips the
+death-camera hold after one server-frame yield needed to finish the death callback.
+Team-wave waits, active killcam, limited-life modes and native mode-specific
+respawn overrides remain separate policies. Custom disk `_globallogic.gsc`
+overrides retain their own behavior. These controls adapt the built-in scripts;
+users do not need to install their own scripts.
+
+`sv_allowKillcams` is a server-owned boolean, default `1`. It enables the
+existing QoS archived-snapshot killcam through its built-in `_killcam.gsc`;
+it does not introduce a separate replay recorder. Console changes apply during
+the match, and `sv_allowKillcams 0` also ends an active killcam through native
+cleanup. Native eligibility rules, archive availability, skip input and
+round-end limits remain in force. Custom disk `_killcam.gsc` overrides keep
+their own policy. Restart with the updated DLL before testing script changes.
+For immediate respawn without watching a killcam, additionally use
+`set sv_allowKillcams 0`. Replay and its HUD require runtime verification;
+the archive writer and replay consumer have been verified in the QoS PC binary.
+
 | Name | Description | Default / Range |
 | :--- | :--- | :--- |
 | `r_fullscreen` | Made saved and writable so fullscreen behavior can be controlled more reliably and does not get forced back as aggressively by the stock game. | N/A |

@@ -5,6 +5,9 @@
 #include "game/game.hpp"
 
 #include <utils/string.hpp>
+#include <bcrypt.h>
+
+#pragma comment(lib, "bcrypt.lib")
 
 namespace draw_techset
 {
@@ -143,7 +146,8 @@ namespace draw_techset
 				if (!copy_guarded_string(snapshot->material_name,
 					sizeof(snapshot->material_name), material->name)
 					|| !copy_guarded_string(snapshot->technique_name,
-						sizeof(snapshot->technique_name), material->techniqueSet->name))
+						sizeof(snapshot->technique_name), material->techniqueSet->remappedTechniqueSet
+							? material->techniqueSet->remappedTechniqueSet->name : material->techniqueSet->name))
 				{
 					return false;
 				}
@@ -241,7 +245,49 @@ namespace draw_techset
 				return true;
 			}
 			// Collision names omit the world-render material's wc/ prefix.
-			return !strchr(name, '/') && capture_named(utils::string::va("wc/%s", name));
+			if (!strchr(name, '/') && capture_named(utils::string::va("wc/%s", name)))
+			{
+				return true;
+			}
+			// The IW3 converter deliberately namespaces render assets to avoid
+			// overriding native QoS materials. Match its SHA-256 name contract,
+			// rather than interpreting a collision label as a shader failure.
+			const auto* map = game::Dvar_FindVar("mapname");
+			if (!map || !map->current.string || !map->current.string[0])
+			{
+				return false;
+			}
+			BCRYPT_ALG_HANDLE algorithm{};
+			if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+			{
+				return false;
+			}
+			bool resolved = false;
+			for (const auto* prefix : {"", "wc/", "mc/"})
+			{
+				const std::string source = std::string(prefix) + name;
+				unsigned char digest[32]{};
+				if (BCryptHash(algorithm, nullptr, 0,
+					reinterpret_cast<PUCHAR>(const_cast<char*>(source.data())),
+					static_cast<ULONG>(source.size()), digest, sizeof(digest)) < 0)
+				{
+					continue;
+				}
+				char suffix[17]{};
+				constexpr char hex[] = "0123456789abcdef";
+				for (std::size_t i = 0; i < 8; ++i)
+				{
+					suffix[2 * i] = hex[digest[i] >> 4];
+					suffix[2 * i + 1] = hex[digest[i] & 15];
+				}
+				if (capture_named(utils::string::va("consolation/iw3/%s/%s", map->current.string, suffix)))
+				{
+					resolved = true;
+					break;
+				}
+			}
+			BCryptCloseAlgorithmProvider(algorithm, 0);
+			return resolved;
 		}
 
 		void draw()

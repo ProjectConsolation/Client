@@ -16,6 +16,7 @@ namespace bots
 {
 	namespace
 	{
+		game::dvar_s* bot_difficulty = nullptr;
 		constexpr int CLIENT_STRIDE = 688916;
 		constexpr int PS_ORIGIN_OFFSET = 0x20;
 		constexpr int PS_MAXHEALTH_OFFSET = 0x32C4;
@@ -310,6 +311,7 @@ namespace bots
 
 		static std::uintptr_t s_client_think_real_addr = 0;
 		static combat::fire_control s_fire_control[MAX_CLIENTS] = {};
+		static int s_last_aim_time[MAX_CLIENTS] = {};
 		static int s_tracked_target[MAX_CLIENTS] = {};
 		static int s_last_visible_time[MAX_CLIENTS] = {};
 		static float s_last_seen_origin[MAX_CLIENTS][3] = {};
@@ -353,6 +355,7 @@ namespace bots
 			}
 
 			s_fire_control[idx] = {};
+			s_last_aim_time[idx] = 0;
 			s_tracked_target[idx] = -1;
 			s_last_visible_time[idx] = 0;
 			s_last_seen_origin[idx][0] = 0.0f;
@@ -877,6 +880,7 @@ namespace bots
 						entity_ps(entity_at(best_visible_idx)), bot_ps->commandTime, true);
 					if (best_visibility <= 0) best_visible_idx = -1;
 				}
+				const auto skill = combat::difficulty(bot_difficulty ? bot_difficulty->current.integer : 0);
 				int target_idx = best_visible_idx;
 				bool target_visible = best_visible_idx >= 0;
 				float goal[3] = {};
@@ -886,6 +890,7 @@ namespace bots
 				{
 					if (target_visible)
 					{
+						if (s_tracked_target[state_idx] != target_idx) s_fire_control[state_idx] = {};
 						s_tracked_target[state_idx] = target_idx;
 						s_last_visible_time[state_idx] = bot_ps->commandTime;
 
@@ -968,7 +973,8 @@ namespace bots
 						&& bot_health <= std::max(35, get_bot_max_health() / 2);
 					const int behavior_tick = bot_ps->commandTime / 250;
 					const bool stuck = bot_is_stuck(bot_idx, bot_ps);
-					const int desired_yaw = vector_to_yaw_units(dx, dy);
+					const int desired_yaw = vector_to_yaw_units(dx, dy) + combat::angle_units(
+						skill.aim_error_degrees * std::sin(bot_ps->commandTime * 0.0017f + bot_idx * 2.3f));
 					const int desired_pitch = std::clamp(static_cast<int>(std::atan2f(-dz, hdist) * IW_RAD_TO_ANGLE), -15474, 15474);
 					int move_yaw = vector_to_yaw_units(move_dx, move_dy);
 					// KisakBlack Bot_UpdateAngles subtracts delta_angles before
@@ -994,8 +1000,13 @@ namespace bots
 						}
 					}
 
-					cmd.angles[1] = combat::command_angle(desired_yaw, bot_ps->deltaAngles[1]);
-					cmd.angles[0] = combat::command_angle(desired_pitch, bot_ps->deltaAngles[0]);
+					const int aim_elapsed = s_last_aim_time[state_idx] > 0
+						? bot_ps->commandTime - s_last_aim_time[state_idx] : 0;
+					s_last_aim_time[state_idx] = bot_ps->commandTime;
+					cmd.angles[1] = combat::command_angle(combat::turn_angle(
+						combat::angle_units(bot_ps->aimAngles[1]), desired_yaw, aim_elapsed, skill.turn_degrees), bot_ps->deltaAngles[1]);
+					cmd.angles[0] = combat::command_angle(combat::turn_angle(
+						combat::angle_units(bot_ps->aimAngles[0]), desired_pitch, aim_elapsed, skill.turn_degrees), bot_ps->deltaAngles[0]);
 					cmd.angles[2] = combat::command_angle(0, bot_ps->deltaAngles[2]);
 
 					if (state_idx >= 0)
@@ -1049,14 +1060,13 @@ namespace bots
 					if (target_visible && best_visibility > 0.0f && dist <= (MELEE_RANGE * 1.5f))
 					{
 						const auto* const atk = sv_bots_press_attack_dvar();
-						if (atk && atk->current.enabled)
+						if (combat::attack(s_fire_control[state_idx], bot_ps->commandTime, atk && atk->current.enabled, skill))
 							cmd.buttons = static_cast<game::usercmd_buttons>((cmd.buttons & ~game::BUTTON_SPRINT) | game::BUTTON_MELEE_BREATH);
-						s_fire_control[state_idx] = {};
 						cmd.forwardmove = 127;
 					}
 					else
 					{
-						if (target_visible && best_visibility >= 0.4f && dist > 256.0f)
+						if (skill.ads && target_visible && best_visibility >= 0.4f && dist > 256.0f)
 						{
 							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ADS);
 						}
@@ -1072,7 +1082,7 @@ namespace bots
 									&& pitch_delta <= (FIRE_ALIGNMENT_THRESHOLD * 2)));
 						if (can_fire)
 							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons & ~game::BUTTON_SPRINT);
-						if (combat::attack(s_fire_control[state_idx], bot_ps->commandTime, can_fire))
+						if (combat::attack(s_fire_control[state_idx], bot_ps->commandTime, can_fire, skill))
 						{
 							cmd.buttons = static_cast<game::usercmd_buttons>(cmd.buttons | game::BUTTON_ATTACK);
 
@@ -1119,6 +1129,11 @@ namespace bots
 	public:
 		void post_load() override
 		{
+			scheduler::once([] {
+				bot_difficulty = dvars::Dvar_RegisterInt("bot_difficulty",
+					"Bot combat difficulty: 0 easy, 1 regular, 2 hardened, 3 veteran",
+					0, 0, 3, game::dvar_flags::none);
+			}, scheduler::main);
 			s_client_think_real_addr = reinterpret_cast<std::uintptr_t>(game::SV_ClientThink.get());
 
 			utils::hook::call(game::game_offset(0x10414440), client_enter_world_hook);
@@ -1129,6 +1144,7 @@ namespace bots
 
 			scheduler::on_shutdown([]
 				{
+					bot_difficulty = nullptr;
 					for (auto& state : s_fire_control) state = {};
 					std::fill_n(s_tracked_target, MAX_CLIENTS, -1);
 					std::memset(s_last_visible_time, 0, sizeof(s_last_visible_time));

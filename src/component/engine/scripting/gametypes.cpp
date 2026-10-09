@@ -5,6 +5,7 @@
 #include "component/engine/console/console.hpp"
 #include "filesystem.hpp"
 #include "gametypes.hpp"
+#include "respawn_script.hpp"
 #include "scaleform.hpp"
 
 #include "game/game.hpp"
@@ -251,14 +252,39 @@ namespace gametypes
 				const auto normalized_name = normalize_gametype_path(name);
 				if (auto* rawfile = load_custom_gametype_rawfile(name))
 				{
+					// Explicit disk overrides keep their author's policies.
 					game::XAssetHeader header{};
 					header.rawfile = rawfile;
 					return header;
 				}
 
-				const auto fastfile_header = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, normalized_name.c_str(), create_default);
+				auto fastfile_header = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, normalized_name.c_str(), create_default);
 				if (rawfile_has_data(fastfile_header.rawfile))
 				{
+					if (normalized_name == "maps/mp/gametypes/_tweakables.gsc"
+						|| normalized_name == "maps/mp/gametypes/_globallogic.gsc"
+						|| normalized_name == "maps/mp/gametypes/_killcam.gsc")
+					{
+						std::string data(fastfile_header.rawfile->buffer, fastfile_header.rawfile->len);
+						while (!data.empty() && data.back() == '\0') data.pop_back();
+						const bool patched = normalized_name == "maps/mp/gametypes/_tweakables.gsc"
+							? respawn_script::make_delay_live(data)
+							: normalized_name == "maps/mp/gametypes/_killcam.gsc"
+								? respawn_script::make_killcam_live(data) : respawn_script::make_wait_live(data);
+						if (patched)
+						{
+							const auto key = std::string("live-respawn:") + data;
+							auto& cache = loaded_gametype_rawfiles();
+							if (!cache.contains(key)) cache[key] = make_rawfile(normalized_name.c_str(), data);
+							fastfile_header.rawfile = cache.at(key);
+						}
+						else if (data.find("// Consolation: live respawn delay") == std::string::npos
+							&& data.find("consolationWaitRespawnDelay") == std::string::npos
+							&& data.find("consolationKillcamPolicy") == std::string::npos)
+						{
+							console::error("gametypes: live gameplay policy skipped: unsupported script %s\n", normalized_name.c_str());
+						}
+					}
 					return fastfile_header;
 				}
 			}

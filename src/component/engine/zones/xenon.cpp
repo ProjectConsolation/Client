@@ -552,10 +552,11 @@ namespace fastfiles::xenon
 		std::ifstream stream(source, std::ios::binary | std::ios::ate);
 		require(stream.good(), "cannot open fastfile source");
 		const auto length = stream.tellg();
-		require(length >= 4 && length <= static_cast<std::streamoff>(size_limit), "invalid fastfile source size");
+		require(length >= 4, "invalid fastfile source size");
 		stream.seekg(0);
 		bytes signature(4);
 		stream.read(reinterpret_cast<char*>(signature.data()), 4);
+		require(stream.good(), "fastfile signature read failed");
 		if (native32(signature, 0) == 470)
 		{
 			if (!allow_pc_probe) return false;
@@ -578,6 +579,10 @@ namespace fastfiles::xenon
 				"unrecognized big-endian fastfile version; no conversion schema is available");
 			return false;
 		}
+		// Bound only the Xenon data that this converter reads and expands in memory.
+		// Native PC zones are streamed by the engine, not converted here; Shipment
+		// with complete texture mips exceeds this converter's 128 MiB input budget.
+		require(length <= static_cast<std::streamoff>(size_limit), "Xenon fastfile source exceeds conversion size limit");
 		bytes file(static_cast<size_t>(length));
 		stream.seekg(0);
 		stream.read(reinterpret_cast<char*>(file.data()), static_cast<std::streamsize>(file.size()));
