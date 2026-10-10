@@ -5,8 +5,9 @@ consolation\zone\common_consolation.ff is REQUIRED for the client HUD assets;
 do not move it into the root directory or omit it when updating.
 
 consolation\scaleform\ contains REQUIRED native menu overrides, including
-pcsharedlibrary.gfx and cmsharedplatform.gfx. Copy all six .gfx files together; omitting a shared
-library can leave Single Player and the old video settings visible.
+cmfrontend.gfx, pcsharedlibrary.gfx and cmsharedplatform.gfx. Copy all seven
+.gfx files together. The frontend bootstrap constructs the menus before the
+screen movies load; omitting it leaves Single Player and old video settings.
 These modify the stock menus, not the experimental custom frontend.
 Fully close and restart the game after updating; a DLL rebuild alone does
 not regenerate or install these assets. Original main\scaleform files stay intact.

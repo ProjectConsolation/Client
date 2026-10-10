@@ -872,3 +872,9 @@ tools/dumps/
 
 # Local proprietary DLC staging and converted game assets.
 /DLC1/
+tools/build_common_consolation.py
+tools/check_exported_fonts.py
+tools/convert_iwi13_png.py
+tools/extract_qos_stance_icons.py
+tools/generate_menu_placeholder.py
+tools/inspect_scaleform_fonts.py
