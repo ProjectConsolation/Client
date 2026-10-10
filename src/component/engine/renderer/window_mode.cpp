@@ -26,7 +26,7 @@ namespace renderer_window_mode
 		{
 			const auto* borderless = game::Dvar_FindVar("r_borderless");
 			if (!parms || parms[8] || !borderless) return;
-			const bool enabled = borderless->type == game::DVAR_TYPE_STRING
+			const bool enabled = borderless->type == game::dvar_type::string
 				? borderless->current.string && std::atoi(borderless->current.string) != 0
 				: borderless->current.enabled;
 			if (!enabled) return;
@@ -49,7 +49,7 @@ namespace renderer_window_mode
 			*reinterpret_cast<int*>(parms + 36) = height;
 			parms[20] = static_cast<float>(width) / height > 1.5f;
 			const auto* wide = *reinterpret_cast<game::dvar_s**>(game::game_offset(0x10752C58));
-			if (wide && wide->name && wide->type == game::DVAR_TYPE_BOOL)
+			if (wide && wide->name && wide->type == game::dvar_type::boolean)
 				game::Dvar_SetFromStringByName(wide->name, parms[20] ? "1" : "0");
 		}
 
