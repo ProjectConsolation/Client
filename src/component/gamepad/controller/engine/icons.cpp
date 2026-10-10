@@ -2,7 +2,7 @@
 #include "icons.hpp"
 #include <component/gamepad/controller/runtime.hpp>
 #include <component/gamepad/controller/mapping/icon_text.hpp>
-#include <component/engine/renderer/menu_image.hpp>
+#include <component/engine/zones/fastfiles.hpp>
 #include <component/utils/scheduler.hpp>
 #include <utils/hook.hpp>
 #include <atomic>
@@ -20,16 +20,31 @@ namespace gamepad::unstable::controller::engine
 
     void prepare_icons()
     {
-      // Same native white-material image pipeline as loose menu images. No
-      // font/zone mutation, GPU readback, or I/O from the backend glyph loop.
-      // Resources have process lifetime so queued frames retain their materials.
-      for (size_t i = 0; i < materials.size(); ++i)
+      // Native 2D materials/images live in the resident common_consolation zone.
+      // Resolve on the main thread; the backend only reads published handles.
+      static const auto names = []
       {
-        const std::string filename = std::string("controller_")
-          + (i < text_icon::button_count ? "xbox_" : "ps3_")
-          + text_icon::names[i % text_icon::button_count] + ".png";
-        materials[i].store(menu_image::get(filename, true), std::memory_order_release);
-      }
+        std::array<std::string, text_icon::count> result;
+        for (size_t i = 0; i < result.size(); ++i)
+          result[i] = std::string("qos_controller_")
+            + (i < text_icon::button_count ? "xbox_" : "ps3_")
+            + text_icon::names[i % text_icon::button_count];
+        return result;
+      }();
+      std::array<game::Material*, text_icon::count> linked{};
+      // Verified QoS 103DFCA0 always balances its reader lock, including an
+      // empty inventory. Do not poll missing assets through 103E1EE0: its
+      // create-default=false material-miss path returns with the writer lock held.
+      fastfiles::enum_assets(game::ASSET_TYPE_MATERIAL, [&](game::XAssetHeader header)
+      {
+        auto* material = header.material;
+        if (!material || !material->name || std::strncmp(material->name, "qos_controller_", 15) != 0
+            || !material->techniqueSet || material->textureCount != 1 || !material->textureTable) return;
+        for (size_t i = 0; i < names.size(); ++i)
+          if (names[i] == material->name) { linked[i] = material; break; }
+      }, false);
+      for (size_t i = 0; i < materials.size(); ++i)
+        materials[i].store(linked[i], std::memory_order_release);
     }
 
     // ESI points just past '^'. -1 delegates stock pointer tokens unchanged;

@@ -92,13 +92,21 @@ namespace mouse_input
 
 		LRESULT CALLBACK wnd_proc_stub(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 		{
+			const bool foreground = GetForegroundWindow() == hwnd;
+			if (foreground && (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN
+				|| msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN
+				|| msg == WM_MOUSEWHEEL || msg == WM_MOUSEHWHEEL))
+				gamepad::note_mouse_activity();
 			if (msg == WM_ACTIVATEAPP && wparam == FALSE)
 			{
 				raw_mouse_x = 0;
 				raw_mouse_y = 0;
 			}
 
-			if (msg == WM_MOUSEMOVE && !raw_input_registered)
+			// Gameplay recenters the legacy cursor synthetically. Its native delta
+			// path below reports real movement; absolute messages are for UI only.
+			if (foreground && msg == WM_MOUSEMOVE && !raw_input_registered
+				&& (*game::keyCatchers & 0x10) != 0)
 			{
 				gamepad::note_mouse_activity();
 			}
@@ -120,7 +128,8 @@ namespace mouse_input
 					{
 						raw_mouse_x += raw->data.mouse.lLastX;
 						raw_mouse_y += raw->data.mouse.lLastY;
-						if (raw->data.mouse.lLastX != 0 || raw->data.mouse.lLastY != 0)
+						if (foreground && (raw->data.mouse.lLastX != 0 || raw->data.mouse.lLastY != 0
+							|| raw->data.mouse.usButtonFlags != 0))
 						{
 							gamepad::note_mouse_activity();
 						}
@@ -234,7 +243,8 @@ namespace mouse_input
 			pending_event.dx = dx;
 			pending_event.dy = dy;
 
-			if (!raw_input_registered && (dx != 0 || dy != 0) && (*game::keyCatchers & 0x10) == 0)
+			if (!raw_input_registered && (dx != 0 || dy != 0) && (*game::keyCatchers & 0x10) == 0
+				&& GetForegroundWindow() == get_window())
 			{
 				gamepad::note_mouse_activity();
 			}

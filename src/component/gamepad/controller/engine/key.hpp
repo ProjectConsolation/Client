@@ -7,6 +7,7 @@
 #include <component/gamepad/controller/engine/dvar.hpp>
 #include <component/gamepad/controller/mapping/key.hpp>
 #include <component/gamepad/controller/sample/sample.hpp>
+#include <component/gamepad/controller/engine/input_activity.hpp>
 
 namespace gamepad
 {
@@ -150,6 +151,7 @@ namespace gamepad
           const dvars&   dvars_;
 
           bool in_use_ {false};
+          input_activity activity_;
 
           // Resolved on first use: g_useholdtime is a game dvar that does not exist until
           // a session is running.

@@ -1,4 +1,5 @@
 #include "../src/component/gamepad/controller/mapping/icon_text.hpp"
+#include "../src/component/gamepad/controller/engine/input_activity.hpp"
 #include <cassert>
 #include <cstring>
 #include <string>
@@ -26,4 +27,18 @@ int main()
     }
     assert(icons::advance(32) == 32);
     assert(icons::advance(24) == 24);
+    gamepad::unstable::controller::engine::input_activity activity;
+    std::array<float, 6> axes{0.5f, 0, 0, 0, 1, 0};
+    assert(activity.analog(axes, true));
+    activity.interrupt();
+    assert(!activity.allow_repeat());
+    assert(!activity.analog(axes, true));
+    axes[0] = 0.52f;
+    assert(!activity.analog(axes, true));
+    axes[0] = 0.57f;
+    assert(activity.analog(axes, true));
+    assert(activity.allow_repeat());
+    activity.interrupt();
+    activity.controller_press();
+    assert(activity.allow_repeat());
 }

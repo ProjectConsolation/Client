@@ -1,4 +1,4 @@
-"""Check shipped controller sprite completeness and lossless atlas extraction."""
+"""Check controller source sprite completeness and lossless atlas extraction."""
 import json
 import tempfile
 import unittest
@@ -14,7 +14,7 @@ class ControllerIcons(unittest.TestCase):
         for family in ("xbox", "ps3"):
             for name in BUTTONS.values():
                 with self.subTest(family=family, button=name):
-                    with Image.open(ROOT / "required_files/consolation/images" /
+                    with Image.open(ROOT / "consolation/controller_assets/glyphs" /
                                     f"controller_{family}_{name}.png") as sprite:
                         self.assertEqual(sprite.size, (32, 32))
                         self.assertEqual(sprite.mode, "RGBA")

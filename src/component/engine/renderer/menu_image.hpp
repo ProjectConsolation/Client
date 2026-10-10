@@ -36,7 +36,7 @@ namespace menu_image
         std::string name;
     };
 
-    inline game::Material* get(const std::string& filename, bool immutable = false)
+    inline game::Material* get(const std::string& filename)
     {
         // Process-lifetime storage also keeps queued draw-command pointers valid
         // across reloadMenus. Managed textures survive a normal D3D9 Reset.
@@ -54,16 +54,6 @@ namespace menu_image
         for (auto& entry : *resources)
             if (entry->name == filename && entry->device.Get() == device.Get())
             {
-                // Backend text handles are published across threads. Never
-                // rewrite their material while a queued frame can consume it.
-                // A changed zone pipeline gets a fresh retained generation.
-                if (immutable)
-                {
-                    if (entry->material.techniqueSet == donor->techniqueSet
-                        && entry->material.stateBitTable == donor->stateBitTable)
-                        return &entry->material;
-                    continue;
-                }
                 // Resolve zone-owned techniques afresh rather than caching them
                 // through DB unload/renderer registration.
                 entry->material = *donor;

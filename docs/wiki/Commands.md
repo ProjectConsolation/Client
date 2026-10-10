@@ -13,7 +13,7 @@ Project: Consolation includes a small set of utility and debugging commands that
 
 `controller_status` reports connected devices, active input source and the resolved controller icon family. The archived string dvar `ui_controllerIcons` accepts `auto` (default), `xbox`, or `ps3`. Auto selects Xbox for XInput and PS3 for other supported controller families; explicit values override the artwork without changing bindings. Unknown values use auto. Use `seta ui_controllerIcons ps3` for a PlayStation controller exposed through an XInput wrapper, or `seta ui_controllerIcons auto` to restore detection.
 
-Native binding prompts use live key bindings and switch back to keyboard text on keyboard/mouse activity. Install the 32 bundled controller PNGs under `consolation/images/` and restart; absent sprites fall back to readable button names. See [Controller Support](ControllerSupport) for installation and validation details. This does not replace artwork baked into Scaleform movies.
+Native binding prompts use live key bindings and switch back to PC binding text on keyboard input, mouse clicks/wheel or foreground mouse movement, regardless of the artwork override. Unchanged held controller input does not undo PC takeover. Install the updated bundled `consolation/zone/common_consolation.ff` and restart; absent materials fall back to readable button names. No loose controller PNGs are needed at runtime. See [Controller Support](ControllerSupport) for installation and validation details. This does not replace artwork baked into Scaleform movies.
 
 ### Renderer timing
 
