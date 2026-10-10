@@ -40,10 +40,9 @@ namespace controller_component
         if (runtime) runtime->engine_ready ();
       }, scheduler::main, 100ms);
 
-      scheduler::loop ([]
-      {
-        if (runtime) runtime->frame ();
-      }, scheduler::main, 16ms);
+      // Poll at QoS's native IN_Frame boundary (installed by engine::install),
+      // before command creation and during menus. A separate 16ms scheduler
+      // adds latency at high frame rates and can sample twice in one frame.
 
       scheduler::on_shutdown ([]
       {

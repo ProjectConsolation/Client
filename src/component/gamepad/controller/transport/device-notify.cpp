@@ -17,6 +17,10 @@ namespace gamepad
         namespace
         {
           constexpr wchar_t window_class[] {L"gamepad_controller_devnotify"};
+          // IW4x Controller/Transport/DeviceNotify: allow HID interfaces to settle,
+          // then retry for Bluetooth devices whose first enumeration is premature.
+          constexpr UINT_PTR rescan_timer {1};
+          constexpr UINT_PTR retry_timer {2};
 
           // The pending flag lives on the window, reached through its user data, so the
           // window procedure has no global mutable state of its own. It is the same
@@ -36,19 +40,31 @@ namespace gamepad
             {
             case WM_DEVICECHANGE:
               {
-                // Arrival and removal of a device interface are the two that matter;
-                // the many query and configuration events are ignored. A broadcast
-                // without the interface detail (wp only) is treated as a change too,
-                // because it is cheap for discovery to re-check.
-                //
                 if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE)
                 {
-                  if (std::atomic<bool>* f = flag_of (w))
-                    f->store (true, std::memory_order_release);
+                  const auto* change = reinterpret_cast<const DEV_BROADCAST_HDR*> (lp);
+                  if (change && change->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE)
+                  {
+                    const auto first = SetTimer (w, rescan_timer, 300, nullptr);
+                    const auto retry = SetTimer (w, retry_timer, 2000, nullptr);
+                    if (first == 0 || retry == 0)
+                      if (auto* f = flag_of (w))
+                        f->store (true, std::memory_order_release);
+                  }
                 }
 
                 return TRUE;
               }
+
+            case WM_TIMER:
+              if (wp == rescan_timer || wp == retry_timer)
+              {
+                KillTimer (w, wp);
+                if (auto* f = flag_of (w))
+                  f->store (true, std::memory_order_release);
+                return 0;
+              }
+              break;
 
             case WM_CLOSE:
               DestroyWindow (w);
@@ -66,19 +82,17 @@ namespace gamepad
         device_notifier::
         device_notifier (const context& ctx)
         {
-          thread_ = std::thread ([this, &ctx] () {run (ctx);});
+          thread_ = std::thread ([this, ctx] () {run (ctx);});
         }
 
         device_notifier::
         ~device_notifier ()
         {
-          // Ask the window to close, which quits the message loop, then wait for the
-          // thread. PostMessage is safe from another thread; the window may not exist
-          // yet if construction raced, in which case there is nothing to close and the
-          // thread will exit on its own once it has created and (finding no work) idles
-          // -- so only join when a window was actually created.
-          //
-          if (HWND w = static_cast<HWND> (window_.load (std::memory_order_acquire)))
+          // Sequentially consistent publication/check pairs ensure either this
+          // thread sees the window or its creator sees the stop request. Without
+          // that handshake, destruction before CreateWindow could join forever.
+          stopping_.store (true);
+          if (HWND w = static_cast<HWND> (window_.load ()))
             PostMessageW (w, WM_CLOSE, 0, 0);
 
           if (thread_.joinable ())
@@ -122,7 +136,13 @@ namespace gamepad
 
           SetWindowLongPtrW (window, GWLP_USERDATA,
                              reinterpret_cast<LONG_PTR> (&pending_));
-          window_.store (window, std::memory_order_release);
+          window_.store (window);
+          if (stopping_.load ())
+          {
+            DestroyWindow (window);
+            window_.store (nullptr);
+            return;
+          }
 
           // Register for HID interface notifications specifically. The same GUID the
           // HID enumeration uses; only devices of this class raise the flag, so a

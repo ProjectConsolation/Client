@@ -22,6 +22,28 @@ namespace gamepad::unstable::controller::engine
     void* display_key_name_original {};
     utils::hook::detour stance_update_hook;
     void* stance_update_original {};
+    utils::hook::detour input_frame_hook;
+
+    char __cdecl input_frame_stub() noexcept
+    {
+      // QoS PC 1.1 IN_Frame (102C3970) has no arguments. It is called by
+      // CL_SetFrameTime (1031F6A0) in menus and by CL_Input (102FFD30)
+      // immediately before CL_CreateNewCommands. Preserve native mouse work.
+      // Adapt IW4x's input-frame polling, not its 475E9E callsite/ABI.
+      const char result = input_frame_hook.invoke<char>();
+      if (active_runtime)
+      {
+        try { active_runtime->frame(); }
+        catch (...)
+        {
+          // Never unwind a transport/calibration exception into the game.
+          // Release latched actions rather than leaving movement/fire running.
+          active_runtime->keys().release_all();
+          active_runtime->view().idle();
+        }
+      }
+      return result;
+    }
 
     bool __cdecl controller_stance_update() noexcept
     {
@@ -199,6 +221,7 @@ namespace gamepad::unstable::controller::engine
   void install (runtime& rt)
   {
     active_runtime = &rt;
+    input_frame_hook.create(game::game_offset(0x102C3970), input_frame_stub);
     install_prompt_icons();
     stance_update_hook.create(game::game_offset(0x102FB780), stance_update_stub);
     stance_update_original = stance_update_hook.get_original();

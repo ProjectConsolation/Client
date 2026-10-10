@@ -103,10 +103,9 @@ namespace gamepad
         {
           const string n (lowercase (name));
 
-          const bool tactical (contains (n, "tactical"));
+          const bool tactical (contains (n, "tactical") || contains (n, "nomad"));
           const bool lefty (contains (n, "lefty"));
-          const bool nomad (contains (n, "nomad"));
-          const bool alt (contains (n, "_alt"));
+          const bool alt (n.size () >= 4 && n.compare (n.size () - 4, 4, "_alt") == 0);
 
           t.clear ();
 
@@ -127,25 +126,21 @@ namespace gamepad
           t.bind (engine_key::button_b,      tactical ? action::melee : action::stance);
           t.bind (engine_key::button_rstick, tactical ? action::stance : action::melee);
 
+          // Layout roles follow IW4x Controller/Mapping/Binding. _alt exchanges
+          // each trigger with the shoulder on the same side, not grenade roles.
+          // QoS uses its verified hold-ADS command; IW4's +toggleads_throw is not
+          // verified in this build, so Nomad toggle ADS remains unsupported.
+          t.bind (alt ? engine_key::button_rshldr : engine_key::button_rtrig,
+                  lefty ? action::ads : action::fire);
+          t.bind (alt ? engine_key::button_lshldr : engine_key::button_ltrig,
+                  lefty ? action::fire : action::ads);
+          t.bind (alt ? engine_key::button_rtrig : engine_key::button_rshldr,
+                  lefty ? action::special_grenade : action::frag);
+          t.bind (alt ? engine_key::button_ltrig : engine_key::button_lshldr,
+                  lefty ? action::frag : action::special_grenade);
+          t.bind (engine_key::button_lstick, lefty ? action::melee : action::sprint);
           if (lefty)
-          {
-            t.bind (engine_key::button_ltrig,  action::fire);
-            t.bind (engine_key::button_rtrig,  action::ads);
-            t.bind (engine_key::button_lshldr, nomad ? action::sprint : action::frag);
-            t.bind (engine_key::button_rshldr, action::special_grenade);
             t.bind (engine_key::button_rstick, action::sprint);
-          }
-          else
-          {
-            t.bind (engine_key::button_rtrig,  action::fire);
-            t.bind (engine_key::button_ltrig,  action::ads);
-            t.bind (engine_key::button_rshldr,
-                    alt ? action::special_grenade : action::frag);
-            t.bind (engine_key::button_lshldr,
-                    alt ? action::frag : action::special_grenade);
-            t.bind (engine_key::button_lstick,
-                    nomad ? action::jump_stand : action::sprint);
-          }
         }
       }
     }

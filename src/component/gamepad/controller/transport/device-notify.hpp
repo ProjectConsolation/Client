@@ -53,6 +53,7 @@ namespace gamepad
           run (const context&) noexcept;
 
           std::atomic<bool>   pending_ {false};
+          std::atomic<bool>   stopping_ {false};
           std::atomic<void*>  window_ {nullptr};  // HWND once the thread has created it.
           std::thread         thread_;
         };
