@@ -1008,7 +1008,7 @@ namespace menu_file
 			if (source && context && !std::strcmp(context, "scaleform translator"))
 			{
 				if (!std::strcmp(source, "MENU_WLGUIDE")) return "DISCORD";
-				if (!std::strcmp(source, "MENU_WLGUIDE_INSTR")) return "Join the Project: Consolation for updates!";
+				if (!std::strcmp(source, "MENU_WLGUIDE_INSTR")) return "Join the Discord for Project: Consolation updates!";
 				if (!std::strcmp(source, "XBOXLIVE_XBOXLIVE")) return "PLAY ONLINE";
 				if (!std::strcmp(source, "XBOXLIVE_XBOXLIVE_INSTR")) return "Play online multiplayer.";
 			}
