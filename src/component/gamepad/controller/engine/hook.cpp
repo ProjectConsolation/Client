@@ -222,7 +222,7 @@ namespace gamepad::unstable::controller::engine
   {
     active_runtime = &rt;
     input_frame_hook.create(game::game_offset(0x102C3970), input_frame_stub);
-    install_prompt_icons();
+    install_prompt_icons(rt);
     stance_update_hook.create(game::game_offset(0x102FB780), stance_update_stub);
     stance_update_original = stance_update_hook.get_original();
     command_assignment_hook.create(game::game_offset(0x10318B10), command_assignment_stub);

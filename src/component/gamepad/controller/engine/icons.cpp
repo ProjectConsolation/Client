@@ -1,5 +1,6 @@
 #include <std_include.hpp>
 #include "icons.hpp"
+#include "bind.hpp"
 #include <component/gamepad/controller/runtime.hpp>
 #include <component/gamepad/controller/mapping/icon_text.hpp>
 #include <component/engine/zones/fastfiles.hpp>
@@ -17,6 +18,35 @@ namespace gamepad::unstable::controller::engine
     std::array<std::atomic<game::Material*>, text_icon::count> materials{};
     utils::hook::detour draw_icon_hook, text_width_hook, localized_key_hook;
     void* draw_icon_original{};
+    runtime* prompt_runtime{};
+
+    const char* __cdecl reload_warning_text(const char* text, const char* context, int error_type)
+    {
+      const auto localize = reinterpret_cast<const char* (__cdecl*)(const char*, const char*, int)>(
+        game::game_offset(0x103CA030));
+      if (!text || std::strcmp(text, "PLATFORM_RELOAD") != 0)
+        return localize(text, context, error_type);
+
+      // QoS 10318CA0: EAX output[256], caller-clean client/command on stack.
+      // This retains its binding lock and the installed input-device filtering.
+      char binding[256]{};
+      const char* command = "+reload";
+      const auto get_binding = game::game_offset(0x10318CA0);
+      __asm {
+        push command
+        push 0
+        lea eax, binding
+        call get_binding
+        add esp, 8
+      }
+      const char* label = text_icon::is_binding_token(binding) ? binding
+        : localized_key_hook.invoke<const char*>(binding);
+      thread_local std::string prompt;
+      prompt = "^7";
+      prompt += label ? label : binding;
+      prompt += "^7 Reload";
+      return prompt.c_str();
+    }
 
     void prepare_icons()
     {
@@ -233,7 +263,23 @@ namespace gamepad::unstable::controller::engine
       // cdecl 103C9F20 before formatting ^2%s^7. A private icon is already
       // display text, not an ASSET_TYPE_LOCALIZE_ENTRY name.
       if (text && text_icon::is_binding_token(text)) return text;
-      return localized_key_hook.invoke<const char*>(text);
+      const auto* translated = localized_key_hook.invoke<const char*>(text);
+      // The PC localization hard-codes ESCAPE, unlike binding-aware mantle
+      // prompts. Change this one HUD string only, using the live menu binding.
+      // Preserve the original localization and all PC prompts on input change.
+      if (!text || std::strcmp(text, "MPUI_CHANGE_EQUIPMENT_TEXT") != 0
+          || !translated || !prompt_runtime || !prompt_runtime->driving()) return translated;
+      int keys[2];
+      if (!bind_bridge::command_keys(0, true, "togglemenu", keys)) return translated;
+      const auto key = mapping::key_from_keynum(keys[0]);
+      const auto* icon = key ? displayed_button_icon(*prompt_runtime, *key) : nullptr;
+      if (!icon) return translated;
+      thread_local std::string equipment_prompt;
+      equipment_prompt = translated;
+      const auto position = equipment_prompt.find("ESCAPE");
+      if (position == std::string::npos) return translated;
+      equipment_prompt.replace(position, 6, icon);
+      return equipment_prompt.c_str();
     }
   }
 
@@ -254,12 +300,16 @@ namespace gamepad::unstable::controller::engine
     return index >= 0 && materials[index].load(std::memory_order_acquire) ? token : nullptr;
   }
 
-  void install_prompt_icons()
+  void install_prompt_icons(runtime& rt)
   {
+    prompt_runtime = &rt;
     draw_icon_hook.create(game::game_offset(0x103B7D90), draw_icon_stub);
     draw_icon_original = draw_icon_hook.get_original();
     text_width_hook.create(game::game_offset(0x1037CFA0), text_width_stub);
     localized_key_hook.create(game::game_offset(0x103C9F20), localized_key);
+    // Native low-ammo ownerdraw's localization call, not global translations.
+    // PLATFORM_RELOAD is a parameterized string, but this caller supplies none.
+    utils::hook::call(game::game_offset(0x102870DA), reload_warning_text);
     scheduler::loop(prepare_icons, scheduler::main, 1000ms);
   }
 }
