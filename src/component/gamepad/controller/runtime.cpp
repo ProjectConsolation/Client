@@ -8,6 +8,7 @@
 #include <component/gamepad/controller/trace.hpp>
 #include <component/gamepad/controller/calibration/normalize.hpp>
 #include <component/gamepad/controller/engine/command.hpp>
+#include <component/gamepad/controller/engine/icons.hpp>
 
 namespace gamepad
 {
@@ -73,10 +74,10 @@ namespace gamepad
         // Take the bindings the configured layout implies before the first frame, so
         // a controller attached at startup is already bound when it is first polled.
         //
-        binds_.apply_configured_layout ();
+        binds_.apply_startup_layout ();
 
-        // One eager pass so a controller present at startup is bound on frame one
-        // rather than up to an interval later.
+        // Request the first worker scan immediately; do not block startup on HID
+        // enumeration. Drivers are reconciled once its registry result arrives.
         //
         discovery_.scan_now ();
 
@@ -194,6 +195,7 @@ namespace gamepad
           return;
         }
 
+        binds_.poll_configured_layout ();
         discovery_.scan ();
         drivers_.reconcile (devices_);
 
@@ -222,15 +224,30 @@ namespace gamepad
           return;
         }
 
-        // Poll every bound device, but follow exactly one: the engine's key state and
-        // view are singular, so two devices driving them would fight. The device that
-        // produced a reading this frame is the one in the player's hands, and the one
-        // already being followed keeps precedence when several report at once.
-        //
+        // IW4x report-gap fix: choose from connected devices, not from whichever
+        // driver happens to publish this frame. Prefer a real HID pad over its
+        // virtual XInput duplicate, then retain it until it disconnects.
+        const device_connection* selected = nullptr;
+        drivers_.for_each([this, &selected](driver::driver&, const device_connection& dc)
+        {
+          if (selected && selected->id == active_) return;
+          if (!selected || dc.id == active_ ||
+              (dc.transport == transport_kind::hid && selected->transport != transport_kind::hid))
+            selected = &dc;
+        });
+        if (!selected) return;
+        if (had_device_ && selected->id != active_)
+        {
+          keys_.release_all();
+          view_.idle();
+          active_ = no_device;
+          had_device_ = false;
+          lit_device_ = no_device;
+        }
         input_frame candidate;
         bool have_candidate (false);
 
-        drivers_.for_each ([this, &candidate, &have_candidate]
+        drivers_.for_each ([this, selected, &candidate, &have_candidate]
                            (driver::driver& d, const device_connection& dc)
         {
           input_frame f;
@@ -238,7 +255,7 @@ namespace gamepad
           if (!advance (d, dc, f))
             return;
 
-          if (!have_candidate || dc.id == active_)
+          if (dc.id == selected->id)
           {
             candidate = move (f);
             have_candidate = true;
@@ -281,8 +298,13 @@ namespace gamepad
         {
           // XInput suppresses unchanged packets. The key layer still needs a frame
           // tick for held-button repeats and accelerated menu scrolling.
-          keys_.dispatch (latest_.state);
+          keys_.tick ();
         }
+
+        const char* icon_family = engine::displayed_icon_family(*this) == mapping::glyph_family::xbox
+          ? "xbox" : "ps3";
+        if (std::strcmp(engine::read(dvars_.controller_icon_family, ""), icon_family) != 0)
+          engine::Dvar_SetString(dvars_.controller_icon_family, icon_family);
 
         // A device that produced no new reading this frame is deliberately not
         // idled: an unchanged reading is what a held stick looks like (XInput reports

@@ -66,7 +66,8 @@ namespace gamepad
       discovery (const context& ctx,
                  registry& r,
                  const transport::xinput_module& x)
-        : ctx_ (ctx), registry_ (r), xinput_ (x), notifier_ (ctx)
+        : ctx_ (ctx), registry_ (r), xinput_ (x), notifier_ (ctx),
+          worker_([this](std::stop_token stop) { run(stop); })
       {
       }
 
@@ -93,6 +94,38 @@ namespace gamepad
       void
       discovery::
       scan_now ()
+      {
+        pending_.store(true, std::memory_order_release);
+        pending_.notify_one();
+      }
+
+      void discovery::run(std::stop_token stop) noexcept
+      {
+        const std::stop_callback wake(stop, [this]
+        {
+          pending_.store(true, std::memory_order_release);
+          pending_.notify_one();
+        });
+        while (!stop.stop_requested())
+        {
+          pending_.wait(false, std::memory_order_acquire);
+          if (stop.stop_requested()) return;
+          pending_.store(false, std::memory_order_relaxed);
+          try { reconcile_now(); }
+          catch (const std::exception& error)
+          {
+            ctx_.report(severity::warning, facility::discovery, errc::transport_failure,
+                        string("controller discovery failed: ") + error.what());
+          }
+          catch (...)
+          {
+            ctx_.report(severity::warning, facility::discovery, errc::transport_failure,
+                        "controller discovery failed");
+          }
+        }
+      }
+
+      void discovery::reconcile_now()
       {
         // Bindings observed in this pass. Sized for the four XInput slots plus a
         // handful of HID devices; growth beyond that is a reserve, not a bug.

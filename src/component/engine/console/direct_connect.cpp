@@ -1,6 +1,7 @@
 #include <std_include.hpp>
 #include "loader/component_loader.hpp"
 #include "game/game.hpp"
+#include "game/protocol.hpp"
 #include "command.hpp"
 #include "console.hpp"
 #include "component/utils/scheduler.hpp"
@@ -81,7 +82,7 @@ namespace direct_connect
             std::array<unsigned int, 4> key{};
             std::array<unsigned int, 2> id{}, nonce{};
             unsigned int slots = 0, private_slots = 0, protocol = 0;
-            if (!parse_number(get("protocol"), protocol) || protocol != 47
+            if (!parse_number(get("protocol"), protocol) || protocol != game::consolation_protocol
                 || !parse_words(get("xnaddr"), address) || !parse_words(get("xnkey"), key)
                 || !parse_words(get("xnkid"), id) || !parse_words(get("nonce"), nonce)
                 || !parse_number(get("pslots"), slots) || !parse_number(get("prslots"), private_slots)

@@ -5,6 +5,7 @@
 #include "component/gamepad/controller/runtime.hpp"
 #include "component/gamepad/controller/engine/hook.hpp"
 #include "component/gamepad/controller/engine/import.hpp"
+#include "component/gamepad/controller/engine/netmove.hpp"
 #include "component/gamepad/controller/mapping/key.hpp"
 #include "component/utils/scheduler.hpp"
 
@@ -20,6 +21,7 @@ namespace controller_component
   public:
     void post_load () override
     {
+      controller::engine::install_analog_protocol();
       if (utils::flags::has_flag ("no_controller"))
         return;
 

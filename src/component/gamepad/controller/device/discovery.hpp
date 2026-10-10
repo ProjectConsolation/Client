@@ -8,6 +8,8 @@
 #include <component/gamepad/controller/device/registry.hpp>
 #include <component/gamepad/controller/transport/xinput-module.hpp>
 #include <component/gamepad/controller/transport/device-notify.hpp>
+#include <atomic>
+#include <thread>
 
 namespace gamepad
 {
@@ -36,15 +38,13 @@ namespace gamepad
       public:
         discovery (const context&, registry&, const transport::xinput_module&);
 
-        // Reconcile the registry with the operating system, at most once per
-        // interval. Safe to call from the engine frame; a call that the interval
-        // suppresses does no work beyond a clock read.
+        // Request worker reconciliation, at most once per interval. Enumeration
+        // never blocks the engine frame. The synchronized registry publishes results.
         //
         void
         scan ();
 
-        // Reconcile now, ignoring the interval. Used at startup, and by a future
-        // device-change notification.
+        // Request reconciliation now, ignoring the interval. Completion is async.
         //
         void
         scan_now ();
@@ -53,6 +53,8 @@ namespace gamepad
           chrono::milliseconds (1000)};
 
       private:
+        void run(std::stop_token) noexcept;
+        void reconcile_now();
         // Record the devices each transport currently reports, appending the binding
         // of every device seen to `seen`.
         //
@@ -71,13 +73,17 @@ namespace gamepad
         registry&                       registry_;
         const transport::xinput_module& xinput_;
 
-        // Owns the message-only window that raises the device-change flag scan ()
-        // consumes. Constructed last so its thread starts only once the rest is set.
+        // Owns the message-only window that raises the flag consumed on the
+        // engine thread. It outlives the enumeration worker during shutdown.
         //
         transport::device_notifier      notifier_;
 
         bool      scanned_ {false};
         timestamp last_scan_ {};
+        // Last member: joins before notifier, registry, XInput and context die.
+        // Adapted from IW4x Controller/Device/Discovery, no game ABI imports.
+        std::atomic<bool> pending_ {false};
+        std::jthread worker_;
       };
     }
   }

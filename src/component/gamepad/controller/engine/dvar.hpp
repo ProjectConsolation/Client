@@ -34,6 +34,7 @@ namespace gamepad
           dvar_t* in_use {};         // gpad_in_use    (engine-owned readout)
           dvar_t* rumble {};         // gpad_rumble
           dvar_t* controller_icons {}; // ui_controllerIcons: auto / xbox / ps3
+          dvar_t* controller_icon_family {}; // ui_controllerIconFamily: resolved GFx readout
 
           // PlayStation light bar. Enabled by a bool; the colour is three channels so a
           // player can retune the default MW2 gold for their own light bar, which reads
@@ -109,25 +110,25 @@ namespace gamepad
         inline bool
         read (dvar_t* d, bool fallback) noexcept
         {
-          return d != nullptr ? d->current.enabled : fallback;
+          return d != nullptr && d->type == game::dvar_type::boolean ? d->current.enabled : fallback;
         }
 
         inline float
         read (dvar_t* d, float fallback) noexcept
         {
-          return d != nullptr ? d->current.value : fallback;
+          return d != nullptr && d->type == game::dvar_type::value ? d->current.value : fallback;
         }
 
         inline int
         read (dvar_t* d, int fallback) noexcept
         {
-          return d != nullptr ? d->current.integer : fallback;
+          return d != nullptr && d->type == game::dvar_type::integer ? d->current.integer : fallback;
         }
 
         inline const char*
         read (dvar_t* d, const char* fallback) noexcept
         {
-          return d != nullptr && d->current.string != nullptr
+          return d != nullptr && d->type == game::dvar_type::string && d->current.string != nullptr
             ? d->current.string
             : fallback;
         }

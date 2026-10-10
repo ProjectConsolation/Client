@@ -1,4 +1,4 @@
-"""Package stance, controller glyphs and original Xbox art as native PC 2D assets."""
+"""Package stance, controller glyphs and original console art as native PC 2D assets."""
 import argparse
 import io
 from pathlib import Path
@@ -86,7 +86,7 @@ def image_record(name, pixels, width=128, height=128, fourcc=b"DXT5"):
     return record
 
 
-def controller_records(directory, xbox_directory=None):
+def controller_records(directory, xbox_directory=None, ps3_directory=None):
     from PIL import Image
     from export_controller_prompt_icons import BUTTONS
     records = {}
@@ -100,27 +100,36 @@ def controller_records(directory, xbox_directory=None):
                 dds = io.BytesIO()
                 rgba.save(dds, format="DDS", pixel_format="DXT5")
             records[name] = image_record(name, dds.getvalue()[128:], 32, 32)
-    if xbox_directory is not None:
+    for console_directory, required in (
+            (xbox_directory, {"xenon_controller_ingame", "xenon_controller_lines_mp"}),
+            (ps3_directory, {"ps3_controller_ingame", "ps3_controller_lines_mp"})):
+        if console_directory is None:
+            continue
         # Preserve original names, dimensions and compressed pixels. Includes the
         # full controller, leader-line overlay, and stick/shoulder diagrams.
-        paths = sorted(xbox_directory.glob("*.dds"))
-        required = {"xenon_controller_ingame", "xenon_controller_lines_mp"}
+        paths = sorted(console_directory.glob("*.dds"))
         if not required <= {path.stem for path in paths}:
-            raise ValueError("original Xbox controller picture/lines are required")
+            raise ValueError("original console controller picture/lines are required")
         for path in paths:
             data = path.read_bytes()
             if data[:4] != b"DDS " or len(data) < 128:
                 raise ValueError(f"{path}: invalid DDS")
             height, width = struct.unpack_from("<2I", data, 12)
             fourcc = data[84:88]
+            if path.stem in records:
+                raise ValueError(f"{path}: duplicate console asset name")
+            if fourcc not in (b"DXT1", b"DXT3", b"DXT5") or not width or not height:
+                raise ValueError(f"{path}: unsupported console texture format")
             # Exported atlases can include mips; keep the original base level
             # byte-for-byte instead of resampling console controller artwork.
             size = ((width + 3) // 4) * ((height + 3) // 4) * (8 if fourcc == b"DXT1" else 16)
+            if len(data) < 128 + size:
+                raise ValueError(f"{path}: truncated console texture")
             records[path.stem] = image_record(path.stem, data[128:128 + size], width, height, fourcc)
     return records
 
 
-def build(source, directory, target, controller_directory=None, xbox_directory=None):
+def build(source, directory, target, controller_directory=None, xbox_directory=None, ps3_directory=None):
     from PIL import Image
     if target.exists():
         raise ValueError(f"Refusing to overwrite {target}")
@@ -149,7 +158,7 @@ def build(source, directory, target, controller_directory=None, xbox_directory=N
         if not iwi.exists():
             iwi.write_bytes(dump.encode_iwi(record))
     if controller_directory is not None:
-        records.update(controller_records(controller_directory, xbox_directory))
+        records.update(controller_records(controller_directory, xbox_directory, ps3_directory))
         names = list(records)
     # Same external-technique manifest layout as build_pc_load_zone.
     entries = [(7, ",sm2/2d"), (7, ",2d")] + [(6, name) for name in names]
@@ -192,5 +201,7 @@ if __name__ == "__main__":
                         default=Path(__file__).resolve().parents[1] / "consolation/controller_assets/glyphs")
     parser.add_argument("--xbox-menu-assets", type=Path,
                         default=Path(__file__).resolve().parents[1] / "consolation/controller_assets/xbox")
+    parser.add_argument("--ps3-menu-assets", type=Path,
+                        default=Path(__file__).resolve().parents[1] / "consolation/controller_assets/ps3")
     args = parser.parse_args()
-    build(args.source, args.images, args.output, args.controller_images, args.xbox_menu_assets)
+    build(args.source, args.images, args.output, args.controller_images, args.xbox_menu_assets, args.ps3_menu_assets)

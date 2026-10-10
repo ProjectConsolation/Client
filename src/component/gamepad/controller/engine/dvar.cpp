@@ -29,6 +29,9 @@ namespace gamepad
           d.controller_icons = Dvar_RegisterString (
             "ui_controllerIcons", "auto", DVAR_ARCHIVE,
             "Controller icons: auto (XInput=xbox, other=ps3), xbox, or ps3");
+          d.controller_icon_family = Dvar_RegisterString(
+            "ui_controllerIconFamily", "xbox", DVAR_ROM,
+            "Resolved controller artwork family for native Scaleform prompts");
 
           // PlayStation light bar, defaulting to MW2 menu gold. The channels are a
           // muted brass on a screen; a light bar is emissive, so a player may want to

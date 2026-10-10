@@ -7,7 +7,6 @@
 #include <component/gamepad/controller/engine/dvar.hpp>
 #include <component/gamepad/controller/mapping/key.hpp>
 #include <component/gamepad/controller/sample/sample.hpp>
-#include <component/gamepad/controller/engine/input_activity.hpp>
 
 namespace gamepad
 {
@@ -65,6 +64,10 @@ namespace gamepad
           void
           dispatch (const canonical_sample&) noexcept;
 
+          // Repeat a latched sample without treating an unchanged packet as
+          // fresh stick input (IW4x report-gap/input-ownership fix).
+          void tick() noexcept;
+
           // Release every controller key that is still held.
           //
           // Each release travels the same path a physical release does, so a '+'
@@ -78,8 +81,7 @@ namespace gamepad
           //
           // The engine draws controller glyphs and takes controller movement only
           // while this is true. PC activity immediately clears it. Controller input
-          // can reclaim it only after neutral controls and the PC quiet/held-key
-          // gate, so continuous stick motion cannot enable mixed-input aim assist.
+          // resumes on controller activity, without a second input quarantine.
           //
           bool
           in_use () const noexcept {return in_use_;}
@@ -153,7 +155,6 @@ namespace gamepad
           const dvars&   dvars_;
 
           bool in_use_ {false};
-          input_activity activity_;
 
           // Resolved on first use: g_useholdtime is a game dvar that does not exist until
           // a session is running.

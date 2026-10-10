@@ -25,27 +25,25 @@ namespace gamepad::unstable::controller::engine
 
   dvar_t* Dvar_RegisterBool (const char* name, bool value, int flags, const char* desc)
   {
-    if (auto* existing = game::Dvar_FindVar (name)) return existing;
+    // Native RegisterVariant converts archived user-created strings in place.
+    // Returning the old handle early leaves string pointers in numeric unions.
     return dvars::Dvar_RegisterBool (name, value ? 1 : 0, desc, static_cast<std::uint16_t> (flags));
   }
 
   dvar_t* Dvar_RegisterFloat (const char* name, float value, float min, float max,
                               int flags, const char* desc)
   {
-    if (auto* existing = game::Dvar_FindVar (name)) return existing;
     return dvars::Dvar_RegisterFloat (name, desc, value, min, max, static_cast<std::uint16_t> (flags));
   }
 
   dvar_t* Dvar_RegisterInt (const char* name, int value, int min, int max,
                             int flags, const char* desc)
   {
-    if (auto* existing = game::Dvar_FindVar (name)) return existing;
     return dvars::Dvar_RegisterInt (name, desc, value, min, max, static_cast<std::uint16_t> (flags));
   }
 
   dvar_t* Dvar_RegisterString (const char* name, const char* value, int flags, const char* desc)
   {
-    if (auto* existing = game::Dvar_FindVar (name)) return existing;
     return dvars::Dvar_RegisterString (name, value, desc, static_cast<std::uint16_t> (flags));
   }
 

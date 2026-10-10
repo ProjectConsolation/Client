@@ -123,6 +123,15 @@ namespace gamepad::unstable::controller::engine
     const mapping::stick_layout layout = mapping::stick_layout_from_name (
       read (dvars_.sticks_config, "thumbstick_default"));
     axes_ = mapping::resolve (layout, left, right);
+    // Upstream IW4x applies radial shaping before movement. Keep raw look
+    // here because QoS's aim_processor already shapes that path once.
+    deadzone_params dz {magnitude {read(dvars_.stick_deadzone_min, 0.2f)},
+                         magnitude {read(dvars_.stick_deadzone_max, 0.01f)}, magnitude {0.0f}};
+    string reason;
+    if (!validate(dz, reason)) dz = {magnitude {0.2f}, magnitude {0.01f}, magnitude {0.0f}};
+    const auto movement = mapping::resolve(layout, apply(dz, left), apply(dz, right));
+    axes_.forward = movement.forward;
+    axes_.side = movement.side;
     if (!std::isfinite (axes_.side) || !std::isfinite (axes_.forward) ||
         !std::isfinite (axes_.yaw) || !std::isfinite (axes_.pitch))
       axes_ = {};

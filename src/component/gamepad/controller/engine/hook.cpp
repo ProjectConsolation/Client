@@ -5,6 +5,7 @@
 #include <component/gamepad/controller/runtime.hpp>
 #include <component/gamepad/controller/mapping/key.hpp>
 #include <component/gamepad/controller/engine/icons.hpp>
+#include <component/gamepad/controller/engine/stance.hpp>
 #include <component/engine/patches/patches.hpp>
 #include <utils/hook.hpp>
 
@@ -19,6 +20,43 @@ namespace gamepad::unstable::controller::engine
     void* string_to_keynum_original {};
     utils::hook::detour command_assignment_hook, display_key_name_hook;
     void* display_key_name_original {};
+    utils::hook::detour stance_update_hook;
+    void* stance_update_original {};
+
+    bool __cdecl controller_stance_update() noexcept
+    {
+      if (!active_runtime || !active_runtime->driving() || menu_or_console_active()) return false;
+      auto& held = *reinterpret_cast<int*>(game::game_offset(0x11A9FE5C));
+      // held == 2 is QoS's short-press special action, not a hold. Preserve it.
+      if (held != 1) return false;
+      const auto* hold = *reinterpret_cast<dvar_t**>(game::game_offset(0x1127BB3C));
+      const auto now = *reinterpret_cast<unsigned*>(game::game_offset(0x10711AFC));
+      const auto pressed = *reinterpret_cast<unsigned*>(game::game_offset(0x11A9FE68));
+      if (stance_hold_elapsed(now, pressed, read(const_cast<dvar_t*>(hold), 300)))
+      {
+        const int start = *reinterpret_cast<int*>(game::game_offset(0x11A9FE64));
+        *reinterpret_cast<int*>(game::game_offset(0x11A9FE60)) = held_stance(start);
+        held = 0;
+      }
+      return true;
+    }
+
+    // QoS PC 1.1 CL_StanceButtonUpdate: ECX usercmd, caller-clean. Only
+    // replace the controller hold decision; native serialization/PM traces remain.
+    __declspec(naked) void stance_update_stub()
+    {
+      __asm {
+        pushad
+        call controller_stance_update
+        test al, al
+        jz native_stance
+        popad
+        ret
+      native_stance:
+        popad
+        jmp dword ptr [stance_update_original]
+      }
+    }
 
     int __cdecl command_assignment_body(int client, const char* command, int* output) noexcept
     {
@@ -162,6 +200,8 @@ namespace gamepad::unstable::controller::engine
   {
     active_runtime = &rt;
     install_prompt_icons();
+    stance_update_hook.create(game::game_offset(0x102FB780), stance_update_stub);
+    stance_update_original = stance_update_hook.get_original();
     command_assignment_hook.create(game::game_offset(0x10318B10), command_assignment_stub);
     display_key_name_hook.create(game::game_offset(0x102FFFE0), display_key_name_stub);
     display_key_name_original = display_key_name_hook.get_original();
@@ -171,6 +211,6 @@ namespace gamepad::unstable::controller::engine
     string_to_keynum_original = string_to_keynum_hook.get_original ();
     utils::hook::call (game::game_offset (0x102FFBFE), mouse_move_stub);
     rt.make_context ().report (severity::info, facility::engine, errc::none,
-                               "QoS controller input hooks installed; native usercmd codec retained");
+                               "QoS controller input hooks installed; analog protocol 48");
   }
 }

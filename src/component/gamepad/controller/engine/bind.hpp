@@ -46,6 +46,9 @@ namespace gamepad
           void
           apply_configured_layout ();
 
+          void apply_startup_layout ();
+          void poll_configured_layout ();
+
           // Re-apply the layout gpad_buttonConfig names, whatever it is.
           //
           // This is what the controls menu's reset invokes, through the
@@ -90,6 +93,9 @@ namespace gamepad
 
           const context& ctx_;
           const dvars&   dvars_;
+          string applied_;
+          void install_configured_layout (bool keep_config_bindings);
+          bool bindings_customized () const;
         };
 
         // The command a controller uses in place of a keyboard command.

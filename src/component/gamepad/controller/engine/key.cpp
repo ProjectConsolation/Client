@@ -154,13 +154,12 @@ namespace gamepad::unstable::controller::engine
 
   void key_dispatcher::note_other_input () noexcept
   {
-    activity_.interrupt(static_cast<unsigned>(Sys_Milliseconds()));
     set_in_use (false);
   }
 
   void key_dispatcher::note_pc_key(int key, bool down) noexcept
   {
-    activity_.pc_key(key, down, static_cast<unsigned>(Sys_Milliseconds()));
+    (void)key;
     if (down) set_in_use(false);
   }
 
@@ -200,7 +199,7 @@ namespace gamepad::unstable::controller::engine
     const float rt = sample.triggers[static_cast<size_t> (trigger_side::right)].normalized;
     const bool analog_active = left.x != 0 || left.y != 0 || right.x != 0 || right.y != 0 ||
       lt >= read (dvars_.button_deadzone, 0.13f) || rt >= read (dvars_.button_deadzone, 0.13f);
-    if (activity_.analog({right.x, right.y, left.x, left.y, lt, rt}, analog_active, time))
+    if (analog_active)
       set_in_use (true);
 
     dispatch_apad (time);
@@ -233,6 +232,17 @@ namespace gamepad::unstable::controller::engine
     }
   }
 
+  void key_dispatcher::tick() noexcept
+  {
+    const auto time = static_cast<unsigned>(Sys_Milliseconds());
+    was_deflected_ = deflected_;
+    dispatch_apad(time);
+    canonical_sample latched;
+    latched.buttons = buttons_;
+    dispatch_buttons(latched, time);
+    apply_use_hold_time();
+  }
+
   void key_dispatcher::dispatch_buttons (const canonical_sample& sample, unsigned time) noexcept
   {
     for (const auto& item: button_keys)
@@ -247,8 +257,7 @@ namespace gamepad::unstable::controller::engine
 
   void key_dispatcher::emit_button (engine_key key, key_event event, unsigned time) noexcept
   {
-    if ((event == key_event::pressed && activity_.controller_press(time)) ||
-        (event == key_event::repeated && activity_.allow_repeat()))
+    if (event == key_event::pressed)
       set_in_use (true);
     if (menu_or_console_active () && event != key_event::repeated)
       reset_scroll (key, event == key_event::pressed, time);
@@ -257,7 +266,6 @@ namespace gamepad::unstable::controller::engine
 
   void key_dispatcher::emit (engine_key key, key_event event, unsigned time) noexcept
   {
-    if (event != key_event::released && !activity_.allow_repeat()) return;
     const bool down = event != key_event::released;
     if (is_stick_key (key) && event == key_event::pressed)
       reset_scroll (key, true, time);
@@ -327,7 +335,6 @@ namespace gamepad::unstable::controller::engine
     deflected_ = {};
     was_deflected_ = {};
     scroll_hold_key_.reset ();
-    activity_.reset();
     set_in_use(false);
   }
 }
