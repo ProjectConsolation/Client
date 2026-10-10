@@ -15,7 +15,7 @@ namespace gamepad::unstable::controller::engine
     static_assert(sizeof(game::Glyph) == 24 && offsetof(game::Glyph, dx) == 4);
     namespace text_icon = mapping::icon_text;
     std::array<std::atomic<game::Material*>, text_icon::count> materials{};
-    utils::hook::detour draw_icon_hook, text_width_hook;
+    utils::hook::detour draw_icon_hook, text_width_hook, localized_key_hook;
     void* draw_icon_original{};
 
     void prepare_icons()
@@ -188,6 +188,53 @@ namespace gamepad::unstable::controller::engine
       }
       return widest;
     }
+
+    // QoS PC 1.1 CG_HudElem text sizing at 102BC27A/102BC2FA keeps its
+    // scale in XMM0 across R_TextWidth. The integer-only native implementation
+    // preserves SSE registers; a normal C++ detour does not. Keep that stronger
+    // native contract for ALL strings, including the non-icon delegation path.
+    // Retire this adapter if native HUD sizing is replaced by a verified ABI.
+    __declspec(naked) void text_width_stub()
+    {
+      __asm {
+        push ebp
+        mov ebp, esp
+        sub esp, 128
+        movups [esp], xmm0
+        movups [esp + 16], xmm1
+        movups [esp + 32], xmm2
+        movups [esp + 48], xmm3
+        movups [esp + 64], xmm4
+        movups [esp + 80], xmm5
+        movups [esp + 96], xmm6
+        movups [esp + 112], xmm7
+        push [ebp + 16]
+        push [ebp + 12]
+        push [ebp + 8]
+        call text_width
+        add esp, 12
+        movups xmm0, [esp]
+        movups xmm1, [esp + 16]
+        movups xmm2, [esp + 32]
+        movups xmm3, [esp + 48]
+        movups xmm4, [esp + 64]
+        movups xmm5, [esp + 80]
+        movups xmm6, [esp + 96]
+        movups xmm7, [esp + 112]
+        mov esp, ebp
+        pop ebp
+        ret
+      }
+    }
+
+    const char* __cdecl localized_key(const char* text)
+    {
+      // QoS 102CED30 localizes the result of Key_KeynumToString through
+      // cdecl 103C9F20 before formatting ^2%s^7. A private icon is already
+      // display text, not an ASSET_TYPE_LOCALIZE_ENTRY name.
+      if (text && text_icon::is_binding_token(text)) return text;
+      return localized_key_hook.invoke<const char*>(text);
+    }
   }
 
   mapping::glyph_family displayed_icon_family(const runtime& rt) noexcept
@@ -211,7 +258,8 @@ namespace gamepad::unstable::controller::engine
   {
     draw_icon_hook.create(game::game_offset(0x103B7D90), draw_icon_stub);
     draw_icon_original = draw_icon_hook.get_original();
-    text_width_hook.create(game::game_offset(0x1037CFA0), text_width);
+    text_width_hook.create(game::game_offset(0x1037CFA0), text_width_stub);
+    localized_key_hook.create(game::game_offset(0x103C9F20), localized_key);
     scheduler::loop(prepare_icons, scheduler::main, 1000ms);
   }
 }

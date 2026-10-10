@@ -34,6 +34,13 @@ namespace gamepad::unstable::controller::mapping::icon_text
     return index < count ? static_cast<int>(index) : -1;
   }
 
+  // Only an entire binding-name token may bypass localization. Embedded icons,
+  // normal localization keys and malformed handles retain the native path.
+  inline bool is_binding_token(std::string_view text) noexcept
+  {
+    return text.size() == token_size && decode(text) >= 0;
+  }
+
   // String dvar spelling is deliberately independent of device/input mapping.
   // Unknown values behave like auto; no device is guessed from its vendor name.
   inline int override_index(std::string_view value) noexcept
