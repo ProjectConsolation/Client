@@ -4,6 +4,8 @@
 #include "component/gamepad/gamepad.hpp"
 #include "component/gamepad/controller/runtime.hpp"
 #include "component/gamepad/controller/engine/hook.hpp"
+#include "component/gamepad/controller/engine/import.hpp"
+#include "component/gamepad/controller/mapping/key.hpp"
 #include "component/utils/scheduler.hpp"
 
 #include <utils/flags.hpp>
@@ -62,6 +64,13 @@ namespace gamepad
   {
     if (controller_component::runtime)
       controller_component::runtime->keys ().note_other_input ();
+  }
+
+  void note_key_activity(int key, bool down)
+  {
+    if (down && !unstable::controller::engine::emitting_controller_key()
+        && !unstable::controller::mapping::is_controller_key(key))
+      note_mouse_activity();
   }
 }
 

@@ -33,6 +33,7 @@ namespace gamepad
           dvar_t* present {};        // gpad_present   (engine-owned readout)
           dvar_t* in_use {};         // gpad_in_use    (engine-owned readout)
           dvar_t* rumble {};         // gpad_rumble
+          dvar_t* controller_icons {}; // ui_controllerIcons: auto / xbox / ps3
 
           // PlayStation light bar. Enabled by a bool; the colour is three channels so a
           // player can retune the default MW2 gold for their own light bar, which reads

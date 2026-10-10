@@ -29,18 +29,14 @@ namespace gamepad
 
         // Choose the glyph family to present for a physical device family, honoring a
         // user override when one is set. PlayStation devices default to PlayStation
-        // glyphs and everything else to Xbox glyphs.
+        // glyphs; only XInput-class devices default to Xbox glyphs.
         //
         glyph_family
         glyph_family_for (controller::family device,
                           optional<glyph_family> user_override) noexcept;
 
-        // The stable text label presented for a controller key.
-        //
-        // QoS does not ship every controller material used by later engine revisions,
-        // so prompts use the serializable key names ("BUTTON_A", "DPAD_UP", ...)
-        // instead of image control codes. The family parameter is retained for API
-        // compatibility but does not alter the label.
+        // NUL-free inline icon token for a button, or nullptr for stick directions.
+        // Only presentation uses this; saved bindings continue to use key_name().
         //
         const char*
         glyph_for (engine_key, glyph_family) noexcept;

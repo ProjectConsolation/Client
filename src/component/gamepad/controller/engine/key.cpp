@@ -236,7 +236,7 @@ namespace gamepad::unstable::controller::engine
 
   void key_dispatcher::emit_button (engine_key key, key_event event, unsigned time) noexcept
   {
-    set_in_use (true);
+    if (event != key_event::released) set_in_use (true);
     if (menu_or_console_active () && event != key_event::repeated)
       reset_scroll (key, event == key_event::pressed, time);
     emit (key, event, time);
@@ -313,5 +313,6 @@ namespace gamepad::unstable::controller::engine
     deflected_ = {};
     was_deflected_ = {};
     scroll_hold_key_.reset ();
+    set_in_use(false);
   }
 }

@@ -32,6 +32,7 @@ namespace gamepad::unstable::controller::engine
   int Sys_Milliseconds () noexcept;
   bool menu_or_console_active () noexcept;
   void emit_key (int key, bool down, unsigned time) noexcept;
+  bool emitting_controller_key () noexcept;
 
 #pragma pack(push, 1)
   struct AimScreenTarget

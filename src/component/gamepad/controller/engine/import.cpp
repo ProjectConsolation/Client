@@ -7,6 +7,7 @@ namespace gamepad::unstable::controller::engine
 {
   namespace
   {
+    thread_local bool controller_key_in_progress = false;
     template <typename T>
     void set_value (dvar_t* dvar, T value) noexcept
     {
@@ -66,8 +67,15 @@ namespace gamepad::unstable::controller::engine
 
   void emit_key (int key, bool down, unsigned time) noexcept
   {
+    // Controller menu navigation emits translated keyboard keys. The native key
+    // observer must not mistake these injected Enter/arrow events for a keyboard.
+    const bool previous = controller_key_in_progress;
+    controller_key_in_progress = true;
     game::CL_KeyEvent (0, key, down ? 1 : 0, time);
+    controller_key_in_progress = previous;
   }
+
+  bool emitting_controller_key () noexcept { return controller_key_in_progress; }
 
   AimAssistGlobals& aim_globals (int client) noexcept
   {

@@ -6,6 +6,7 @@
 #include "game/game.hpp"
 #include "game/dvars.hpp"
 #include "game_console.hpp"
+#include "component/gamepad/gamepad.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
@@ -2048,6 +2049,7 @@ namespace game_console
 
 		char __cdecl cl_key_event_body(const int local_client_num, const int key, const int down, const unsigned int time)
 		{
+			gamepad::note_key_activity(key, down != 0);
 			(void)local_client_num;
 			(void)time;
 

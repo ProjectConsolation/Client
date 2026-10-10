@@ -49,9 +49,24 @@ namespace gamepad::unstable::controller::engine
     Dvar_SetString (dvars_.buttons_config, custom_layout);
   }
 
-  size_t bind_bridge::command_keys (int, bool, const char*, int (&keys_out)[2]) noexcept
+  size_t bind_bridge::command_keys (int client, bool controller_in_use,
+                                  const char* command, int (&keys_out)[2]) noexcept
   {
     keys_out[0] = keys_out[1] = -1;
-    return 0;
+    if (client != 0 || command == nullptr || *command == '\0') return 0;
+    // QoS PC 1.1 Key_GetCommandAssignment (10318B10): 256 records, 12-byte
+    // stride; binding pointer at 11263624. Called inside CL_GetKeyBinding's
+    // native critical section. Do not cache presets: manual binds are authoritative.
+    size_t count = 0;
+    for (int key = 0; key < 256; ++key)
+    {
+      if (mapping::is_controller_key (key) != controller_in_use) continue;
+      const auto* bound = *reinterpret_cast<const char* const*> (
+        game::game_offset (0x11263624 + key * 12));
+      if (bound == nullptr || _stricmp (bound, command) != 0) continue;
+      keys_out[count++] = key;
+      if (count == 2) break;
+    }
+    return count;
   }
 }

@@ -26,6 +26,9 @@ namespace gamepad
             "gpad_in_use", false, DVAR_ROM, "A game pad is in use");
           d.rumble = Dvar_RegisterBool (
             "gpad_rumble", true, DVAR_ARCHIVE, "Enable game pad rumble");
+          d.controller_icons = Dvar_RegisterString (
+            "ui_controllerIcons", "auto", DVAR_ARCHIVE,
+            "Controller icons: auto (XInput=xbox, other=ps3), xbox, or ps3");
 
           // PlayStation light bar, defaulting to MW2 menu gold. The channels are a
           // muted brass on a screen; a light bar is emissive, so a player may want to
