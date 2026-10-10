@@ -98,6 +98,8 @@ After rebuilding, test sprint-to-ADS with keyboard and controller; prone with an
 
 ## Native Main Menu
 
+Stock Scaleform menus are used when the custom `.menu` definitions and main-menu `.gfx` override are not installed. The stock GUIDE item is relabeled DISCORD and its native `xshowguideui` command opens the community invite in the default browser. Other stock labels, actions and layout are preserved. This source change requires a rebuilt client and restart; already-loaded movies remain cached. To temporarily restore stock menus, move the custom assets outside the game directory and keep a rollback copy—no opt-in switch is required. Avoid reinstalling the custom assets when testing the stock menu.
+
 Development implementation; the matching client must be rebuilt and the menu files installed before testing.
 
 `consolation/menu/ui_mp/main.menu` defines five horizontal navigation tabs and two play cards. ONLINE PLAY opens the custom matchmaking/private-match hub; LOCAL PLAY opens the custom create/join hub. Campaign has been removed. DISCORD opens the community invite in the default browser. The right-aligned logo has 65% opacity; native black fills at 35% opacity dim the background video and preview images without a black PNG.

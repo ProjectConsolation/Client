@@ -985,6 +985,30 @@ namespace menu_file
 		utils::hook::detour paint_menus_hook;
 		utils::hook::detour frontend_screen_hook;
 		utils::hook::detour window_paint_hook;
+		utils::hook::detour stock_guide_hook;
+		utils::hook::detour localized_message_hook;
+
+		int __cdecl open_discord()
+		{
+			const auto result = ShellExecuteA(nullptr, "open", "https://discord.gg/XSrTvXJcsw", nullptr, nullptr, SW_SHOWNORMAL);
+			if (reinterpret_cast<INT_PTR>(result) <= 32)
+			{
+				console::warn("Could not open the Discord invite in your browser.\n");
+				return 0;
+			}
+			return 1;
+		}
+
+		const char* __cdecl localized_message_stub(const char* source, const char* context, const int message_type)
+		{
+			// QoS SFStringLocalizer::Translate (10002370) strips '@' and calls
+			// 103CA030 with three caller-clean stack arguments. Preserve native
+			// localization/formatting everywhere except this stock GUIDE label.
+			// The extracted PC menuData pairs MENU_WLGUIDE with xshowguideui.
+			if (source && context && !std::strcmp(context, "scaleform translator")
+				&& !std::strcmp(source, "MENU_WLGUIDE")) return "DISCORD";
+			return localized_message_hook.invoke<const char*>(source, context, message_type);
+		}
 		std::unordered_map<std::string, std::vector<std::string>> preview_lists;
 
 		const std::vector<std::string>& slideshow_files(const std::string& filename)
@@ -1574,8 +1598,7 @@ namespace menu_file
 				const auto route = lower(args.get(1));
 				if (route == "discord")
 				{
-					const auto result = ShellExecuteA(nullptr, "open", "https://discord.gg/XSrTvXJcsw", nullptr, nullptr, SW_SHOWNORMAL);
-					if (reinterpret_cast<INT_PTR>(result) <= 32) console::warn("Could not open the Discord invite in your browser.\n");
+					open_discord();
 					return;
 				}
 				if (route == "map" || route == "mode" || route == "browserback")
@@ -1677,6 +1700,11 @@ namespace menu_file
 		public:
 			void post_load() override
 			{
+				// QoS PC 1.1 registers this no-argument cdecl command callback at
+				// 10310724. Replace the menu action, not the XLive API underneath.
+				// Retire these adapters if the stock movie is intentionally replaced.
+				stock_guide_hook.create(game::game_offset(0x1030E7E0), open_discord);
+				localized_message_hook.create(game::game_offset(0x103CA030), localized_message_stub);
 				open_menu_hook.create(game::game_offset(0x102E1560), open_menu_stub);
 				paint_menus_hook.create(game::game_offset(0x102D8290), paint_menus_stub);
 				frontend_screen_hook.create(game::game_offset(0x102DC580), frontend_screen_stub);
@@ -1689,6 +1717,8 @@ namespace menu_file
 
 			void pre_destroy() override
 			{
+				stock_guide_hook.clear();
+				localized_message_hook.clear();
 				open_menu_hook.clear();
 				paint_menus_hook.clear();
 				frontend_screen_hook.clear();

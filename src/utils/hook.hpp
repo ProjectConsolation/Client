@@ -67,8 +67,7 @@ namespace utils::hook
 
 		template <typename T = void, typename... Args>
 		T invoke(Args ... args)
-		{
-			return static_cast<T(*)(Args ...)>(this->get_original())(args...);
+		{			return static_cast<T(*)(Args ...)>(this->get_original())(args...);
 		}
 
 		[[nodiscard]] void* get_original() const;

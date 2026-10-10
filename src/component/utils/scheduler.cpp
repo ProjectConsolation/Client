@@ -10,6 +10,9 @@
 #include <utils/string.hpp>
 #include <utils/thread.hpp>
 
+#include <array>
+#include <cstring>
+
 namespace scheduler
 {
 	namespace
@@ -89,7 +92,9 @@ namespace scheduler
 		// on-exit table when process teardown bypasses component cleanup.
 		std::thread* thread = nullptr;
 		task_pipeline pipelines[pipeline::count];
-		utils::hook::detour r_end_frame_hook;
+		void* console_rect_original = nullptr;
+		bool renderer_call_installed = false;
+		constexpr std::array<unsigned char, 5> renderer_call_bytes{0xE8, 0x60, 0x16, 0x00, 0x00};
 		//utils::hook::detour g_run_frame_hook;
 		utils::hook::detour main_frame_hook;
 		utils::hook::detour g_shutdown_game_hook;
@@ -201,10 +206,30 @@ namespace scheduler
 			});
 		}
 
-		void render_frame_stub()
+		void render_frame_callbacks()
 		{
 			execute(pipeline::renderer);
-			r_end_frame_hook.invoke<void>();
+		}
+
+		// Con_SetConsoleRect has live SIMD state at this call site. Preserve the
+		// complete native register/FPU state, then tail-call its original entry.
+		__declspec(naked) void render_frame_stub()
+		{
+			__asm
+			{
+				pushfd
+				pushad
+				mov esi, esp
+				sub esp, 528
+				and esp, -16
+				fxsave [esp]
+				call render_frame_callbacks
+				fxrstor [esp]
+				mov esp, esi
+				popad
+				popfd
+				jmp dword ptr [console_rect_original]
+			}
 		}
 
 		
@@ -293,9 +318,19 @@ namespace scheduler
 			quit_command_hook.create(game::game_offset(0x103F8660), quit_command_stub);
 			outer_frame_hook.create(game::game_offset(0x103F9740), outer_frame_stub);
 			outer_frame_original = outer_frame_hook.get_original();
-			//utils::hook::call(0x4FD7AB, scheduler::server_frame_stub);
-			//r_end_frame_hook.create(0x102DFB60, scheduler::render_frame_stub); //this is actually CL_DrawActive
-			r_end_frame_hook.create(game::game_offset(0x103C1050), scheduler::render_frame_stub);
+			// QoS PC 1.1 Con_DrawConsole synchronizes at 10311F77, builds the
+			// frontend list, then closes/submits it at 10312239/1031225B.
+			// 103C1050 runs BEFORE its own render-thread wait: appending there
+			// races command consumers (stackk.dmp: version text became a header).
+			// Like KisakCOD R_EndFrame, drawing must precede list finalization.
+			// Keep this call-site adapter until frontend ownership is replaced.
+			const auto renderer_call = game::game_offset(0x103121BB);
+			if (std::memcmp(reinterpret_cast<const void*>(renderer_call),
+				renderer_call_bytes.data(), renderer_call_bytes.size()) != 0)
+				throw std::runtime_error("Unsupported frontend renderer callback site");
+			console_rect_original = reinterpret_cast<void*>(game::game_offset(0x10313820));
+			utils::hook::call(renderer_call, render_frame_stub);
+			renderer_call_installed = true;
 			main_frame_hook.create(game::game_offset(0x103F7470), scheduler::main_frame_stub); // may be wrong?
 
 			g_shutdown_game_hook.create(game::game_offset(0x101AB0B0), g_shutdown_game_stub);
@@ -304,6 +339,11 @@ namespace scheduler
 		void pre_destroy() override
 		{
 			stop_async_scheduler();
+			if (renderer_call_installed)
+			{
+				utils::hook::set(game::game_offset(0x103121BB), renderer_call_bytes);
+				renderer_call_installed = false;
+			}
 		}
 	};
 }
