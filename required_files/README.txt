@@ -4,6 +4,13 @@ Copy the complete nightly archive into the game directory, preserving folders.
 consolation\zone\common_consolation.ff is REQUIRED for the client HUD assets;
 do not move it into the root directory or omit it when updating.
 
+consolation\scaleform\ contains REQUIRED native menu overrides, including
+pcsharedlibrary.gfx and cmsharedplatform.gfx. Copy all six .gfx files together; omitting a shared
+library can leave Single Player and the old video settings visible.
+These modify the stock menus, not the experimental custom frontend.
+Fully close and restart the game after updating; a DLL rebuild alone does
+not regenerate or install these assets. Original main\scaleform files stay intact.
+
 Only install optional\offline\xlive.dll for offline/debug use. Leave it there for
 normal Games for Windows LIVE operation. See README_XLIVE.txt for instructions.
 

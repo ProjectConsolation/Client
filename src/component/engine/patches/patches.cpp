@@ -1983,6 +1983,14 @@ namespace patches
 					style |= WS_POPUP;
 					ex_style &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
 					ex_style |= WS_EX_APPWINDOW;
+					// Match the monitor-sized scene/display selected by the native
+					// window-parms adapter. Do not stretch a smaller backbuffer.
+					MONITORINFO monitor{ sizeof(MONITORINFO) };
+					if (GetMonitorInfoA(MonitorFromPoint({ x, y }, MONITOR_DEFAULTTONEAREST), &monitor))
+					{
+						x = monitor.rcMonitor.left;
+						y = monitor.rcMonitor.top;
+					}
 				}
 			}
 			const auto window = CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent, menu, inst, param);
