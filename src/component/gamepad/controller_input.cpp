@@ -63,14 +63,20 @@ namespace gamepad
   void note_mouse_activity ()
   {
     if (controller_component::runtime)
+    {
       controller_component::runtime->keys ().note_other_input ();
+      controller_component::runtime->view ().idle ();
+    }
   }
 
   void note_key_activity(int key, bool down)
   {
-    if (down && !unstable::controller::engine::emitting_controller_key()
+    if (controller_component::runtime && !unstable::controller::engine::emitting_controller_key()
         && !unstable::controller::mapping::is_controller_key(key))
-      note_mouse_activity();
+    {
+      controller_component::runtime->keys().note_pc_key(key, down);
+      if (down) controller_component::runtime->view().idle();
+    }
   }
 }
 

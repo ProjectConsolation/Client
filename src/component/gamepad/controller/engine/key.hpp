@@ -77,15 +77,17 @@ namespace gamepad
           // Whether the controller is the active input source.
           //
           // The engine draws controller glyphs and takes controller movement only
-          // while this is true. It becomes true on any controller input and false as
-          // soon as the player touches the keyboard or moves the mouse; the engine
-          // detours report those through note_other_input ().
+          // while this is true. PC activity immediately clears it. Controller input
+          // can reclaim it only after neutral controls and the PC quiet/held-key
+          // gate, so continuous stick motion cannot enable mixed-input aim assist.
           //
           bool
           in_use () const noexcept {return in_use_;}
 
           void
           note_other_input () noexcept;
+
+          void note_pc_key(int key, bool down) noexcept;
 
         private:
           // The engine distinguishes a first press from a repeat and from a release;
