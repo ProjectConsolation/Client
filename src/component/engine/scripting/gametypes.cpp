@@ -7,6 +7,7 @@
 #include "gametypes.hpp"
 #include "respawn_script.hpp"
 #include "systemlink_progression.hpp"
+#include "ambient_script.hpp"
 #include "scaleform.hpp"
 
 #include "game/game.hpp"
@@ -213,6 +214,43 @@ namespace gametypes
 
 			if (type == game::ASSET_TYPE_RAWFILE)
 			{
+				const auto path = normalize_gametype_path(name);
+				if (path.starts_with("maps/mp/") && path.ends_with("_fx.gsc"))
+				{
+					auto map = path.substr(8, path.size() - 8 - 7);
+					std::transform(map.begin(), map.end(), map.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+					if (ambient_script::stock_map(map) && !filesystem::exists(path))
+					{
+						auto original = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, name, create_default);
+						const auto placement_path = "maps/createfx/" + map + "_fx.gsc";
+						const auto placements = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(
+							type, placement_path.c_str(), 0);
+						if (rawfile_has_data(original.rawfile) && rawfile_has_data(placements.rawfile)
+							&& !filesystem::exists(placement_path))
+						{
+							std::string data(original.rawfile->buffer, original.rawfile->len);
+							while (!data.empty() && data.back() == '\0') data.pop_back();
+							const std::string authored(placements.rawfile->buffer, placements.rawfile->len);
+							if (ambient_script::restore_loops(data, authored, map, [](const std::string& alias)
+							{
+								const auto sound = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(
+									game::ASSET_TYPE_SOUND, alias.c_str(), 0);
+								return sound.data && !game::DB_IsXAssetDefault(game::ASSET_TYPE_SOUND, alias.c_str());
+							}))
+							{
+								const auto key = "ambient:" + path + ":" + data;
+								auto& cache = loaded_gametype_rawfiles();
+								if (!cache.contains(key))
+								{
+									cache[key] = make_rawfile(path, data);
+									console::info("[audio] enabled authored ambience fallback for %s\n", map.c_str());
+								}
+								original.rawfile = cache.at(key);
+							}
+						}
+						return original;
+					}
+				}
 				// QoS UI_LoadArenasFromFile 102CB9C0 requests this single DB
 				// rawfile, not COD4's loose-file enumeration. Preserve stock maps
 				// and append the installed DLC list; the native parser owns the
