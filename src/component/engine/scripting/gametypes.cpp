@@ -225,12 +225,21 @@ namespace gametypes
 						const auto placement_path = "maps/createfx/" + map + "_fx.gsc";
 						const auto placements = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(
 							type, placement_path.c_str(), 0);
-						if (rawfile_has_data(original.rawfile) && rawfile_has_data(placements.rawfile)
+						// Namespaced patch inputs survive later map-zone asset links.
+						// Keep the runtime sound-alias check: missing map sounds must
+						// never become unconditional GSC playLoopSound calls.
+						const auto bundled_source = "consolation/scripts/" + path;
+						const auto bundled_placements = "consolation/scripts/" + placement_path;
+						const auto patch_source = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, bundled_source.c_str(), 0);
+						const auto patch_placements = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, bundled_placements.c_str(), 0);
+						if (rawfile_has_data(patch_source.rawfile)) original = patch_source;
+						const auto authored_file = rawfile_has_data(patch_placements.rawfile) ? patch_placements.rawfile : placements.rawfile;
+						if (rawfile_has_data(original.rawfile) && rawfile_has_data(authored_file)
 							&& !filesystem::exists(placement_path))
 						{
 							std::string data(original.rawfile->buffer, original.rawfile->len);
 							while (!data.empty() && data.back() == '\0') data.pop_back();
-							const std::string authored(placements.rawfile->buffer, placements.rawfile->len);
+							const std::string authored(authored_file->buffer, authored_file->len);
 							if (ambient_script::restore_loops(data, authored, map, [](const std::string& alias)
 							{
 								const auto sound = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(
@@ -305,6 +314,18 @@ namespace gametypes
 					return header;
 				}
 
+				// Explicit disk overrides above remain authoritative. Otherwise
+				// prefer pre-adapted scripts from patch_consolation; retaining the
+				// old transforms below supports installs without the optional zone.
+				if (normalized_name == "maps/mp/gametypes/_tweakables.gsc"
+					|| normalized_name == "maps/mp/gametypes/_globallogic.gsc"
+					|| normalized_name == "maps/mp/gametypes/_killcam.gsc"
+					|| normalized_name == "maps/mp/gametypes/_persistence_util.gsc")
+				{
+					const auto bundled = "consolation/scripts/" + normalized_name;
+					const auto patch = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, bundled.c_str(), 0);
+					if (rawfile_has_data(patch.rawfile)) return patch;
+				}
 				auto fastfile_header = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, normalized_name.c_str(), create_default);
 				if (rawfile_has_data(fastfile_header.rawfile))
 				{
