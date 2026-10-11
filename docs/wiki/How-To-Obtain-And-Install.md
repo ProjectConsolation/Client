@@ -54,7 +54,7 @@ Patch `1.1` may not install correctly if the game is not installed in the defaul
 If you are using a nightly build or a release build:
 
 - download `consolation-nightly.zip` from the Assets list of the latest nightly in [Releases](https://github.com/ProjectConsolation/Client/releases)
-- extract or copy the build into the game root, excluding the optional `xlive.dll` unless using offline/debug mode
+- extract or copy the build into the game root, preserving folders
 - overwrite everything when prompted
 - launch using `Launch Consolation.bat`
 
@@ -70,21 +70,29 @@ If your game is installed in the default directory, use the batch file as-is.
 
 If installed elsewhere, right-click `Launch Consolation.bat`, choose **Edit**, and change `GAME_DIR` to your real install directory.
 
-### Optional offline/debug launch and player name
+### Recommended local GFWL emulation and LAN setup
 
-For offline/debug use, copy the bundled `xlive.dll` into the game root and append this to the `start` command in `Launch Consolation.bat`:
+The bundled `optional/offline/xlive.dll` is optional for the client for now, but
+highly recommended and required on both PCs for Consolation's local GFWL
+emulation and LAN transport. Close the game, back up any old game-root copy,
+then copy the bundled shim into the game root beside `JB_Launcher_s.exe`.
+Launch normally using `Launch Consolation.bat`; detection is automatic.
+There is no `-offline`, `-offline_test`, port override or status-command
+requirement for ordinary two-PC LAN play.
 
-```text
--offline -seta name "CSL_User00"
-```
+Host and join through SYSTEM LINK, or join with `connectIP <host-IP>:1000`.
+Both PCs use UDP 1000/1001 by default; use the host's LAN/VPN IP, not loopback.
+Both installations need matching client/shim versions and map files.
 
-Replace `CSL_User00` with your desired player name, keeping the quotation marks. The full offline command is:
+Current offline XUIDs derive from the startup name. Use distinct startup names
+on the two PCs to avoid identity collisions. You can set one explicitly with
+`-name "YourName"`; keep it consistent because changing it can select another
+local profile. Developer-only isolation flags remain available for diagnostics.
 
-```bat
-"C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer -seta g_gametype dm -set cin_firstRunDone 1 -set cin_skipAllMovies 1 -offline -seta name "CSL_User00"
-```
-
-For normal GFWL play, leave out the optional `xlive.dll` and `-offline`. Offline mode does not provide online GFWL service emulation.
+To use Microsoft's original GFWL runtime, leave the optional shim uninstalled.
+Never delete or replace Windows' system DLL. Local emulation does not connect to
+the original online service and the LAN transport is not authenticated Internet
+matchmaking or NAT traversal.
 
 ### Desktop shortcut icon
 

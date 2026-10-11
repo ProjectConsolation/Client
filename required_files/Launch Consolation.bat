@@ -11,8 +11,7 @@ if not exist "%GAME_DIR%\JB_Launcher_s.exe" (
     exit /b 1
 )
 
-REM Offline/debug only: install the optional xlive.dll, then append
-REM -offline -seta name "CSL_User00" to the START command below.
-REM Replace CSL_User00 with your own player name. Keep its quotation marks.
+REM Recommended for local GFWL emulation and LAN: install optional\offline\xlive.dll
+REM beside the launcher. Consolation detects it automatically; no debug flags needed.
 start "" /D "%GAME_DIR%" "%GAME_DIR%\JB_Launcher_s.exe" -multiplayer -seta g_gametype dm -set cin_firstRunDone 1 -set cin_skipAllMovies 1 %*
 exit /b

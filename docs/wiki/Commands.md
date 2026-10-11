@@ -10,8 +10,9 @@ compatibility alias. Replies must match the endpoint, challenge and Consolation
 protocol, and include valid session fields and slot counts. A query times out
 after five seconds.
 
-With `-offline`, use Consolation's replacement `xlive.dll`, not Microsoft's
-runtime. The command checks that the shim exposes a nonzero signed-in XUID before
+Consolation's replacement `xlive.dll` is required for this local LAN transport;
+the client detects it automatically without `-offline` or `-offline_test`.
+The command checks that the shim exposes a nonzero signed-in XUID before
 querying. It does not create a separate GUID or claim peer authentication. Use
 different startup names on the two machines: the current offline XUID derives
 from the startup identity, with a local-instance suffix for additional processes.
@@ -20,7 +21,17 @@ before connecting. Both session join and actual gameplay still require a
 two-machine test. This command does not implement NAT traversal; the advertised
 UDP endpoint must be reachable through the firewall/router.
 
-### Opt-in two-process / two-machine test
+### Ordinary two-PC nightly play
+
+Install the matching optional shim in both game roots and launch normally with
+`Launch Consolation.bat`. Host through SYSTEM LINK, then join using its browser
+or `connectIP <host-IP>:1000`. Both PCs can use the default UDP 1000/1001 because
+their IPs differ. The shim remains optional for the client for now, but highly
+recommended and required for Consolation's local GFWL emulation/LAN transport.
+Debug flags and `offlineNetStatus` are not setup requirements. Use different
+startup names while normal XUIDs remain name-derived.
+
+### Developer-only isolated two-process test
 
 Rebuild and deploy both matching DLLs yourself. The replacement `xlive.dll` is
 still required; Microsoft's system runtime is not. Start the host with:

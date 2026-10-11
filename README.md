@@ -50,9 +50,11 @@ If you are using a nightly build or a release build:
 The batch launcher includes the multiplayer, default deathmatch and skip-intro arguments, and starts in the game directory.
 
 The optional replacement is shipped under `optional/offline/xlive.dll`, not at
-the archive root. Only copy it into the game root for offline/debug use, and add `-offline`
-to the launch arguments. Leave it out for normal GFWL use. See
-[the offline/debug DLL note](required_files/README_XLIVE.txt).
+the archive root. It is optional for now, but highly recommended and required on
+both PCs for Consolation's local GFWL emulation and LAN transport. Copy it into
+the game root, then launch normally: detection is automatic, with no `-offline`
+or `-offline_test` requirement. Leave it out to use Microsoft's original runtime.
+See [the local GFWL/LAN DLL note](required_files/README_XLIVE.txt).
 `generate-nightly.bat` generates both projects; building `d3d9` also builds the
 optional shim and copies that note beside it. The shim is not auto-deployed.
 
@@ -68,7 +70,17 @@ If your game is installed in the default directory, use the included batch file 
 
 If installed elsewhere, right-click `Launch Consolation.bat`, choose **Edit**, and change `GAME_DIR` to your real install directory.
 
-For **offline/debug only**, copy `optional/offline/xlive.dll` into the game root and append `-offline -seta name "CSL_User00"` to the batch file's `start` command. Replace `CSL_User00` with your player name, keeping the quotes. Normal GFWL play should omit both the root-level replacement DLL and `-offline`. If an older nightly already installed the replacement in the game root, move that copy out; extracting the new archive does not remove it. Do not delete the system GFWL runtime.
+For LAN play, install the optional shim on both PCs and use SYSTEM LINK to host
+and join. Direct joins use `connectIP <host-IP>:1000`. Normal two-PC play uses
+UDP 1000/1001 on each PC; debug port overrides are only needed for special tests.
+Current offline XUIDs derive from the startup name, so use distinct startup names
+until identity persistence is independent of display names; `-name "YourName"`
+can set one explicitly. Keep it consistent to retain the same local profile.
+The debug commands remain available but are not normal launch requirements.
+If an older nightly installed the replacement in the game root, extracting a new
+archive does not update that root copy: explicitly replace it with the matching
+optional shim. Move the root copy out to return to Microsoft's original runtime.
+Do not delete the system GFWL runtime.
 
 `consolation/zone/common_consolation.ff` is a required client asset file. Keep it
 at that location. The nightly packaging check rejects missing launchers or HUD

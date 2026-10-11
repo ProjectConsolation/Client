@@ -49,8 +49,11 @@ namespace
 	DECLSPEC_NORETURN void show_missing_gfwl_and_exit()
 	{
 		const auto result = MessageBoxA(nullptr,
-			"Project: Consolation requires Games for Windows - LIVE.\n\n"
-			"Install Games for Windows - LIVE via:\n"
+			"No Games for Windows - LIVE runtime was detected.\n\n"
+			"Recommended for local GFWL emulation and LAN: copy the bundled\n"
+			"optional\\offline\\xlive.dll into the game folder and launch normally.\n"
+			"No offline/debug launch flags are required when it is installed.\n\n"
+			"Alternatively, install the original Games for Windows - LIVE runtime via:\n"
 			"https://community.pcgamingwiki.com/files/file/1012-microsoft-games-for-windows-live/\n\n"
 			"For other troubleshooting, go to:\n"
 			"https://github.com/ProjectConsolation/Client/wiki\n\n"
