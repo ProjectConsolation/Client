@@ -218,8 +218,10 @@ namespace ingame_settings
       auto* gameplay = find(context, "ingame_options");
       auto* controls = find(context, "ingame_controls");
       auto* pause = find(context, "ingame");
-      if (!gameplay || gameplay->itemCount < 22 || extended(gameplay)) return;
-      const auto* source = gameplay->items[20];
+      if (!gameplay || gameplay->itemCount < 27 || extended(gameplay)) return;
+      // Item 20 is a sensitivity-row decoration, not an actionable control.
+      // Clone the retail inversion button so native focus/input flags survive.
+      const auto* source = gameplay->items[26];
       std::vector<game::itemDef_s*> additions;
       row(additions, gameplay, source, 246, "FOV", "cg_fov", nullptr, 65, 160);
       if (!game::Dvar_FindVar("ui_cslFpsSlider"))
@@ -434,7 +436,9 @@ namespace ingame_settings
 
   void update(unsigned char* context)
   {
-    if (context != reinterpret_cast<unsigned char*>(game::game_offset(0x113F1140))) return;
+    // CG's 113F1140 context owns HUD menus. Pause/options are registered in
+    // UI's 113CFC38 context (CL_DrawActive/Menu_PaintAll), even in a match.
+    if (context != reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38))) return;
     prepare(context);
     refresh(context);
   }
@@ -443,7 +447,7 @@ namespace ingame_settings
   {
     command::add("cslIngameVideo", [](const command::params& args) {
       if (args.size() < 2) return;
-      auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113F1140));
+      auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
       auto* graphics = find(context, "ingame_graphics");
       if (!graphics) return;
       const std::string action = args[1];

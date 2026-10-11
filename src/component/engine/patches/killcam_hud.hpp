@@ -14,7 +14,7 @@ namespace killcam_hud
 		{
 			// QoS 1.1 InKillcam menu expression (102C9E60), also consumed by
 			// the follow message and killcam ragdolls. 1044AA00 updates it from
-			// nextSnap's replay deltaTime; compare KisakCOD CG_SetNextSnap.
+			// nextSnap's replay deltaTime; --> KisakCOD CG_SetNextSnap.
 			return *reinterpret_cast<const int*>(game::game_offset(0x12A575A8)) != 0;
 		}
 
@@ -64,6 +64,7 @@ namespace killcam_hud
 			};
 			const auto* all = binding('t');
 			const auto* team = binding('y');
+
 			// Wait for profile/config loading; preserve custom and unbound keys.
 			if (!all || !team || _stricmp(all, "chatmodeteam")
 				|| _stricmp(team, "chatmodepublic")) return;
@@ -74,8 +75,6 @@ namespace killcam_hud
 
 	inline void install()
 	{
-		// QoS PC 1.1 only. Keep native early returns (draw2D, cubemap,
-		// loading and intermission). Refuse incompatible/already-hooked sites.
 		const auto gate = game::game_offset(0x10285738);
 		const auto foreground = game::game_offset(0x102857F4);
 		if (std::memcmp(reinterpret_cast<const void*>(gate), "\xE8\x93\x37\x02\x00", 5)

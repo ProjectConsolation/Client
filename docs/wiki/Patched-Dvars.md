@@ -35,9 +35,11 @@ texture presets and the real `r_vsync` presentation control; rollback dvars
 are not additional V-Sync controls. These source additions require regenerating
 the project, rebuilding the client, and an in-game layout/navigation test.
 
-`pm_legacySwitching` is a replicated host-controlled boolean (default `1`).
+`pm_legacySwitching` is a replicated host-controlled boolean (default `0`).
 It preserves sprint weapon animations during native switching and accepted
-drop cancellation; `0` restores stock behavior. The behavior is adapted from
+drop cancellation. The validated raise path retains weapon state `1`, raise
+timing and spread updates without starting a switch animation while sprinting;
+`0` restores stock behavior. The behavior is adapted from
 IW6x Toybox's MW2 mechanics, but uses QoS' single-hand animation/state layout
 and native validity checks. QoS state `5` means firing and is deliberately
 not treated as IW6's raising state. Multiplayer prediction and cancellation
@@ -54,7 +56,6 @@ renderer restart and Keep/Restore confirmation flow:
 | Dvar | Menu control |
 | --- | --- |
 | `r_fullscreen`, `r_borderless` | DISPLAY MODE: FULLSCREEN, BORDERLESS FULLSCREEN, WINDOWED |
-| `com_maxfps` | MAXIMUM FPS: 30, 60, 85, 125, 250, 333, or unlimited; unlimited warns about physics above 333 |
 | `r_aaSamples` | ANTI-ALIASING; the accepted hardware mode can be lower than the request |
 | `r_texFilterAnisoMin`, `r_texFilterAnisoMax` | ANISOTROPIC FILTERING changes both |
 | `r_vsync` | V-SYNC |

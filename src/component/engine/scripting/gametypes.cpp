@@ -302,6 +302,15 @@ namespace gametypes
 
 		game::XAssetHeader db_find_xasset_header_internal_stub(const game::XAssetType type, const char* name, const int create_default)
 		{
+			// QoS PC DB_FindXAssetHeaderInternal (103E1EE0) acquires the
+			// database lock at 105624F8; its storage at +16 is released during
+			// teardown. Calling it afterwards reaches a null CMPXCHG8B at
+			// 1010E71D. No assets can be safely resolved without that lock.
+			if (!*reinterpret_cast<void* volatile*>(game::game_offset(0x10562508)))
+			{
+				return {};
+			}
+
 			// Custom .menu loading/opening is handled entirely by menu_file's
 			// direct hook on UI_OpenMenu_f (verified against the real native
 			// menu-registration/open-stack layout, see menu_file.cpp). The
