@@ -6,6 +6,14 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 
 ### Menu equivalents
 
+Options → Gameplay (Game Settings) also exposes FOV (`cg_fov`) as a native
+integer-valued slider from 65 to 160 in steps of 5, and MAXIMUM FPS
+(`com_maxfps`) as a native preset slider: 30 (NATIVE), 60, 85, 125, 250,
+333, 0 (UNLIMITED). Unlimited warns that exceeding 333 FPS may break physics.
+These saved non-cheat controls apply immediately, without a renderer restart.
+Opening the menu does not replace custom console values; changing the slider
+selects a supported menu value. The console FOV domain remains unchanged.
+
 The stock Graphics menu exposes these console settings; Apply uses the native
 renderer restart and Keep/Restore confirmation flow:
 
@@ -122,15 +130,15 @@ the archive writer and replay consumer have been verified in the QoS PC binary.
 | Name | Description | Default / Range |
 | :--- | :--- | :--- |
 | `r_fullscreen` | Made saved and writable so fullscreen behavior can be controlled more reliably and does not get forced back as aggressively by the stock game. | N/A |
-| `com_maxfps` | Made saved and writable. Controls the frame rate cap. | N/A |
+| `com_maxfps` | Saved, writable, and not cheat-protected; repaired after native re-registration. Controls the frame rate cap. | N/A |
 | `vid_xpos` | Made saved and writable. Controls the window position in windowed mode. | N/A |
 | `vid_ypos` | Made saved and writable. Controls the window position in windowed mode. | N/A |
 | `developer` | Registered with a `0` to `2` range. Enables the game's development environment behavior and is mainly useful for debugging or internal-style testing. | `0` to `2` |
 | `g_speed` | Saved integer dvar. Controls player movement speed. | Default: `210` |
 | `pm_noclipScale` | Saved speed multiplier applied only to noclip, including jump/crouch vertical movement. | Default: `1`, Range: `0` to `20` |
 | `jump_height` | Saved float dvar. Controls the maximum jump height used by the player movement code. | Default: `41` |
-| `cg_fov` | Saved float dvar. Controls the field of view angle in degrees. | Default: `65`, Range: `0` to `160` |
-| `cg_fovScale` | Saved float dvar. Applies a multiplier to the base field of view. | Default: `1`, Range: `0` to `2` |
+| `cg_fov` | Saved, writable, non-cheat float dvar. Controls the field of view angle in degrees. | Default: `65`, Range: `0` to `160` |
+| `cg_fovScale` | Saved, writable, non-cheat float dvar. Applies a multiplier to the base field of view. | Default: `1`, Range: `0` to `2` |
 | `r_lodScale` | Saved float dvar. Adjusts level-of-detail distance. Higher values can keep more detail visible at range. | Default: `0`, Range: `0` to `3` |
 | `input_viewSensitivity` | Saved float dvar. Controls mouse sensitivity. | Default: `1.0`, Range: `0.01` to `30.0` |
 | `m_rawInput` | Saved boolean dvar. Enables raw mouse input handling. See also: [[Patched Raw Input]] | Boolean |

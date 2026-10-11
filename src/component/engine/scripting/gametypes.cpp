@@ -31,6 +31,12 @@ namespace gametypes
 	namespace
 	{
 		utils::hook::detour db_find_xasset_header_internal_hook;
+		utils::hook::detour ui_load_gametypes_hook;
+#if defined(DEBUG) || defined(_DEBUG)
+		constexpr bool debug_modes = true;
+#else
+		constexpr bool debug_modes = false;
+#endif
 		std::uintptr_t custom_label_base, extra_label_base;
 		std::uintptr_t custom_label_return, extra_label_return;
 
@@ -140,6 +146,22 @@ namespace gametypes
 		constexpr auto UI_GAMETYPE_ENTRIES = 0x113D1688;
 		constexpr auto UI_GAMETYPE_ALT_COUNT = 0x113D31EC;
 		constexpr auto UI_GAMETYPE_ALT_ENTRIES = 0x113D31F0;
+
+		int __cdecl ui_load_gametypes_stub()
+		{
+			const auto result = ui_load_gametypes_hook.invoke<int>();
+			// QoS 102DB6F0 reloads both fixed 44-byte row arrays during UI init.
+			// Compact complete rows so feeder indices still select matching IDs;
+			// the secondary list's initial "All" row must remain untouched.
+			for (const auto addresses : {std::pair{UI_GAMETYPE_COUNT, UI_GAMETYPE_ENTRIES},
+				std::pair{UI_GAMETYPE_ALT_COUNT, UI_GAMETYPE_ALT_ENTRIES}})
+			{
+				auto* count = reinterpret_cast<int*>(game::game_offset(addresses.first));
+				auto* rows = reinterpret_cast<char*>(game::game_offset(addresses.second));
+				*count = labels::filter_modes(rows, *count, UI_GAMETYPE_MAX, debug_modes);
+			}
+			return result;
+		}
 
 		std::unordered_map<std::string, game::RawFile*>& loaded_gametype_rawfiles()
 		{
@@ -497,7 +519,7 @@ namespace gametypes
 
 		bool is_hidden_gametype_id(const std::string& gametype_id)
 		{
-			return _stricmp(gametype_id.c_str(), "menu") == 0;
+			return labels::hidden_mode(gametype_id, debug_modes);
 		}
 
 		void append_unique_gametype_id(std::vector<std::string>& ids, std::unordered_set<std::string>& known_ids, const std::string& gametype_id)
@@ -618,23 +640,7 @@ namespace gametypes
 
 		std::string parse_gametype_display_name(const std::string& data, const std::string& fallback)
 		{
-			auto text = trim(data);
-			if (text.empty())
-			{
-				return fallback;
-			}
-
-			if (const auto comment = text.find("//"); comment != std::string::npos)
-			{
-				text = trim(text.substr(0, comment));
-			}
-
-			if (text.size() >= 2 && text.front() == '"' && text.back() == '"')
-			{
-				text = text.substr(1, text.size() - 2);
-			}
-
-			return text.empty() ? fallback : text;
+			return labels::display_token(data, fallback);
 		}
 
 		void rebuild_ui_gametype_cache()
@@ -926,14 +932,28 @@ namespace gametypes
 				fix_missing_asset_lock_release();
 				install_gametype_label_localization();
 				db_find_xasset_header_internal_hook.create(game::DB_FindXAssetHeader_Internal, db_find_xasset_header_internal_stub);
+				// Verified no-argument, caller-clean native loader. Retire this
+				// compatibility hook when the native frontend cache is replaced.
+				const auto loader = game::game_offset(0x102DB6F0);
+				if (!std::memcmp(reinterpret_cast<const void*>(loader), "\x55\x8B\xEC\x83\xE4\xF8\x83\xEC\x0C", 9))
+					ui_load_gametypes_hook.create(loader, ui_load_gametypes_stub);
+				else console::error("gametypes: MENU visibility hook skipped: unsupported loader instructions\n");
 
 				// The frontend feeder count path subtracts one to hide the stock "menu" sentinel.
-				// We rebuild the cache without that sentinel, so expose the full count.
+				// MENU is filtered by ID in Release, retained in Debug: expose
+				// the full filtered count rather than dropping an arbitrary last row.
 				utils::hook::nop(game::game_offset(0x102DEA4A), 3);
 
 				// The gametype feeder row resolver has its own hide-last subtraction before
 				// returning row text/id. Keep it in sync with the count path above.
 				utils::hook::nop(game::game_offset(0x102DE2F5), 3);
+
+				// Native feeder selection has a third hide-last subtraction.
+				// Keep selection bounds identical to count/text (including Gun Game).
+				const auto selection_count = game::game_offset(0x102DC9CF);
+				if (!std::memcmp(reinterpret_cast<const void*>(selection_count), "\x83\xC5\xFF", 3))
+					utils::hook::nop(selection_count, 3);
+				else console::error("gametypes: selection bounds fix skipped: unsupported instructions\n");
 
 				// Scaleform requests a fixed-size row window. Ignore that window limit and let the
 				// feeder submit every available item up to the real total count.
@@ -945,6 +965,7 @@ namespace gametypes
 				void pre_destroy() override
 				{
 					db_find_xasset_header_internal_hook.clear();
+					ui_load_gametypes_hook.clear();
 					loaded_gametype_rawfiles().clear();
 					scaleform::clear_overrides();
 				ui_gametype_list_refreshed = false;

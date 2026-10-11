@@ -14,8 +14,10 @@ Consolation's replacement `xlive.dll` is required for this local LAN transport;
 the client detects it automatically without `-offline` or `-offline_test`.
 The command checks that the shim exposes a nonzero signed-in XUID before
 querying. It does not create a separate GUID or claim peer authentication. Use
-different startup names on the two machines: the current offline XUID derives
-from the startup identity, with a local-instance suffix for additional processes.
+normal persistent identities on the two machines. The shim creates random
+XUIDs under `%LOCALAPPDATA%\ConsolationClient\offline-identities`, independently
+of names, Discord, or hardware IDs. Identical player names no longer derive the
+same XUID. Do not copy identity files between peers or include them in packages.
 Keep matching client/shim versions and let the host start a multiplayer match
 before connecting. Both session join and actual gameplay still require a
 two-machine test. This command does not implement NAT traversal; the advertised
@@ -28,8 +30,22 @@ Install the matching optional shim in both game roots and launch normally with
 or `connectIP <host-IP>:1000`. Both PCs can use the default UDP 1000/1001 because
 their IPs differ. The shim remains optional for the client for now, but highly
 recommended and required for Consolation's local GFWL emulation/LAN transport.
-Debug flags and `offlineNetStatus` are not setup requirements. Use different
-startup names while normal XUIDs remain name-derived.
+Debug flags and `offlineNetStatus` are not setup requirements. Player renames
+preserve the selected local identity/profile. Back up identity files together
+with game `storage`; first use retains the previous profile directory key.
+
+## Text chat and killcam HUD
+
+The default chat keys are **T** for all-chat (`chatmodepublic`) and **Y** for
+team-chat (`chatmodeteam`). The old T/team + Y/public pair is migrated after
+config loading; custom and unbound keys are left alone. To explicitly select
+these bindings, use `bind t chatmodepublic` and `bind y chatmodeteam`.
+
+During killcam, native chat messages remain visible while normal gameplay HUD
+is suppressed. The match clock uses the live, non-foreground HUD pass rather
+than a killer's archived clock. The killcam's own countdown remains visible.
+Verify both receiving chat during replay and restoration of the normal clock
+after respawning; source/contract tests are not an in-game rendering test.
 
 ### Developer-only isolated two-process test
 
@@ -211,6 +227,22 @@ For example, `bind Z "+prone"` uses the native prone input command. Remote predi
 
 After rebuilding, test sprint-to-ADS with keyboard and controller; prone with and without overhead clearance; cover entry and toggling off while already in cover; each mantle height, ladder, ledge and pipe in both camera modes; and jump/crouch/strafe with `pm_airborneBobScale 0` versus `1`. Repeat after respawn and a map change, and on a patched client/server pair. Watch for `[movement] ... skipped` warnings indicating an unsupported patch site.
 
+## Game Settings: FOV and FPS
+
+Game-mode selector labels use the loaded language's native StringEd translations
+for retail, custom/title-storage and appended mode rows. Quoted or `@`-prefixed
+references are normalized before lookup; literal custom names remain literal.
+This is a client code fix and requires rebuilding/restarting the DLL, not
+replacing gametype scripts in `patch_consolation.ff`.
+
+Options → Gameplay (Game Settings) includes native **FOV** and **MAXIMUM FPS** sliders with visible numeric values. FOV selects 65–160 degrees in steps of 5. Maximum FPS selects 30 (NATIVE), 60, 85, 125, 250, 333, or 0 (UNLIMITED). FPS help warns that going over 333 FPS may break physics. Mouse dragging, keyboard arrows and controller navigation use the stock slider handling.
+
+Both controls apply immediately and use the saved, non-cheat `cg_fov` and `com_maxfps` dvars; no video restart is needed. Graphics retains its FPS control. Console values outside these presets are not rewritten merely by opening Game Settings; adjusting a slider selects a preset.
+
+Ship both `common_consolation.ff` (menu movies/controller art) and `patch_consolation.ff` (gameplay scripts) under `consolation/zone/`. The script zone contains namespaced adaptations of retail respawn, killcam, match-clock and System Link money scripts, plus authored ambience source/placement inputs for all 12 retail MP maps. Namespaced lookup prevents later map-zone loading from replacing fixes. Explicit loose gametype overrides still take priority. Ambience retains runtime sound-alias validation rather than blindly enabling all CreateFX content. Install the matching client DLL and restart; regenerating assets alone does not update the lookup hook.
+
+`tools/package_patch_consolation.py` packages scripts from the local retail zone directory through the standalone `tools/patch_gameplay_scripts.cpp` asset transform utility. It rejects unsupported script anchors and existing output paths, and verifies the compressed fastfile by reading it back. Nightly packaging requires and hash-checks both zones; ordinary local builds do not generate a nightly.
+
 ## Native video options
 
 The patched stock video menu uses the native Apply and Keep/Restore confirmation flow. It adds Display mode (Fullscreen, Fullscreen Windowed, Windowed), Maximum FPS presets (30 Native, 60, 85, 125, 250, 333, 0 Unlimited), and 1x/2x/4x/8x/16x anisotropic filtering. Selecting 0 displays a warning that going over 333 FPS may break physics. V-Sync retains its stock toggle. AA requests are Off/2x/4x/8x/16x; unsupported extended requests fall back to a supported color-and-depth sample mode. `gfxinfo` reports the actual result, which can differ from the requested menu value.
@@ -253,6 +285,8 @@ Slideshow backgrounds select `consolation/images/preview_mp_*.png` (or `preview_
 
 Map selection uses QoS feeder `1`; game modes use feeder `29`. Their native selection handler updates `ui_mapname`/`ui_mapname_text` and `ui_gametype`/`ui_gametype_text`, respectively. The ABI field is a float at item offset `376`, not an integer; listbox union data also requires `dataType == 6`. `execKeyInt` supplies native Enter/keypad-Enter handlers so moving through a list does not accidentally confirm or join. Matchmaking playlist selection, loadouts, statistics and advanced rules retain their native screens. The selected-map lobby background resolves `preview_mp_<ui_mapname>.png` and makes a slow, eased two-minute right/left round trip; the main-menu card slides remain right-only. A 35% black fill dims both without an opaque bitmap.
 
+Mode display files use their first token as the localization reference; subsequent fields such as `team` and `maxPlayers` are not part of the label. Labels resolve through the loaded game language. The internal `MENU` mode is visible only with a Debug client DLL, including after native UI list reloads. Release clients filter it by ID without hiding the last playable mode. Feeder count, text and selection bounds use the same full list.
+
 Button actions play `ui_pause_select`, focus changes play `ui_pause_updown`, and Escape plays `ui_pause_back` through QoS's native menu `play` command. These aliases match the shipped PC Scaleform shared-library actions rather than names borrowed from another game.
 
 `sf_enable` is zero while a managed custom screen is active so the original background video can remain visible. Native destination screens temporarily re-enable Scaleform; returning reopens the corresponding custom root or host screen. Escape at the main menu opens quit confirmation. Escape in a hub returns to the root; leaving an online host lobby also uses native party cleanup. `cslMenuRoute main` is a recovery route, while `leave` performs online lobby cleanup first.
@@ -266,6 +300,12 @@ The local server browser is `csl_serverbrowser`, backed by QoS's native feeder `
 Loadouts opened from the System Link host (including its settings tab) go directly to QoS's native `mpcustomloadout` class editor using local sign-in, rather than the LIVE-gated `mploadout` shop wrapper. Online and private-online lobbies retain the original LIVE route. This does not introduce separate loadout storage or unlock equipment; native profile ownership still applies. Returning to the frontend restores the originating custom lobby. This routing change requires a rebuilt DLL and in-game validation.
 
 ## Launch Commands
+
+### System Link balance and local profiles
+
+With the local XLive shim installed, offline mode retains QoS's native `mpdata` loading and session-end saving through the shim's local title storage. The System Link script adaptation permits the existing money award/read path; other ranked-only statistics remain ranked-only. It does not create an online leaderboard service or bypass Store purchase rules.
+
+After rebuilding, verify this with two machines: note each player's starting balance, earn money in a System Link match, finish the match normally, then restart and check that each balance persists independently. Source/script regression tests are not proof that the full runtime session and storage transitions work.
 
 Commands passed to `JB_Launcher_s.exe` with either a `+` or `-` prefix are forwarded to the multiplayer engine command buffer. Launcher-only switches such as `-multiplayer` and `-offline` are consumed by Consolation instead of being submitted as game commands.
 
