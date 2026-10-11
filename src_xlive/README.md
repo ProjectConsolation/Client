@@ -34,10 +34,21 @@ little-endian `FBDX`/XDBF tables and imports namespace 3 binary-setting payloads
 that do not already exist locally. Account data, signatures, achievements, and
 other games are deliberately not copied.
 
-The directory XUID is generated deterministically from the active `name` dvar,
-with command-line `name`/`-set name` as the early-startup fallback. It uses the
-GFWL-style `E000xxxxxxxxxxxx` range. Changing the name therefore selects a
-different offline profile.
+Normal offline network XUIDs are randomly generated once and stored in
+`%LOCALAPPDATA%\ConsolationClient\offline-identities\<instance>.bin`.
+They use the GFWL-style `E000xxxxxxxxxxxx` range and do not depend on the
+player's name, Discord account, or hardware identifiers. Renaming the player
+does not change the network identity. Separate Windows accounts/installations
+generate independent identities; copying these identity files also copies the
+identity, so do not distribute them with builds. This is local identity, not
+proof of ownership or developer verification.
+
+On first use, the identity record retains the previous name-derived storage
+directory key so existing settings and title storage stay in place. That
+directory key remains fixed after a rename. Back up both the identity record
+and `storage` when transferring a profile. Corrupt identity records are refused
+rather than silently regenerated or overwritten. `-offline_test` retains its
+isolated process-unique identities and storage.
 
 ## Runtime requirement
 

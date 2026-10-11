@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 #include "offline_transport.hpp"
+#include "offline_identity.hpp"
 
 namespace
 {
@@ -552,13 +553,13 @@ namespace
 	std::string offline_name()
 	{
 		const auto requested_name = command_line_name();
-		static std::atomic<bool> first_lookup{true};
-		if (first_lookup.exchange(false))
+		static std::atomic<bool> requested_name_applied{false};
+		if (!requested_name.empty() && !requested_name_applied.load())
 		{
-			if (!requested_name.empty())
-			{
-				return requested_name;
-			}
+			// XLive is queried before the engine registers name. Do not consume
+			// the launcher override until the caller can actually synchronize it.
+			if (find_dvar("name")) requested_name_applied.store(true);
+			return requested_name;
 		}
 
 		if (auto* const name = find_dvar("name"); name && name->type == 7 && name->current.string && *name->current.string)
@@ -589,7 +590,7 @@ namespace
 		}
 	}
 
-	XUID offline_xuid()
+	XUID legacy_offline_xuid()
 	{
 		// A display-name change must not move a signed-in user to another profile.
 		static const XUID identity = []
@@ -611,6 +612,27 @@ namespace
 			return 0xE000000000000000ull | (hash & 0x0000FFFFFFFFFFFFull);
 		}();
 		return identity;
+	}
+
+	const offline_identity::record& persistent_offline_identity()
+	{
+		static const auto identity = []
+		{
+			std::array<wchar_t, 32768> local{};
+			const auto length = GetEnvironmentVariableW(L"LOCALAPPDATA", local.data(),
+				static_cast<DWORD>(local.size()));
+			if (!length || length >= local.size())
+				throw std::runtime_error("LOCALAPPDATA is required to preserve offline identity");
+			return offline_identity::resolve(std::filesystem::path(local.data())
+				/ L"ConsolationClient" / L"offline-identities", offline_instance_index(),
+				legacy_offline_xuid());
+		}();
+		return identity;
+	}
+
+	XUID offline_xuid()
+	{
+		return offline_test_requested() ? legacy_offline_xuid() : persistent_offline_identity().xuid;
 	}
 
 	std::filesystem::path storage_root()
@@ -641,7 +663,8 @@ namespace
 	std::filesystem::path offline_profile_root()
 	{
 		// Keep all emulated LIVE state portable beside the game executable.
-		return storage_root() / L"profiles" / hex_id(offline_xuid(), 16);
+		const auto profile = offline_test_requested() ? offline_xuid() : persistent_offline_identity().profile;
+		return storage_root() / L"profiles" / hex_id(profile, 16);
 	}
 
 	std::filesystem::path profile_setting_path(const DWORD title_id, const DWORD setting_id)

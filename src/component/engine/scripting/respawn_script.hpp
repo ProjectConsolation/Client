@@ -14,7 +14,8 @@ namespace gametypes::respawn_script
 		const auto at = source.find(anchor);
 		if (at == std::string::npos || source.find(anchor, at + anchor.size()) != std::string::npos)
 			return false;
-		source.replace(at, anchor.size(), "level.clock.foreground = false; // Consolation: respect client HUD visibility.");
+		source.replace(at, anchor.size(), "level.clock.foreground = false; // Consolation: respect client HUD visibility.\n"
+			"\tlevel.clock.archived = false; // Use the live clock, not the killer's archived HUD copy.");
 		return true;
 	}
 

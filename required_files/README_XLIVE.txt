@@ -17,10 +17,12 @@ Host a match through SYSTEM LINK. Join through its browser, or use
 connectIP <host-IP>:1000. Do not use 127.0.0.1 to reach another PC.
 Use matching client/shim versions and matching map files on both PCs.
 
-CURRENT IDENTITY LIMITATION: use different startup player names on both PCs.
-Normal offline XUIDs still derive from the startup name; identical default
-names may collide. If necessary, add -name "YourName" to your launcher arguments.
-Changing the startup name can select another profile; keep it consistent.
+Normal offline identities persist under
+%LOCALAPPDATA%\ConsolationClient\offline-identities and do not depend on your
+name or hardware. Two PCs may use identical player names without deriving
+the same identity. Do not copy or distribute these identity files with a build.
+Changing your name keeps the identity and selected profile. Existing profile
+storage is retained on first use; back up storage and the identity files together.
 The isolated -offline_test switches remain available for developer diagnostics
 and two game instances on one PC, not as normal nightly setup requirements.
 

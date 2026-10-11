@@ -6,6 +6,7 @@
 #include "filesystem.hpp"
 #include "gametypes.hpp"
 #include "respawn_script.hpp"
+#include "systemlink_progression.hpp"
 #include "scaleform.hpp"
 
 #include "game/game.hpp"
@@ -271,11 +272,14 @@ namespace gametypes
 				{
 					if (normalized_name == "maps/mp/gametypes/_tweakables.gsc"
 						|| normalized_name == "maps/mp/gametypes/_globallogic.gsc"
-						|| normalized_name == "maps/mp/gametypes/_killcam.gsc")
+						|| normalized_name == "maps/mp/gametypes/_killcam.gsc"
+						|| normalized_name == "maps/mp/gametypes/_persistence_util.gsc")
 					{
 						std::string data(fastfile_header.rawfile->buffer, fastfile_header.rawfile->len);
 						while (!data.empty() && data.back() == '\0') data.pop_back();
-						bool patched = normalized_name == "maps/mp/gametypes/_tweakables.gsc"
+						bool patched = normalized_name == "maps/mp/gametypes/_persistence_util.gsc"
+							? systemlink_progression::enable_money(data)
+							: normalized_name == "maps/mp/gametypes/_tweakables.gsc"
 							? respawn_script::make_delay_live(data)
 							: normalized_name == "maps/mp/gametypes/_killcam.gsc"
 								? respawn_script::make_killcam_live(data) : respawn_script::make_wait_live(data);
@@ -295,7 +299,8 @@ namespace gametypes
 						}
 						else if (data.find("// Consolation: live respawn delay") == std::string::npos
 							&& data.find("consolationWaitRespawnDelay") == std::string::npos
-							&& data.find("consolationKillcamPolicy") == std::string::npos)
+							&& data.find("consolationKillcamPolicy") == std::string::npos
+							&& data.find("// Consolation: local System Link money") == std::string::npos)
 						{
 							console::error("gametypes: live gameplay policy skipped: unsupported script %s\n", normalized_name.c_str());
 						}

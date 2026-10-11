@@ -7,6 +7,7 @@
 #include "camera_validation.hpp"
 #include "traversal_camera_policy.hpp"
 #include "ui_directive_abi.hpp"
+#include "killcam_hud.hpp"
 #include "component/utils/resources.hpp"
 #include "component/utils/scheduler.hpp"
 
@@ -1616,10 +1617,15 @@ namespace patches
 
 		void apply_local_offline_mode_patches()
 		{
-			// Skip XLive-backed playlist/stat downloads. This lets local map bring-up
-			// proceed without waiting on online storage checks.
+			// No remote playlist backend. Keep local map bring-up independent of it.
 			utils::hook::jump(game::game_offset(0x10240B30), ret_one);
-			utils::hook::jump(game::game_offset(0x10240A30), ret_one);
+			// QoS DownloadStats (10240A30) reads mpdata through XStorage. Our shim
+			// implements that SDK path, including native missing-file initialization
+			// in StatsReadComplete (10240C60). Bypassing it leaves stats unready and
+			// prevents both balance updates and persistence. Only retain the old
+			// bring-up probe for -offline without the replacement storage DLL.
+			if (!xlive::is_local_shim_loaded())
+				utils::hook::jump(game::game_offset(0x10240A30), ret_one);
 
 			// Skip the XSessionCreate zero-session-id failure branch that raises
 			// XBOXLIVE_NETCONNECTION during local session startup.
@@ -1853,6 +1859,23 @@ namespace patches
 				& ~static_cast<std::uint16_t>(game::dvar_flags::read_only | game::dvar_flags::write_protected | game::dvar_flags::latched);
 
 			dvar->flags = static_cast<game::dvar_flags>(writable_flags | static_cast<std::uint16_t>(game::dvar_flags::saved));
+		}
+
+		void archive_player_video_preferences()
+		{
+			// QoS Com_InitDvars (0x103F6920) registers com_maxfps with 0x40,
+			// not ARCHIVE. Keep these preferences writable after map dvar
+			// re-registration too, without removing unrelated server protections.
+			for (const auto* name : { "cg_fov", "cg_fovScale", "com_maxfps" })
+			{
+				make_dvar_saved_and_writable(name);
+				if (auto* const dvar = game::Dvar_FindVar(name))
+				{
+					dvar->flags = static_cast<game::dvar_flags>(
+						static_cast<std::uint16_t>(dvar->flags)
+						& ~static_cast<std::uint16_t>(game::dvar_flags::cheat_protected));
+				}
+			}
 		}
 
 		void make_dvar_debug_writable(const char* name)
@@ -2215,6 +2238,7 @@ namespace patches
 			apply_private_match_unpause();
 			apply_cg_draw_fps_modes();
 			apply_noclip_vertical_input();
+			killcam_hud::install();
 			// branding - intercept import for CreateWindowExA to change window title
 			utils::hook::set(game::game_offset(0x1047627C), create_window_ex_stub);
 
@@ -2336,6 +2360,7 @@ namespace patches
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
+				archive_player_video_preferences();
 
 				//debug block sv_cheats
 #ifdef DEBUG
@@ -2389,6 +2414,7 @@ namespace patches
 				make_dvar_saved_and_writable("sv_cheats");
 				make_dvar_saved_and_writable("vid_xpos");
 				make_dvar_saved_and_writable("vid_ypos");
+				archive_player_video_preferences();
 #ifdef DEBUG
 				make_dvar_debug_writable("r_fullbright");
 #endif
