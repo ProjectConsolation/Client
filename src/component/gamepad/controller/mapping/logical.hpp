@@ -24,7 +24,7 @@ namespace gamepad
           none,
 
           fire,             // +attack
-          ads,              // +speed_throw (aim down sight)
+          ads,              // QoS PC +speed (aim down sight)
           jump_stand,       // +gostand
           stance,           // +stance
           melee,            // +melee

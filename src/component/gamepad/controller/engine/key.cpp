@@ -92,7 +92,7 @@ namespace gamepad::unstable::controller::engine
       case engine_key::button_b: return "+stance";
       case engine_key::button_x: return "+usereload";
       case engine_key::button_y: return "weapnext";
-      case engine_key::button_ltrig: return "+speed_throw";
+      case engine_key::button_ltrig: return "+speed";
       case engine_key::button_rtrig: return "+attack";
       case engine_key::button_lshldr: return "+smoke";
       case engine_key::button_rshldr: return "+frag";

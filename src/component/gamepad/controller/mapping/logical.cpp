@@ -44,7 +44,7 @@ namespace gamepad
           {
           case action::none:            return "";
           case action::fire:            return "+attack";
-          case action::ads:             return "+speed_throw";
+          case action::ads:             return "+speed";
           case action::jump_stand:      return "+gostand";
           case action::stance:          return "+stance";
           case action::melee:           return "+melee";

@@ -19,6 +19,30 @@ namespace gamepad::unstable::controller::engine
     utils::hook::detour draw_icon_hook, text_width_hook, localized_key_hook;
     void* draw_icon_original{};
     runtime* prompt_runtime{};
+    void* warning_draw_original{};
+
+    // At the native warning's draw call ECX points at its RGBA modulation.
+    // ^7 restores that base color, not absolute white. Keep alpha/pulsing and
+    // native no-ammo colors, but make our ^7 reload prompt actually white.
+    __declspec(naked) void reload_warning_draw_stub()
+    {
+      __asm {
+        pushfd
+        push eax
+        mov eax, [esp + 16]
+        test eax, eax
+        jz stock_warning
+        cmp word ptr [eax], 375Eh
+        jne stock_warning
+        mov dword ptr [ecx], 3F800000h
+        mov dword ptr [ecx + 4], 3F800000h
+        mov dword ptr [ecx + 8], 3F800000h
+      stock_warning:
+        pop eax
+        popfd
+        jmp dword ptr [warning_draw_original]
+      }
+    }
 
     const char* __cdecl reload_warning_text(const char* text, const char* context, int error_type)
     {
@@ -325,6 +349,8 @@ namespace gamepad::unstable::controller::engine
     // Native low-ammo ownerdraw's localization call, not global translations.
     // PLATFORM_RELOAD is a parameterized string, but this caller supplies none.
     utils::hook::call(game::game_offset(0x102870DA), reload_warning_text);
+    warning_draw_original = reinterpret_cast<void*>(game::game_offset(0x102CE2B0));
+    utils::hook::call(game::game_offset(0x1028714F), reload_warning_draw_stub);
     scheduler::loop(prepare_icons, scheduler::main, 1000ms);
   }
 }

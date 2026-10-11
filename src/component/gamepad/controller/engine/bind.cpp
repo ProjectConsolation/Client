@@ -11,6 +11,8 @@ namespace gamepad::unstable::controller::engine
   const char* controller_command_for (const char* command) noexcept
   {
     if (command == nullptr) return nullptr;
+      // QoS PC registers +speed/-speed for ADS, not IW4's +speed_throw.
+      if (std::strcmp(command, "+speed_throw") == 0) return "+speed";
     if (std::strcmp (command, "+activate") == 0 || std::strcmp (command, "+reload") == 0)
       return "+usereload";
     if (std::strcmp (command, "+melee_breath") == 0) return "+holdbreath";
