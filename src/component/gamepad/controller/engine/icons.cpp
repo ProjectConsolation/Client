@@ -32,12 +32,27 @@ namespace gamepad::unstable::controller::engine
       char binding[256]{};
       const char* command = "+reload";
       const auto get_binding = game::game_offset(0x10318CA0);
+      int found;
       __asm {
         push command
         push 0
         lea eax, binding
         call get_binding
         add esp, 8
+        mov found, eax
+      }
+      // Separate reload takes precedence; merged use/reload is also a valid
+      // reload binding, including when bound directly on keyboard/mouse.
+      if (!found)
+      {
+        command = "+usereload";
+        __asm {
+          push command
+          push 0
+          lea eax, binding
+          call get_binding
+          add esp, 8
+        }
       }
       const char* label = text_icon::is_binding_token(binding) ? binding
         : localized_key_hook.invoke<const char*>(binding);
