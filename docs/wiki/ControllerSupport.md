@@ -1,5 +1,34 @@
 # Controller Support
 
+## Original Xbox configuration references
+
+Original button, thumbstick and sensitivity rawfiles are preserved under
+`consolation/controller_assets/native_xbox/code_post_gfx_mp/`, with byte hashes
+and archive provenance in `source.json`. They are reference inputs, not configs
+automatically executed on PC. `buttons_default.cfg` and its alternatives identify
+themselves as single-player and refer to separate `buttons_default_mp.cfg` files
+that were not present in the supplied archives. Do not replace multiplayer
+defaults with them without verifying cover, stance and weapon-switch behavior.
+The native configs confirm `+speed` for held ADS and `+usereload` for use/reload.
+
+## Settings available in menus
+
+Under OPTIONS → CONTROLS → MULTIPLAYER → CONTROLLER, the menu exposes:
+
+| Console dvar | Menu control |
+| --- | --- |
+| `gpad_enabled` | CONTROLLER ENABLED |
+| `input_invertPitch` | INVERT LOOK |
+| `gpad_sticksConfig` | STICK LAYOUT |
+| `gpad_buttonsConfig` | BUTTON LAYOUT |
+| `gpad_sensitivity` | LOOK SENSITIVITY |
+| `input_viewSensitivity` | SENSITIVITY SCALE |
+| `gpad_stick_deadzone_min`, `gpad_stick_deadzone_max` | INNER / OUTER STICK DEADZONE |
+| `gpad_stick_pressed` | MENU STICK THRESHOLD |
+
+Controller artwork overrides and detection are documented below. Video-related
+menu equivalents are listed in [Patched Dvars](Patched-Dvars).
+
 This page describes current controller support and how it behaves in-game.
 
 ## Current Status (WIP)

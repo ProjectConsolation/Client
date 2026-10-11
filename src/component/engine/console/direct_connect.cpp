@@ -5,6 +5,8 @@
 #include "command.hpp"
 #include "console.hpp"
 #include "component/utils/scheduler.hpp"
+#include "component/engine/patches/xlive.hpp"
+#include <utils/flags.hpp>
 
 #include <array>
 #include <charconv>
@@ -88,7 +90,7 @@ namespace direct_connect
                 || !parse_number(get("pslots"), slots) || !parse_number(get("prslots"), private_slots)
                 || slots == 0 || slots > 18 || private_slots > slots)
             {
-                console::error("[connect_direct] host returned invalid or missing QoS session information\n");
+                console::error("[connectIP] host returned invalid or missing QoS session information\n");
                 return false;
             }
 
@@ -107,7 +109,7 @@ namespace direct_connect
             constexpr unsigned char expected[] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8, 0x51, 0xA1};
             if (memcmp(reinterpret_cast<const void*>(entry), expected, sizeof(expected)) != 0)
             {
-                console::error("[connect_direct] unsupported QoS connection routine\n");
+                console::error("[connectIP] unsupported QoS connection routine\n");
                 return false;
             }
 
@@ -118,7 +120,7 @@ namespace direct_connect
             // Native connect selects port 1000 when unset. Preserve an explicit
             // endpoint after it initializes the remote netadr (0x111F460C).
             *reinterpret_cast<unsigned short*>(game::game_offset(0x111F4614)) = source.sin_port;
-            console::info("[connect_direct] session passed to native connection; waiting for host\n");
+            console::info("[connectIP] session passed to native connection; waiting for host\n");
             return true;
         }
 
@@ -128,7 +130,7 @@ namespace direct_connect
             const auto now = GetTickCount64();
             if (now - pending->started >= 5000)
             {
-                console::error("[connect_direct] timed out waiting for host session information\n");
+                console::error("[connectIP] timed out waiting for host session information\n");
                 pending.reset();
                 return;
             }
@@ -140,7 +142,7 @@ namespace direct_connect
                     0, reinterpret_cast<const sockaddr*>(&pending->target), sizeof(pending->target));
                 if (result == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK)
                 {
-                    console::error("[connect_direct] query send failed: %d\n", WSAGetLastError());
+                    console::error("[connectIP] query send failed: %d\n", WSAGetLastError());
                     pending.reset();
                     return;
                 }
@@ -159,7 +161,7 @@ namespace direct_connect
                     const auto error = WSAGetLastError();
                     if (error == WSAEWOULDBLOCK) return;
                     if (error == WSAEMSGSIZE || error == WSAECONNRESET) continue;
-                    console::error("[connect_direct] query receive failed: %d\n", error);
+                    console::error("[connectIP] query receive failed: %d\n", error);
                     pending.reset();
                     return;
                 }
@@ -184,13 +186,35 @@ namespace direct_connect
             if (args.size() == 2 && std::string_view(args[1]) == "cancel")
             {
                 pending.reset();
-                console::info("[connect_direct] query cancelled\n");
+                console::info("[connectIP] query cancelled\n");
                 return;
             }
             if (args.size() < 2 || args.size() > 3)
             {
-                console::info("connect_direct <IPv4> [port] (default 1000); connect_direct cancel\n");
+                console::info("connectIP <IPv4> [port] (default 1000); connectIP cancel\n");
                 return;
+            }
+            const bool offline = utils::flags::has_flag("offline")
+                || utils::flags::has_flag("local_offline") || utils::flags::has_flag("local-offline");
+            if (offline && !xlive::is_local_shim_loaded())
+            {
+                console::error("[connectIP] offline connections require Consolation's local xlive.dll shim, not Microsoft's runtime\n");
+                return;
+            }
+            if (xlive::is_local_shim_loaded())
+            {
+                // GFWL SDK xbox.h: XUserGetXUID(DWORD, PXUID), WINAPI.
+                // QoS imports ordinal 5261; use the shim's same signed-in identity
+                // as the native session/party path, never a second synthetic GUID.
+                using get_xuid = DWORD(WINAPI*)(DWORD, std::uint64_t*);
+                const auto function = reinterpret_cast<get_xuid>(GetProcAddress(
+                    GetModuleHandleA("xlive.dll"), MAKEINTRESOURCEA(5261)));
+                std::uint64_t identity = 0;
+                if (!function || function(0, &identity) != ERROR_SUCCESS || !identity)
+                {
+                    console::error("[connectIP] no valid local offline identity; refusing to start a session\n");
+                    return;
+                }
             }
             auto query = std::make_unique<pending_query>();
             query->target.sin_family = AF_INET;
@@ -200,7 +224,7 @@ namespace direct_connect
                 || query->target.sin_addr.s_addr == INADDR_BROADCAST
                 || (args.size() == 3 && (!parse_number(args[2], port) || port == 0 || port > 65535)))
             {
-                console::error("[connect_direct] specify an IPv4 address and port 1-65535\n");
+                console::error("[connectIP] specify an IPv4 address and port 1-65535\n");
                 return;
             }
             query->target.sin_port = htons(static_cast<unsigned short>(port));
@@ -208,13 +232,13 @@ namespace direct_connect
             u_long nonblocking = 1;
             if (query->socket == INVALID_SOCKET || ioctlsocket(query->socket, FIONBIO, &nonblocking))
             {
-                console::error("[connect_direct] cannot open query socket: %d\n", WSAGetLastError());
+                console::error("[connectIP] cannot open query socket: %d\n", WSAGetLastError());
                 return;
             }
             query->started = GetTickCount64();
             query->challenge = std::to_string(GetCurrentProcessId()) + "-" + std::to_string(query->started);
             pending = std::move(query);
-            console::info("[connect_direct] querying %s:%u\n", args[1], port);
+            console::info("[connectIP] querying %s:%u\n", args[1], port);
         }
     }
 
@@ -223,7 +247,10 @@ namespace direct_connect
     public:
         void post_load() override
         {
-            scheduler::once([] { command::add("connect_direct", start_query); }, scheduler::main);
+            scheduler::once([] {
+                command::add("connectIP", start_query);
+                command::add("connect_direct", start_query); // compatibility for existing configs
+            }, scheduler::main);
             scheduler::loop(poll_query, scheduler::main, 50ms);
         }
 

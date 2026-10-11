@@ -4,6 +4,23 @@ Project: Consolation unlocks, restores, adjusts, or adds several dvars that are 
 
 ## Patched Dvars
 
+### Menu equivalents
+
+The stock Graphics menu exposes these console settings; Apply uses the native
+renderer restart and Keep/Restore confirmation flow:
+
+| Dvar | Menu control |
+| --- | --- |
+| `r_fullscreen`, `r_borderless` | DISPLAY MODE: FULLSCREEN, BORDERLESS FULLSCREEN, WINDOWED |
+| `com_maxfps` | MAXIMUM FPS: 30, 60, 85, 125, 250, 333, or unlimited; unlimited warns about physics above 333 |
+| `r_aaSamples` | ANTI-ALIASING; the accepted hardware mode can be lower than the request |
+| `r_texFilterAnisoMin`, `r_texFilterAnisoMax` | ANISOTROPIC FILTERING changes both |
+| `r_vsync` | V-SYNC |
+| `vid_xpos`, `vid_ypos` | RESET VIDEO POSITION confirmation sets both to 0 and restarts the renderer |
+
+Apply or discard other pending video changes before resetting window position.
+Menu-generator changes require regenerated menu movies, not just a rebuilt DLL.
+
 ### Anti-aliasing and texture filtering
 
 On the verified QoS PC 1.1 build, `r_aaSamples` accepts `1` through `16`.

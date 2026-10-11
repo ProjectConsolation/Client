@@ -1,5 +1,29 @@
 # Commands
 
+## Direct IP connections
+
+`connectIP <IPv4> [port]` queries the endpoint for its QoS session information,
+then invokes the native session/party connection path. The default UDP port is
+1000. `connectIP cancel` cancels a pending query; `connect_direct` remains a
+compatibility alias. Replies must match the endpoint, challenge and Consolation
+protocol, and include valid session fields and slot counts. A query times out
+after five seconds.
+
+With `-offline`, use Consolation's replacement `xlive.dll`, not Microsoft's
+runtime. The command checks that the shim exposes a nonzero signed-in XUID before
+querying. It does not create a separate GUID or claim peer authentication. Use
+different startup names on the two machines: the current offline XUID derives
+from the startup identity, with a local-instance suffix for additional processes.
+Keep matching client/shim versions and let the host start a multiplayer match
+before connecting. Both session join and actual gameplay still require a
+two-machine test. This command does not implement NAT traversal; the advertised
+UDP endpoint must be reachable through the firewall/router.
+
+Offline peer resolution is not yet verified: the compatibility shim currently
+reconstructs an incoming peer's XNADDR using local identity bytes, whereas QoS
+also compares complete XNADDR records when resolving party members. Treat the
+direct-IP command as a connection test, not a completed offline P2P implementation.
+
 ## Discord Rich Presence
 
 `discordRpcStatus` reports the local connection and activity acknowledgement.

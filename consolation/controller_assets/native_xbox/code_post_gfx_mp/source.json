@@ -1,0 +1,67 @@
+{
+  "zone": "code_post_gfx_mp.ff",
+  "source_sha256": "ad63b53933eebd57566fe9947e441b0cb34526e91bca9707e0311a1b3a7b56bf",
+  "partial_error": {
+    "asset_index": 104,
+    "asset_type": "sndcurve",
+    "stream_offset": "0x33c4a",
+    "message": "asset 104: sndcurve details unsupported at stream offset 0x33c4a"
+  },
+  "files": [
+    {
+      "name": "buttons_default.cfg",
+      "sha256": "3756306d0c305aeed27ad828039610a8963829d2214cfb69267f686592721883",
+      "stream_offset": "0xf6ae"
+    },
+    {
+      "name": "buttons_alternative.cfg",
+      "sha256": "8d725f165a3e338d0f001f171b1724b33207570baef8af8fbc2c4fbb4a6a5bd1",
+      "stream_offset": "0xfa30"
+    },
+    {
+      "name": "buttons_alternative2.cfg",
+      "sha256": "f8d798d2a8a1fd2cc89deb9d0c056d8be0dfa5f7ad4b657fa1c24ddf45267b44",
+      "stream_offset": "0xfdb4"
+    },
+    {
+      "name": "thumbstick_default.cfg",
+      "sha256": "3e8055742657b09a35b013af54ba9f0e420426f8254e6bccc0eee89908a4ed6d",
+      "stream_offset": "0x31fd5"
+    },
+    {
+      "name": "thumbstick_legacy.cfg",
+      "sha256": "17186f79424419a557e83381a79a25ced8cdd1719d7da9274569aaec77842a99",
+      "stream_offset": "0x32232"
+    },
+    {
+      "name": "thumbstick_legacysouthpaw.cfg",
+      "sha256": "2a1cfa23d0e2e4fab998f98ddda385f66b03c7698ea5e37708edec522ffe3a51",
+      "stream_offset": "0x3248e"
+    },
+    {
+      "name": "thumbstick_southpaw.cfg",
+      "sha256": "1a598686aabb2812251171a12cb696ae1b0bed331670dd9edc4b95a991a194b9",
+      "stream_offset": "0x326f2"
+    },
+    {
+      "name": "viewsensitivity_high.cfg",
+      "sha256": "b6295471fbfef22a924369903c4254c481f786106bfac8304add124317f7c6dd",
+      "stream_offset": "0x32980"
+    },
+    {
+      "name": "viewsensitivity_low.cfg",
+      "sha256": "3c1ce4948d4bde2aebfe031d8a18c5445cb07df528506a3f9a8b81f8e9263a6a",
+      "stream_offset": "0x329c3"
+    },
+    {
+      "name": "viewsensitivity_med.cfg",
+      "sha256": "3340a648b67aff713e56fb91081dc858bcdafa94e03830dbde750dc076bad74c",
+      "stream_offset": "0x32a05"
+    },
+    {
+      "name": "viewsensitivity_ultra.cfg",
+      "sha256": "834623d8d32442e858cee0fce0a8108c571193fd379356a379814de03c4d5561",
+      "stream_offset": "0x32a45"
+    }
+  ]
+}
