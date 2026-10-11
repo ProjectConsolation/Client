@@ -977,6 +977,8 @@ namespace menu_file
 		bool frontend_was_away = false;
 		bool frontend_return_requested = false;
 		bool frontend_match_active = false;
+		bool frontend_systemlink_match = false;
+		bool frontend_match_origin_recorded = false;
 		bool local_loadout_active = false;
 		std::string pending_scaleform_screen;
 		std::string return_frontend_page;
@@ -1172,6 +1174,14 @@ namespace menu_file
 			frontend_return_requested = !frontend_transition;
 			if (frontend_return_requested)
 			{
+				// Remember the match's origin, not systemlink after teardown (the
+				// native exit path can reset it). Do not hide a native error screen.
+				const auto* error = game::Dvar_FindVar("com_errorMessage");
+				const bool has_error = error && static_cast<unsigned char>(error->type) == game::DVAR_TYPE_STRING
+					&& error->current.string && *error->current.string;
+				if (frontend_systemlink_match && !has_error) name = "mpsyslink";
+				frontend_systemlink_match = false;
+				frontend_match_origin_recorded = false;
 				pending_scaleform_screen.clear();
 				frontend_match_active = false;
 			}
@@ -1202,6 +1212,12 @@ namespace menu_file
 			// sf_current_menu can remain mpsyssetup throughout the entire match;
 			// never use that stale frontend screen to reopen a lobby over gameplay.
 			const auto connection_state = reinterpret_cast<const int*>(game::game_offset(0x111F45F8))[client];
+			if (connection_state == 10 && !frontend_match_origin_recorded)
+			{
+				const auto* systemlink = game::Dvar_FindVar("systemlink");
+				frontend_systemlink_match = systemlink && systemlink->current.enabled;
+				frontend_match_origin_recorded = true;
+			}
 			if (connection_state >= 3) frontend_match_active = true;
 			if (frontend_match_active)
 			{
@@ -1242,6 +1258,7 @@ namespace menu_file
 			}
 			const bool root = !_stricmp(screen->current.string, "mpmainmenu");
 			const char* replacement_name = root ? "csl_main"
+				: !_stricmp(screen->current.string, "mpsyslink") ? "csl_systemlink"
 				: !_stricmp(screen->current.string, "mpsyssetup") ? "csl_host"
 				: !_stricmp(screen->current.string, "mpxblobbyprivatematch") ? "csl_private"
 				: !_stricmp(screen->current.string, "mpxblivemain") ? "csl_online"
@@ -1737,6 +1754,8 @@ namespace menu_file
 				frontend_transition = false;
 				frontend_return_requested = false;
 				frontend_match_active = false;
+				frontend_systemlink_match = false;
+				frontend_match_origin_recorded = false;
 				local_loadout_active = false;
 				pending_scaleform_screen.clear();
 				return_frontend_page.clear();

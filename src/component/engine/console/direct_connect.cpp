@@ -5,6 +5,7 @@
 #include "command.hpp"
 #include "console.hpp"
 #include "ip_endpoint.hpp"
+#include "query_packet.hpp"
 #include "direct_connect.hpp"
 #include "game/dvars.hpp"
 #include <utils/hook.hpp>
@@ -146,10 +147,12 @@ namespace direct_connect
 
             if (pending->last_send == 0 || now - pending->last_send >= 500)
             {
-                // QoS 10244480: VDP plaintext OOB has a two-byte zero header.
+                // QoS 10244600/10244480: VDP OOB starts with its plaintext length.
                 // The envelope lets the host learn this ephemeral reply route;
                 // its native send routine otherwise always selects port 1000.
-                const auto request = std::string(2, '\0') + std::string(4, '\xFF') + "getinfo " + pending->challenge + '\0';
+                // Native NET_OutOfBandPrint includes the trailing NUL in the
+                // plaintext byte count. Replies use this same length framing.
+                const auto request = frame_query_oob(std::string(4, '\xFF') + "getinfo " + pending->challenge + '\0');
                 const auto wire = offline_transport::encode(pending->sender, {},
                     {reinterpret_cast<const std::uint8_t*>(request.data()), request.size()});
                 const auto result = sendto(pending->socket, reinterpret_cast<const char*>(wire.data()), static_cast<int>(wire.size()),
@@ -188,8 +191,8 @@ namespace direct_connect
                 std::span<const std::uint8_t> payload;
                 if (!offline_transport::decode({reinterpret_cast<const std::uint8_t*>(buffer.data()),
                     static_cast<std::size_t>(size)}, sender, session, payload)) continue;
-                if (payload.size() < 2 || payload[0] || payload[1]) continue;
-                std::string_view packet(reinterpret_cast<const char*>(payload.data() + 2), payload.size() - 2);
+                std::string_view packet;
+                if (!query_oob_payload(payload, packet)) continue;
                 if (!packet.starts_with(prefix)) continue;
                 packet.remove_prefix(prefix.size());
                 std::map<std::string, std::string> fields;

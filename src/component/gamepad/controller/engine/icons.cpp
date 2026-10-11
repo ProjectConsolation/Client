@@ -23,7 +23,7 @@ namespace gamepad::unstable::controller::engine
 
     // At the native warning's draw call ECX points at its RGBA modulation.
     // ^7 restores that base color, not absolute white. Keep alpha/pulsing and
-    // native no-ammo colors, but make our ^7 reload prompt actually white.
+    // native no-ammo colors, but give our ^2 binding / ^7 action a white base.
     __declspec(naked) void reload_warning_draw_stub()
     {
       __asm {
@@ -33,7 +33,10 @@ namespace gamepad::unstable::controller::engine
         test eax, eax
         jz stock_warning
         cmp word ptr [eax], 375Eh
+        je white_reload
+        cmp word ptr [eax], 325Eh
         jne stock_warning
+      white_reload:
         mov dword ptr [ecx], 3F800000h
         mov dword ptr [ecx + 4], 3F800000h
         mov dword ptr [ecx + 8], 3F800000h
@@ -81,7 +84,9 @@ namespace gamepad::unstable::controller::engine
       const char* label = text_icon::is_binding_token(binding) ? binding
         : localized_key_hook.invoke<const char*>(binding);
       thread_local std::string prompt;
-      prompt = "^7";
+      // Match killcam prompts: keyboard binding green, action white. Do not
+      // tint the controller artwork; its source button colors are intentional.
+      prompt = text_icon::is_binding_token(binding) ? "^7" : "^2";
       prompt += label ? label : binding;
       prompt += "^7 Reload";
       return prompt.c_str();
