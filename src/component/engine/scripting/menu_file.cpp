@@ -1200,6 +1200,10 @@ namespace menu_file
 				if (!get(movie, &result, "_global.currentScreen._visible") || result.type != 2 || !result.data.boolean) continue;
 				result = {};
 				if (!get(movie, &result, "_global.outAnimStarted") || result.type != 2 || result.data.boolean) continue;
+				result = {};
+				// Patched native gostop sets this only at the interactive Screen
+				// frame. Visibility becomes true at the START of the In animation.
+				if (!get(movie, &result, "_global.cslScreenReady") || result.type != 2 || !result.data.boolean) continue;
 				return true;
 			}
 			return false;

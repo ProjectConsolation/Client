@@ -13,6 +13,26 @@ recreate the GFx heap, or change profiles/session settings. This is a manual rec
 adapter, not a confirmed repair of the transition bug; test recovery with a rebuilt
 client DLL. `sf_open` alone only requests navigation and does not restore movie state.
 
+The frontend transition repair is separate from this recovery command. Native
+`startInAnimASAP` now retains a pending destination when its movie has not loaded;
+`ScreenLoader.onLoadInit` completes that handoff only for the current destination
+after the outgoing animation ends. Missing cache entries no longer count as loaded.
+Superseded navigation cannot activate an old screen. System Link return waits for
+the incoming movie's native `Screen` resting frame, not merely its visibility.
+Navigation to the same screen name is skipped only when that screen is visible,
+interactive and has completed its incoming animation—not when a hidden or
+deactivated clip merely retains the requested name.
+
+Deploy the updated client DLL and matching `patch_consolation.ff` together. The
+zone includes the repaired frontend/shared movie classes alongside the existing
+script fixes; the matching loose Scaleform bundle is retained for fallback.
+`tools/patch_scaleform_transitions.py` updates all embedded class copies without
+replacing menu settings or controller art. `tools/package_scaleform_patch.py`
+preserves existing patch rawfiles when adding the repaired movie bundle.
+Verify ordinary match completion, manual disconnect, and repeated host/join
+cycles without invoking `sf_restart`. Compilation/read-back and event-order
+tests do not prove that every GFx runtime return path is repaired.
+
 ## Direct IP connections
 
 `connectIP <IPv4>:<port>` (for example `connectIP 127.0.0.1:1000`) queries the endpoint for its QoS session information,
