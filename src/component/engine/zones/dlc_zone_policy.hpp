@@ -16,6 +16,16 @@ namespace fastfiles::dlc
     constexpr int donor_free_flags = 0x40;
     constexpr int donor_alloc_flags = donor_free_flags | 0x10;
 
+    constexpr bool requires_shared_assets(std::string_view name)
+    {
+        if (name.ends_with("_load")) name.remove_suffix(5);
+        // The IW3 Shipment conversion deliberately does not emit QoS audio.
+        // Like the Xenon DLC, it needs the resident native PC donor before
+        // CG registers weapon/footstep/impact aliases. Keep this separate
+        // from DLC image-archive policy: Shipment must not load Camille art.
+        return requires_donor(name) || name == "mp_shipment";
+    }
+
     // DLC textures reuse PC image names, including normal/specular maps. They
     // must not replace stock or shared donor images. Other user IWDs retain
     // their intentional global override behavior. Inputs are lowercase.

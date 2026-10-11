@@ -920,13 +920,13 @@ namespace fastfiles
 		int db_load_xassets_stub(game::XZoneInfo* zones, const int count, const int sync)
 		{
 			bool multiplayer_map_requested = false;
-			bool dlc_map_requested = false;
+			bool donor_map_requested = false;
 			for (int i = 0; zones && i < count; ++i)
 			{
 				if (zones[i].name && std::string_view(zones[i].name).starts_with("mp_"))
 				{
 					multiplayer_map_requested = true;
-					dlc_map_requested |= dlc::requires_donor(utils::string::to_lower(zones[i].name));
+					donor_map_requested |= dlc::requires_shared_assets(utils::string::to_lower(zones[i].name));
 					std::lock_guard lock(external_asset_log_mutex);
 					logged_external_assets.clear();
 				}
@@ -936,7 +936,7 @@ namespace fastfiles
 			// QoS PC 1.1, 0x103E1CF0. Remove this adapter when native Xenon schemas exist.
 			try
 			{
-				if (multiplayer_map_requested && !dlc_map_requested && common_xenon_attempted)
+				if (multiplayer_map_requested && !donor_map_requested && common_xenon_attempted)
 				{
 					// Release only donor-owned assets. Freeing 0x11 would also
 					// remove common_consolation and the native patch zones.
@@ -973,13 +973,13 @@ namespace fastfiles
 						throw std::runtime_error("Xenon UI conversion requires resident PC shader assets; use loadXenonZone without unloading zones");
 				}
 
-				if (dlc_map_requested && !common_xenon_attempted)
+				if (donor_map_requested && !common_xenon_attempted)
 				{
 					common_xenon_attempted = true;
 					if (find_zone_file("common_xenon.ff"))
 					{
 						game::XZoneInfo donor_zone{"common_xenon", dlc::donor_alloc_flags, 0};
-						game::Com_Printf(16, "^5[Xenon] Preloading shared PC render assets from common_xenon.ff\n");
+						game::Com_Printf(16, "^5[Xenon] Preloading shared PC render/audio assets from common_xenon.ff\n");
 						present_common_xenon_preload(donor_zone.name);
 						const auto clear_preload_overlay = gsl::finally([]()
 						{
@@ -996,7 +996,7 @@ namespace fastfiles
 					}
 					else
 					{
-						game::Com_Printf(16, "^3[Xenon] common_xenon.ff was not found; continuing without shared PC render assets\n");
+						game::Com_Printf(16, "^3[Xenon] common_xenon.ff was not found; converted maps lack required PC render/audio assets\n");
 					}
 				}
 			}
