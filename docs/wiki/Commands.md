@@ -307,6 +307,18 @@ Loadouts opened from the System Link host (including its settings tab) go direct
 
 ## Launch Commands
 
+### In-game video menu adapter
+
+`cslIngameVideo <action>` is the native pause menu's staged-video adapter.
+Normal use is **Pause → GRAPHICS**, not manual console invocation. Supported
+actions are `begin`, `mode`, `quality`, `display`, `aa`, `aniso`, `vsync`,
+`shadows`, `lights`, `textures`, `models`, `marks`, `position`, `apply`, `exit`,
+and `discard`. `begin` snapshots the current values; adjustments remain
+pending until `apply` sets the dvars and requests a native renderer restart.
+`position` stages `vid_xpos=0` / `vid_ypos=0`; it also requires Apply.
+`exit` opens an Exit Without Saving confirmation when pending values differ,
+and `discard` leaves engine values unchanged.
+
 ### System Link balance and local profiles
 
 With the local XLive shim installed, offline mode retains QoS's native `mpdata` loading and session-end saving through the shim's local title storage. The System Link script adaptation permits the existing money award/read path; other ranked-only statistics remain ranked-only. It does not create an online leaderboard service or bypass Store purchase rules.

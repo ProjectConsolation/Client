@@ -21,6 +21,33 @@ from 0 to 1. They apply immediately to HUD bounds and are saved; front-end menus
 the watermark and version overlay are not shifted. Very small values can crowd
 HUD elements together.
 
+The native in-game pause menu exposes the same controls under **GAMEPLAY**.
+Opening it preserves custom console values; moving FOV or safe-area sliders
+snaps to five-unit steps. The FPS slider selects the same seven presets.
+**CONTROLS → CONTROLLER** exposes supported button/stick layouts, sensitivity,
+inversion, rumble, inner/trigger deadzones, icon selection, reset, and the
+original controller picture. Its picture follows `ui_controllerIcons` and
+the resolved Xbox/PS3 family from automatic detection.
+
+The pause menu's **GRAPHICS** page stages renderer changes until Apply and
+asks **EXIT WITHOUT SAVING?** before discarding changes. It uses the retail
+texture presets and the real `r_vsync` presentation control; rollback dvars
+are not additional V-Sync controls. These source additions require regenerating
+the project, rebuilding the client, and an in-game layout/navigation test.
+
+`pm_legacySwitching` is a replicated host-controlled boolean (default `1`).
+It preserves sprint weapon animations during native switching and accepted
+drop cancellation; `0` restores stock behavior. The behavior is adapted from
+IW6x Toybox's MW2 mechanics, but uses QoS' single-hand animation/state layout
+and native validity checks. QoS state `5` means firing and is deliberately
+not treated as IW6's raising state. Multiplayer prediction and cancellation
+still require testing with the rebuilt DLL on both peers.
+
+The native ammo warning keeps the binding-aware Reload prompt when reserve
+ammo exists. Without reserve, it displays pulsating yellow **LOW AMMO** while
+the clip has rounds, and red **NO AMMO** when the clip is empty. Native weapon,
+reload-state and HUD visibility checks remain authoritative.
+
 The stock Graphics menu exposes these console settings; Apply uses the native
 renderer restart and Keep/Restore confirmation flow:
 

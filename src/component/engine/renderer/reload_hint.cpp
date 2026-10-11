@@ -3,6 +3,7 @@
 #include <component/engine/zones/fastfiles.hpp>
 #include <component/utils/scheduler.hpp>
 #include <utils/memory.hpp>
+#include <component/gamepad/controller/engine/icons.hpp>
 
 namespace reload_hint
 {
@@ -64,6 +65,7 @@ namespace reload_hint
   public:
     void post_load() override
     {
+      gamepad::unstable::controller::engine::install_reload_warning();
       scheduler::loop(prepare, scheduler::pipeline::main, 1000ms);
     }
   };

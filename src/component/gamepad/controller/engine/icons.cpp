@@ -4,6 +4,7 @@
 #include <component/gamepad/controller/runtime.hpp>
 #include <component/gamepad/controller/mapping/icon_text.hpp>
 #include <component/engine/zones/fastfiles.hpp>
+#include <component/engine/renderer/ammo_warning_policy.hpp>
 #include <component/utils/scheduler.hpp>
 #include <utils/hook.hpp>
 #include <atomic>
@@ -20,10 +21,12 @@ namespace gamepad::unstable::controller::engine
     void* draw_icon_original{};
     runtime* prompt_runtime{};
     void* warning_draw_original{};
+    std::uintptr_t warning_time_slot{};
+    const float warning_pulse_divisor = 1024.0f;
 
     // At the native warning's draw call ECX points at its RGBA modulation.
-    // ^7 restores that base color, not absolute white. Keep alpha/pulsing and
-    // native no-ammo colors, but give our ^2 binding / ^7 action a white base.
+    // ^7 restores that base color, not absolute white. Retain native fade,
+    // pulse LOW AMMO in yellow, show NO AMMO in red, and keep reload white.
     __declspec(naked) void reload_warning_draw_stub()
     {
       __asm {
@@ -32,6 +35,10 @@ namespace gamepad::unstable::controller::engine
         mov eax, [esp + 16]
         test eax, eax
         jz stock_warning
+        cmp byte ptr [eax], 'L'
+        je yellow_warning
+        cmp byte ptr [eax], 'N'
+        je red_warning
         cmp word ptr [eax], 375Eh
         je white_reload
         cmp word ptr [eax], 325Eh
@@ -40,6 +47,34 @@ namespace gamepad::unstable::controller::engine
         mov dword ptr [ecx], 3F800000h
         mov dword ptr [ecx + 4], 3F800000h
         mov dword ptr [ecx + 8], 3F800000h
+        jmp stock_warning
+      yellow_warning:
+        mov dword ptr [ecx], 3F800000h
+        mov dword ptr [ecx + 4], 3F800000h
+        mov dword ptr [ecx + 8], 0
+        // Pulse alpha independently of the player's warning-color dvars.
+        // Keep native fade/visibility, and do not disturb SSE or the FPU stack.
+        mov eax, warning_time_slot
+        mov eax, [eax]
+        mov eax, [eax]
+        and eax, 1023
+        cmp eax, 512
+        jbe pulse_ready
+        neg eax
+        add eax, 1024
+      pulse_ready:
+        add eax, 512
+        push eax
+        fild dword ptr [esp]
+        fdiv dword ptr [warning_pulse_divisor]
+        fmul dword ptr [ecx + 12]
+        fstp dword ptr [ecx + 12]
+        add esp, 4
+        jmp stock_warning
+      red_warning:
+        mov dword ptr [ecx], 3F800000h
+        mov dword ptr [ecx + 4], 0
+        mov dword ptr [ecx + 8], 0
       stock_warning:
         pop eax
         popfd
@@ -51,6 +86,31 @@ namespace gamepad::unstable::controller::engine
     {
       const auto localize = reinterpret_cast<const char* (__cdecl*)(const char*, const char*, int)>(
         game::game_offset(0x103CA030));
+      // This call site is exclusively CG_DrawPlayerWeaponLowAmmoWarning.
+      // QoS 102867E0 selects the weapon; 102A88A0 indexes its clip at
+      // cg+322240 using WeaponDef+664. Unlike COD4, QoS never distinguishes
+      // an empty clip on the no-reserve branch. Do not change ammo thresholds.
+      const auto cg = game::game_offset(0x129FE8C0);
+      const auto select_weapon = reinterpret_cast<int (__fastcall*)(int, std::uintptr_t)>(
+        game::game_offset(0x102867E0));
+      const auto weapon = select_weapon(0, cg);
+      const auto maximum = *reinterpret_cast<const unsigned*>(game::game_offset(0x11A765A4));
+      if (weapon > 0 && static_cast<unsigned>(weapon) <= maximum)
+      {
+        const auto definition = reinterpret_cast<const std::uintptr_t*>(game::game_offset(0x118DA878))[weapon];
+        if (definition)
+        {
+          const auto ammo_index = *reinterpret_cast<const unsigned*>(definition + 656);
+          const auto clip_index = *reinterpret_cast<const unsigned*>(definition + 664);
+          if (ammo_index < 256 && clip_index < 256)
+          {
+            const auto* warning = ammo_warning::no_reload_text(
+              reinterpret_cast<const int*>(game::game_offset(0x12A4D380))[clip_index],
+              reinterpret_cast<const int*>(game::game_offset(0x12A4CF80))[ammo_index]);
+            if (warning) return warning;
+          }
+        }
+      }
       if (!text || std::strcmp(text, "PLATFORM_RELOAD") != 0)
         return localize(text, context, error_type);
 
@@ -82,7 +142,7 @@ namespace gamepad::unstable::controller::engine
         }
       }
       const char* label = text_icon::is_binding_token(binding) ? binding
-        : localized_key_hook.invoke<const char*>(binding);
+        : utils::hook::invoke<const char*>(game::game_offset(0x103C9F20), binding);
       thread_local std::string prompt;
       // Match killcam prompts: keyboard binding green, action white. Do not
       // tint the controller artwork; its source button colors are intentional.
@@ -351,11 +411,20 @@ namespace gamepad::unstable::controller::engine
     draw_icon_original = draw_icon_hook.get_original();
     text_width_hook.create(game::game_offset(0x1037CFA0), text_width_stub);
     localized_key_hook.create(game::game_offset(0x103C9F20), localized_key);
-    // Native low-ammo ownerdraw's localization call, not global translations.
-    // PLATFORM_RELOAD is a parameterized string, but this caller supplies none.
+    scheduler::loop(prepare_icons, scheduler::main, 1000ms);
+  }
+
+  void install_reload_warning()
+  {
+    // Independent of controller enablement: keyboard-only users need the same
+    // native ammo state and reload presentation. Install once, never hook a
+    // call-site twice when controller initialization follows HUD initialization.
+    static bool installed = false;
+    if (installed) return;
+    installed = true;
     utils::hook::call(game::game_offset(0x102870DA), reload_warning_text);
     warning_draw_original = reinterpret_cast<void*>(game::game_offset(0x102CE2B0));
+    warning_time_slot = game::game_offset(0x12A4CDD8);
     utils::hook::call(game::game_offset(0x1028714F), reload_warning_draw_stub);
-    scheduler::loop(prepare_icons, scheduler::main, 1000ms);
   }
 }

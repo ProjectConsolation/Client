@@ -35,6 +35,9 @@
 #include <vector>
 #include "menu_slideshow.hpp"
 #include "menu_loadout.hpp"
+#ifndef CONSOLATION_MENU_PARSER_TEST
+#include "ingame_settings.hpp"
+#endif
 
 namespace menu_file
 {
@@ -979,6 +982,7 @@ namespace menu_file
 		bool frontend_match_active = false;
 		bool frontend_systemlink_match = false;
 		bool frontend_match_origin_recorded = false;
+		bool return_systemlink_after_bootstrap = false;
 		bool local_loadout_active = false;
 		std::string pending_scaleform_screen;
 		std::string return_frontend_page;
@@ -1179,7 +1183,11 @@ namespace menu_file
 				const auto* error = game::Dvar_FindVar("com_errorMessage");
 				const bool has_error = error && static_cast<unsigned char>(error->type) == game::DVAR_TYPE_STRING
 					&& error->current.string && *error->current.string;
-				if (frontend_systemlink_match && !has_error) name = "mpsyslink";
+				// Bootstrap the resident frontend through its native root first.
+				// 102DC580 resets the GFx movie before delivering this screen. A
+				// direct lobby destination can leave its rebuilt root/stack blank.
+				// Route only once the new root reports itself via the AS callback.
+				return_systemlink_after_bootstrap = frontend_systemlink_match && !has_error;
 				frontend_systemlink_match = false;
 				frontend_match_origin_recorded = false;
 				pending_scaleform_screen.clear();
@@ -1203,6 +1211,9 @@ namespace menu_file
 
 		void update_frontend(unsigned char* context)
 		{
+			// Menu_PaintAll also runs on the separate in-game UI context.
+			// Never consume frontend transition state while painting pause menus.
+			if (context != reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38))) return;
 			const auto client = *reinterpret_cast<const int*>(context);
 			const auto count = *reinterpret_cast<const int*>(context + 2172);
 			if (client < 0 || client > 3 || count < 0 || count > 16) { restore_scaleform(); return; }
@@ -1221,6 +1232,7 @@ namespace menu_file
 			if (connection_state >= 3) frontend_match_active = true;
 			if (frontend_match_active)
 			{
+				return_systemlink_after_bootstrap = false;
 				std::array<game::menuDef_t*, 16> open{};
 				std::copy_n(reinterpret_cast<game::menuDef_t**>(context + 2108), count, open.begin());
 				bool closed = false;
@@ -1243,6 +1255,13 @@ namespace menu_file
 			}
 			const auto* screen = game::Dvar_FindVar("sf_current_menu");
 			if (!screen || static_cast<unsigned char>(screen->type) != game::DVAR_TYPE_STRING || !screen->current.string) return;
+			if (return_systemlink_after_bootstrap && !_stricmp(screen->current.string, "mpmainmenu"))
+			{
+				return_systemlink_after_bootstrap = false;
+				restore_scaleform(true);
+				command::execute("sf_open mpsyslink\n");
+				return;
+			}
 			// A queued sf_open can leave the previous screen reported for a frame.
 			// Do not reopen that replacement and disable GFx before it processes
 			// the requested destination (especially host -> settings transitions).
@@ -1323,6 +1342,7 @@ namespace menu_file
 		void paint_menus_stub(unsigned char* context)
 		{
 			ensure_loaded();
+			ingame_settings::update(context);
 			update_frontend(context);
 			for (const auto& [window, binding] : png_backgrounds)
 			{
@@ -1735,6 +1755,7 @@ namespace menu_file
 				window_paint_hook.create(game::game_offset(0x102D1A00), window_paint_stub);
 				console::info("[menu - open] installed: native openmenu hook with disk-source diagnostics\n");
 				register_commands();
+				ingame_settings::register_commands();
 			}
 
 			void pre_destroy() override
