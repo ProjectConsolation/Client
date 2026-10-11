@@ -8,6 +8,7 @@
 #include "respawn_script.hpp"
 #include "systemlink_progression.hpp"
 #include "ambient_script.hpp"
+#include "gametype_labels.hpp"
 #include "scaleform.hpp"
 
 #include "game/game.hpp"
@@ -30,6 +31,81 @@ namespace gametypes
 	namespace
 	{
 		utils::hook::detour db_find_xasset_header_internal_hook;
+		std::uintptr_t custom_label_base, extra_label_base;
+		std::uintptr_t custom_label_return, extra_label_return;
+
+		const char* __cdecl localize_gametype_label(const char* reference)
+		{
+			if (!reference) return "";
+			static thread_local std::string result;
+			result = labels::resolve(reference, [](const char* key)
+			{
+				// QoS SEH_StringEd_GetString, confirmed cdecl 103C9F20;
+				// uses the loaded language, not hard-coded English fallbacks.
+				return reinterpret_cast<const char*(__cdecl*)(const char*)>(
+					game::game_offset(0x103C9F20))(key);
+			});
+			return result.c_str();
+		}
+
+		__declspec(naked) void stock_label_entry()
+		{
+			__asm {
+				push eax
+				call localize_gametype_label
+				add esp, 4
+				ret
+			}
+		}
+		__declspec(naked) void custom_label_entry()
+		{
+			__asm {
+				add eax, custom_label_base
+				push eax
+				call localize_gametype_label
+				add esp, 4
+				jmp custom_label_return
+			}
+		}
+		__declspec(naked) void extra_label_entry()
+		{
+			__asm {
+				add eax, extra_label_base
+				push eax
+				call localize_gametype_label
+				add esp, 4
+				jmp extra_label_return
+			}
+		}
+
+		void install_gametype_label_localization()
+		{
+			// QoS UI feeder 29, column 0: retail tail-calls EAX-based
+			// UI_SafeTranslateString; custom/title-storage and appended rows
+			// return label buffers directly. KisakCOD UI_GetGameTypeDisplayName
+			// translates names too. Patch ONLY labels, never column-1 mode IDs.
+			const auto stock = game::game_offset(0x102DE315);
+			const auto custom = game::game_offset(0x102DE343);
+			const auto extra = game::game_offset(0x102DE37B);
+			unsigned char custom_bytes[] = {0x05, 0, 0, 0, 0};
+			unsigned char extra_bytes[] = {0x05, 0, 0, 0, 0};
+			custom_label_base = game::game_offset(0x113C6FA8);
+			extra_label_base = game::game_offset(0x113D1C18);
+			std::memcpy(custom_bytes + 1, &custom_label_base, 4);
+			std::memcpy(extra_bytes + 1, &extra_label_base, 4);
+			if (std::memcmp(reinterpret_cast<const void*>(stock), "\xE9\x96\xC6\xFF\xFF", 5)
+				|| std::memcmp(reinterpret_cast<const void*>(custom), custom_bytes, 5)
+				|| std::memcmp(reinterpret_cast<const void*>(extra), extra_bytes, 5))
+			{
+				console::error("gametypes: label localization skipped: unsupported feeder instructions\n");
+				return;
+			}
+			custom_label_return = game::game_offset(0x102DE348);
+			extra_label_return = game::game_offset(0x102DE380);
+			utils::hook::jump(stock, stock_label_entry);
+			utils::hook::jump(custom, custom_label_entry);
+			utils::hook::jump(extra, extra_label_entry);
+		}
 
 		void fix_missing_asset_lock_release()
 		{
@@ -848,6 +924,7 @@ namespace gametypes
 			void post_load() override
 			{
 				fix_missing_asset_lock_release();
+				install_gametype_label_localization();
 				db_find_xasset_header_internal_hook.create(game::DB_FindXAssetHeader_Internal, db_find_xasset_header_internal_stub);
 
 				// The frontend feeder count path subtracts one to hide the stock "menu" sentinel.

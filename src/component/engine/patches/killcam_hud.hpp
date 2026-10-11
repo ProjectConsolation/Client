@@ -4,6 +4,7 @@
 #include "game/game.hpp"
 #include <utils/hook.hpp>
 #include <cstring>
+#include "hud_call_abi.hpp"
 
 namespace killcam_hud
 {
@@ -25,8 +26,8 @@ namespace killcam_hud
 
 		std::size_t draw_foreground_and_chat(const int foreground, const int local_client)
 		{
-			const auto result = reinterpret_cast<std::size_t(*)(int)>(
-				game::game_offset(0x102BC580))(foreground);
+			const auto result = abi::draw_foreground(reinterpret_cast<void*>(
+				game::game_offset(0x102BC580)), local_client, foreground);
 			if (in_killcam())
 			{
 				// CG_Draw2D's two existing chat calls are skipped with drawHud=false.
