@@ -13,6 +13,7 @@
 #include <utils/io.hpp>
 #include <utils/string.hpp>
 #include <utils/thread.hpp>
+#include <utils/flags.hpp>
 
 #define OUTPUT_HANDLE GetStdHandle(STD_OUTPUT_HANDLE)
 
@@ -36,17 +37,20 @@ namespace console
 
 		std::vector<std::filesystem::path> get_log_paths()
 		{
+			const auto filename = utils::flags::has_flag("offline_test")
+				? "console-offline-test-" + std::to_string(GetCurrentProcessId()) + "-"
+					+ std::to_string(GetTickCount64()) + ".log" : std::string("console.log");
 			std::vector<std::filesystem::path> paths{};
-			paths.emplace_back(std::filesystem::current_path() / "consolation" / "console.log");
+			paths.emplace_back(std::filesystem::current_path() / "consolation" / filename);
 
 			if (const auto* local_app_data = std::getenv("LOCALAPPDATA"))
 			{
-				paths.emplace_back(std::filesystem::path(local_app_data) / "Project-Consolation" / "console.log");
+				paths.emplace_back(std::filesystem::path(local_app_data) / "Project-Consolation" / filename);
 			}
 
 			if (const auto* temp = std::getenv("TEMP"))
 			{
-				paths.emplace_back(std::filesystem::path(temp) / "Project-Consolation-console.log");
+				paths.emplace_back(std::filesystem::path(temp) / ("Project-Consolation-" + filename));
 			}
 
 			return paths;
@@ -149,6 +153,9 @@ namespace console
 
 		bool game_window_closed()
 		{
+			// Native dedicated transition may destroy the render window. The
+			// server/console lifetime is independent; quit still uses its boundary.
+			if (utils::flags::has_flag("dedicated")) return false;
 			static bool saw_game_window = false;
 			static auto window_missing_since = std::chrono::steady_clock::time_point{};
 

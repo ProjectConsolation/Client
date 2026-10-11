@@ -23,6 +23,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "offline_transport.hpp"
 
 namespace
 {
@@ -60,7 +61,8 @@ namespace
 	constexpr BYTE xnet_qos_info_target_contacted = 0x02;
 	constexpr std::uintptr_t qos_base = 0x10000000;
 	constexpr std::uintptr_t dvar_find_var_addr = 0x10276040;
-	WORD system_link_port = 3074;
+	std::atomic<WORD> system_link_port{3074};
+	std::atomic<WORD> offline_bound_port{0};
 
 	struct dvar_value
 	{
@@ -114,6 +116,14 @@ namespace
 		BYTE online_id[20];
 	};
 	static_assert(sizeof(xnaddr) == 36);
+	static_assert(offsetof(xnaddr, ethernet_address) == 10);
+	static_assert(offsetof(xnaddr, online_id) == 16);
+	std::mutex offline_peer_mutex;
+	std::vector<SOCKET> offline_game_sockets;
+	std::vector<SOCKET> offline_discovery_sockets;
+	offline_transport::peer_table offline_peers;
+	std::atomic<unsigned long long> offline_sent{}, offline_received{}, offline_rejected{};
+	constexpr std::uint32_t offline_virtual_base = 0xF0000000;
 
 	struct xsession_info
 	{
@@ -437,6 +447,76 @@ namespace
 		return requested_name;
 	}
 
+	bool offline_test_requested()
+	{
+		static const bool enabled = [] {
+			const auto has_flag = [](const wchar_t* line) {
+				int count = 0;
+				auto args = CommandLineToArgvW(line, &count);
+				bool found = false;
+				if (args)
+				{
+					for (int i = 1; i < count; ++i) found |= _wcsicmp(args[i], L"-offline_test") == 0;
+					LocalFree(args);
+				}
+				return found;
+			};
+			return has_flag(GetCommandLineW()) || has_flag(parent_launcher_command_line().c_str());
+		}();
+		return enabled;
+	}
+
+	std::string offline_test_run_id()
+	{
+		static const auto id = [] {
+			FILETIME created{}, exited{}, kernel{}, user{};
+			if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
+				throw std::runtime_error("Cannot obtain offline-test process identity");
+			wchar_t machine[MAX_COMPUTERNAME_LENGTH + 1]{};
+			DWORD count = MAX_COMPUTERNAME_LENGTH + 1;
+			if (!GetComputerNameW(machine, &count)) throw std::runtime_error("Cannot obtain offline-test machine identity");
+			std::string result;
+			for (DWORD i = 0; i < count; ++i) result += static_cast<char>(machine[i]);
+			const auto time = (std::uint64_t(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+			return result + "-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(time);
+		}();
+		return id;
+	}
+
+	WORD offline_test_port()
+	{
+		static const WORD port = [] {
+			const auto parse = [](const wchar_t* line) -> WORD {
+				int count = 0;
+				auto args = CommandLineToArgvW(line, &count);
+				WORD result = 0;
+				if (args) {
+					for (int i = 1; i < count; ++i) {
+						constexpr wchar_t prefix[] = L"-offline_test_port=";
+						if (_wcsnicmp(args[i], prefix, std::size(prefix) - 1)) continue;
+						const auto text = args[i] + std::size(prefix) - 1;
+						wchar_t* end = nullptr;
+						const auto value = wcstoul(text, &end, 10);
+						if (*text >= L'0' && *text <= L'9' && end && !*end && value > 0 && value <= 65535)
+							result = static_cast<WORD>(value);
+					}
+					LocalFree(args);
+				}
+				return result;
+			};
+			const auto own = parse(GetCommandLineW());
+			return own ? own : parse(parent_launcher_command_line().c_str());
+		}();
+		return offline_test_requested() ? port : 0;
+	}
+
+	// Keep SEH in a destructor-free function (MSVC C2712).
+	bool valid_recv_address_length(const int* length)
+	{
+		__try { return !length || (*length >= 0 && *length <= sizeof(sockaddr_storage)); }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+	}
+
 	unsigned int offline_instance_index()
 	{
 		struct instance_reservation
@@ -516,7 +596,8 @@ namespace
 		{
 			const auto requested_name = command_line_name();
 			auto name = requested_name.empty() ? offline_name() : requested_name;
-			const auto instance = offline_instance_index();
+			const auto instance = offline_test_requested() ? 0 : offline_instance_index();
+			if (offline_test_requested()) name += "#offline-test=" + offline_test_run_id();
 			if (instance != 0)
 			{
 				name += "#instance=" + std::to_string(instance + 1);
@@ -542,10 +623,12 @@ namespace
 		const auto length = GetModuleFileNameW(shim_module, module_path.data(), static_cast<DWORD>(module_path.size()));
 		if (!length || length >= module_path.size())
 		{
-			return std::filesystem::current_path() / L"storage";
+			auto root = std::filesystem::current_path() / L"storage";
+			return offline_test_requested() ? root / "debug-net" / offline_test_run_id() : root;
 		}
 
-		return std::filesystem::path(module_path.data()).parent_path() / L"storage";
+		auto root = std::filesystem::path(module_path.data()).parent_path() / L"storage";
+		return offline_test_requested() ? root / "debug-net" / offline_test_run_id() : root;
 	}
 
 	std::wstring hex_id(const std::uint64_t value, const int width)
@@ -654,6 +737,7 @@ namespace
 
 	void import_legacy_qos_profile()
 	{
+		if (offline_test_requested()) return; // Never import a real profile into ephemeral tests.
 		static XUID attempted_xuid = 0;
 		const auto current_xuid = offline_xuid();
 		if (attempted_xuid == current_xuid)
@@ -839,7 +923,14 @@ namespace
 			? requested_address->s_addr
 			: loopback;
 		address->online_address = address->local_address;
-		address->online_port = htons(system_link_port);
+		// QoS binds gameplay at 1000; XNet's 3074 system-link setting is
+		// not that socket's port. net_port is byte-swapped in this PC build.
+		WORD port = 1000;
+		// QoS caches XNetGetTitleXnAddr before opening its sockets (10244890).
+		// The advertised port must already match the requested test bind then.
+		if (const auto requested = offline_test_port()) port = requested;
+		if (const auto bound = offline_bound_port.load()) port = bound;
+		address->online_port = htons(port);
 
 		const auto xuid = offline_xuid();
 		address->ethernet_address[0] = 0x02; // Locally administered, unicast MAC.
@@ -933,23 +1024,91 @@ extern "C" BOOL WINAPI ConsolationXLiveShim()
 	return TRUE;
 }
 
+extern "C" DWORD WINAPI ConsolationOfflineTransportVersion() { return 1; }
+
+// Client-owned diagnostic ABI, not a GFWL export. No session keys are logged.
+extern "C" DWORD WINAPI ConsolationOfflineNetStatus(char* output, DWORD capacity)
+{
+	if (!output || !capacity) return ERROR_INVALID_PARAMETER;
+	std::lock_guard lock(offline_peer_mutex);
+	std::ostringstream text;
+	text << "offline_test=" << offline_test_requested() << " xuid=" << std::hex << offline_xuid()
+		<< std::dec << " pid=" << GetCurrentProcessId() << " port=" << offline_bound_port.load()
+		<< " peers=" << offline_peers.size() << " sent=" << offline_sent.load()
+		<< " received=" << offline_received.load() << " rejected=" << offline_rejected.load()
+		<< " storage=" << storage_root().string();
+	const auto value = text.str();
+	if (value.size() >= capacity) return ERROR_INSUFFICIENT_BUFFER;
+	memcpy(output, value.c_str(), value.size() + 1);
+	return ERROR_SUCCESS;
+}
+
 extern "C"
 {
 	int WINAPI xlive_XWSAStartup(WORD version, WSADATA* data) { return WSAStartup(version, data); }
 	int WINAPI xlive_XWSACleanup() { return WSACleanup(); }
 	SOCKET WINAPI xlive_XSocketCreate(int af, int type, int protocol)
 	{
+		const bool game_socket = af == AF_INET
+			&& type == SOCK_DGRAM && protocol == xnet_protocol_vdp;
+		// QoS 10244890 opens VDP gameplay and UDP discovery on adjacent ports.
+		const bool discovery_socket = af == AF_INET
+			&& type == SOCK_DGRAM && protocol == IPPROTO_UDP;
 		if (type == SOCK_DGRAM && protocol == xnet_protocol_vdp)
 		{
 			protocol = IPPROTO_UDP;
 		}
 
-		return socket(af, type, protocol);
+		const auto result = socket(af, type, protocol);
+		if (game_socket && result != INVALID_SOCKET) {
+			std::lock_guard lock(offline_peer_mutex);
+			offline_game_sockets.push_back(result);
+		}
+		if (discovery_socket && result != INVALID_SOCKET) {
+			std::lock_guard lock(offline_peer_mutex);
+			offline_discovery_sockets.push_back(result);
+		}
+		return result;
 	}
-	int WINAPI xlive_XSocketClose(SOCKET socket_handle) { return closesocket(socket_handle); }
+	int WINAPI xlive_XSocketClose(SOCKET socket_handle) {
+		{
+			std::lock_guard lock(offline_peer_mutex);
+			std::erase(offline_game_sockets, socket_handle);
+			std::erase(offline_discovery_sockets, socket_handle);
+		}
+		return closesocket(socket_handle);
+	}
 	int WINAPI xlive_XSocketIOCTLSocket(SOCKET socket_handle, long cmd, u_long* argp) { return ioctlsocket(socket_handle, cmd, argp); }
 	int WINAPI xlive_XSocketSetSockOpt(SOCKET socket_handle, int level, int optname, const char* optval, int optlen) { return setsockopt(socket_handle, level, optname, optval, optlen); }
-	int WINAPI xlive_XSocketBind(SOCKET socket_handle, const sockaddr* name, int namelen) { return bind(socket_handle, name, namelen); }
+	int WINAPI xlive_XSocketBind(SOCKET socket_handle, const sockaddr* name, int namelen)
+	{
+		bool game_socket = false;
+		bool discovery_socket = false;
+		{
+			std::lock_guard lock(offline_peer_mutex);
+			game_socket = std::find(offline_game_sockets.begin(), offline_game_sockets.end(), socket_handle) != offline_game_sockets.end();
+			discovery_socket = std::find(offline_discovery_sockets.begin(), offline_discovery_sockets.end(), socket_handle) != offline_discovery_sockets.end();
+		}
+		sockaddr_in requested{};
+		if ((game_socket || discovery_socket) && name && namelen >= sizeof(requested) && name->sa_family == AF_INET && offline_test_port()) {
+			requested = *reinterpret_cast<const sockaddr_in*>(name);
+			if (discovery_socket && offline_test_port() == 65535) { WSASetLastError(WSAEINVAL); return SOCKET_ERROR; }
+			requested.sin_port = htons(static_cast<WORD>(offline_test_port() + (discovery_socket ? 1 : 0)));
+			name = reinterpret_cast<const sockaddr*>(&requested);
+			namelen = sizeof(requested);
+		}
+		const auto result = bind(socket_handle, name, namelen);
+		if (result == 0 && game_socket && name && name->sa_family == AF_INET)
+		{
+			int type = 0, type_size = sizeof(type);
+			sockaddr_in bound{};
+			int size = sizeof(bound);
+			if (!getsockopt(socket_handle, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &type_size)
+				&& type == SOCK_DGRAM && !getsockname(socket_handle, reinterpret_cast<sockaddr*>(&bound), &size))
+				offline_bound_port = ntohs(bound.sin_port);
+		}
+		return result;
+	}
 	int WINAPI xlive_XSocketRecvFrom(SOCKET socket_handle, char* buffer, int len, int flags, sockaddr* from, int* fromlen)
 	{
 		if (socket_handle == INVALID_SOCKET || !buffer || len <= 0
@@ -959,46 +1118,131 @@ extern "C"
 			return SOCKET_ERROR;
 		}
 
-		if (fromlen)
+		if (!valid_recv_address_length(fromlen)) { WSASetLastError(WSAEWOULDBLOCK); return SOCKET_ERROR; }
+
+		std::vector<std::uint8_t> bytes(65507);
+		sockaddr_in source{};
+		int source_size = sizeof(source);
+		const auto size = recvfrom(socket_handle, reinterpret_cast<char*>(bytes.data()), static_cast<int>(bytes.size()),
+			flags, reinterpret_cast<sockaddr*>(&source), &source_size);
+		if (size == SOCKET_ERROR) return size;
+		std::span<const std::uint8_t> payload(bytes.data(), static_cast<std::size_t>(size));
+		offline_transport::address sender{};
+		offline_transport::session_id session{};
+		if (payload.size() >= offline_transport::magic.size()
+			&& std::equal(offline_transport::magic.begin(), offline_transport::magic.end(), payload.begin()))
 		{
-			__try
+			if (!offline_transport::decode(payload, sender, session, payload))
 			{
-				if (*fromlen < 0 || *fromlen > static_cast<int>(sizeof(sockaddr_storage)))
-				{
-					WSASetLastError(WSAEWOULDBLOCK);
-					return SOCKET_ERROR;
-				}
-			}
-			__except (EXCEPTION_EXECUTE_HANDLER)
-			{
+				++offline_rejected;
 				WSASetLastError(WSAEWOULDBLOCK);
 				return SOCKET_ERROR;
 			}
+			std::lock_guard lock(offline_peer_mutex);
+			const bool discovery = std::find(offline_discovery_sockets.begin(), offline_discovery_sockets.end(), socket_handle)
+				!= offline_discovery_sockets.end();
+			WORD game_port = source.sin_port;
+			if (discovery) memcpy(&game_port, sender.data() + 8, sizeof(game_port));
+			if (!game_port) { WSASetLastError(WSAEINVAL); return SOCKET_ERROR; }
+			const auto handle = offline_peers.remember(sender, session, {source.sin_addr.s_addr, game_port}, true);
+			if (!handle) { WSASetLastError(WSAENOBUFS); return SOCKET_ERROR; }
+			source.sin_addr.s_addr = htonl(offline_virtual_base + handle);
+			++offline_received;
 		}
-
-		return recvfrom(socket_handle, buffer, len, flags, from, fromlen);
+		if (payload.size() > static_cast<std::size_t>(len)) { WSASetLastError(WSAEMSGSIZE); return SOCKET_ERROR; }
+		if (from)
+		{
+			if (*fromlen < static_cast<int>(sizeof(source))) { WSASetLastError(WSAEFAULT); return SOCKET_ERROR; }
+			memcpy(from, &source, sizeof(source));
+			*fromlen = sizeof(source);
+		}
+		memcpy(buffer, payload.data(), payload.size());
+		return static_cast<int>(payload.size());
 	}
-	int WINAPI xlive_XSocketSendTo(SOCKET socket_handle, const char* buffer, int len, int flags, const sockaddr* to, int tolen) { return sendto(socket_handle, buffer, len, flags, to, tolen); }
+	int WINAPI xlive_XSocketSendTo(SOCKET socket_handle, const char* buffer, int len, int flags, const sockaddr* to, int tolen)
+	{
+		if (!to || tolen < static_cast<int>(sizeof(sockaddr_in)) || to->sa_family != AF_INET)
+			return sendto(socket_handle, buffer, len, flags, to, tolen);
+		auto destination = *reinterpret_cast<const sockaddr_in*>(to);
+		const auto ip = ntohl(destination.sin_addr.s_addr);
+		const bool virtual_peer = ip > offline_virtual_base && ip <= offline_virtual_base + offline_transport::peer_table::capacity;
+		bool discovery_broadcast = false;
+		{
+			std::lock_guard lock(offline_peer_mutex);
+			discovery_broadcast = destination.sin_addr.s_addr == INADDR_BROADCAST
+				&& std::find(offline_discovery_sockets.begin(), offline_discovery_sockets.end(), socket_handle) != offline_discovery_sockets.end();
+		}
+		if (!virtual_peer && !discovery_broadcast)
+			return sendto(socket_handle, buffer, len, flags, to, tolen);
+		if (!buffer || len <= 0 || static_cast<std::size_t>(len) > offline_transport::max_payload)
+		{ WSASetLastError(WSAEMSGSIZE); return SOCKET_ERROR; }
+		offline_transport::peer remote{};
+		if (virtual_peer) {
+			std::lock_guard lock(offline_peer_mutex);
+			const auto peer = offline_peers.get(ip - offline_virtual_base);
+			if (!peer) { WSASetLastError(WSAEHOSTUNREACH); return SOCKET_ERROR; }
+			remote = *peer;
+		}
+		if (virtual_peer) {
+			destination.sin_addr.s_addr = remote.route.ip;
+			destination.sin_port = remote.route.port ? remote.route.port : destination.sin_port;
+		}
+		xnaddr local{};
+		make_local_xnaddr(&local);
+		offline_transport::address sender{};
+		memcpy(sender.data(), &local, sizeof(local));
+		const auto bytes = offline_transport::encode(sender, remote.session,
+			{reinterpret_cast<const std::uint8_t*>(buffer), static_cast<std::size_t>(len)});
+		const auto size = sendto(socket_handle, reinterpret_cast<const char*>(bytes.data()), static_cast<int>(bytes.size()),
+			flags, reinterpret_cast<const sockaddr*>(&destination), sizeof(destination));
+		if (size == SOCKET_ERROR) return size;
+		if (size != static_cast<int>(bytes.size())) { WSASetLastError(WSAEMSGSIZE); return SOCKET_ERROR; }
+		++offline_sent;
+		return len;
+	}
 	unsigned long WINAPI xlive_XSocketInet_Addr(const char* cp) { return inet_addr(cp); }
 	int WINAPI xlive_XWSAGetLastError() { return WSAGetLastError(); }
 	unsigned short WINAPI xlive_XSocketHTONS(unsigned short hostshort) { return htons(hostshort); }
 
 	int WINAPI xlive_XNetStartup(void*) { return 0; }
-	int WINAPI xlive_XNetCleanup() { return 0; }
-	int WINAPI xlive_XNetXnAddrToInAddr(const xnaddr* address, const void*, IN_ADDR* in_addr)
+	int WINAPI xlive_XNetCleanup()
+	{
+		std::lock_guard lock(offline_peer_mutex);
+		offline_peers.clear();
+		return 0;
+	}
+	int WINAPI xlive_XNetXnAddrToInAddr(const xnaddr* address, const void* session_id, IN_ADDR* in_addr)
 	{
 		if (!address || !in_addr)
 		{
 			return WSAEINVAL;
 		}
-		in_addr->s_addr = address->local_address.s_addr ? address->local_address.s_addr : htonl(INADDR_LOOPBACK);
-		return 0;
+		{
+			offline_transport::address value{};
+			offline_transport::session_id session{};
+			memcpy(value.data(), address, value.size());
+			if (session_id) memcpy(session.data(), session_id, session.size());
+			std::lock_guard lock(offline_peer_mutex);
+			const auto handle = offline_peers.remember(value, session,
+				{address->local_address.s_addr ? address->local_address.s_addr : address->online_address.s_addr,
+				 address->online_port}, false);
+			if (!handle) return WSAENOBUFS;
+			in_addr->s_addr = htonl(offline_virtual_base + handle);
+			return 0;
+		}
 	}
 	int WINAPI xlive_XNetInAddrToXnAddr(IN_ADDR in_addr, xnaddr* address, void* session_id)
 	{
-		make_local_xnaddr(address, &in_addr);
-		make_session_id(session_id);
-		return 0;
+		{
+			if (address) memset(address, 0, sizeof(*address));
+			if (session_id) memset(session_id, 0, 8);
+			std::lock_guard lock(offline_peer_mutex);
+			const auto peer = offline_peers.get(ntohl(in_addr.s_addr) - offline_virtual_base);
+			if (!peer) return WSAEINVAL;
+			if (address) memcpy(address, peer->advertised.data(), sizeof(*address));
+			if (session_id) memcpy(session_id, peer->session.data(), 8);
+			return 0;
+		}
 	}
 	int WINAPI xlive_XNetConnect(IN_ADDR) { return 0; }
 	DWORD WINAPI xlive_XNetGetConnectStatus(IN_ADDR) { return xnet_connect_status_connected; }

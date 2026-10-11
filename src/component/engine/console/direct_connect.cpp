@@ -4,6 +4,11 @@
 #include "game/protocol.hpp"
 #include "command.hpp"
 #include "console.hpp"
+#include "ip_endpoint.hpp"
+#include "direct_connect.hpp"
+#include "game/dvars.hpp"
+#include <utils/hook.hpp>
+#include "../../../../src_xlive/offline_transport.hpp"
 #include "component/utils/scheduler.hpp"
 #include "component/engine/patches/xlive.hpp"
 #include <utils/flags.hpp>
@@ -24,6 +29,7 @@ namespace direct_connect
             std::string challenge;
             ULONGLONG started = 0;
             ULONGLONG last_send = 0;
+            offline_transport::address sender{};
 
             ~pending_query()
             {
@@ -100,6 +106,9 @@ namespace direct_connect
             // Use the responding IP because the offline host can advertise loopback.
             address[0] = source.sin_addr.s_addr;
             address[1] = source.sin_addr.s_addr;
+            // SDK XNADDR.wPortOnline is at byte 8, in network byte order.
+            // Register the queried endpoint, not the host's default 3074 port.
+            memcpy(reinterpret_cast<unsigned char*>(address.data()) + 8, &source.sin_port, sizeof(source.sin_port));
             std::array<unsigned int, 15> session{};
             std::copy(id.begin(), id.end(), session.begin());
             std::copy(address.begin(), address.end(), session.begin() + 2);
@@ -137,8 +146,13 @@ namespace direct_connect
 
             if (pending->last_send == 0 || now - pending->last_send >= 500)
             {
-                const auto request = std::string(4, '\xFF') + "getinfo " + pending->challenge;
-                const auto result = sendto(pending->socket, request.c_str(), static_cast<int>(request.size() + 1),
+                // QoS 10244480: VDP plaintext OOB has a two-byte zero header.
+                // The envelope lets the host learn this ephemeral reply route;
+                // its native send routine otherwise always selects port 1000.
+                const auto request = std::string(2, '\0') + std::string(4, '\xFF') + "getinfo " + pending->challenge + '\0';
+                const auto wire = offline_transport::encode(pending->sender, {},
+                    {reinterpret_cast<const std::uint8_t*>(request.data()), request.size()});
+                const auto result = sendto(pending->socket, reinterpret_cast<const char*>(wire.data()), static_cast<int>(wire.size()),
                     0, reinterpret_cast<const sockaddr*>(&pending->target), sizeof(pending->target));
                 if (result == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK)
                 {
@@ -169,7 +183,13 @@ namespace direct_connect
                     || source.sin_addr.s_addr != pending->target.sin_addr.s_addr
                     || source.sin_port != pending->target.sin_port) continue;
                 constexpr std::string_view prefix = "\xFF\xFF\xFF\xFF" "infoResponse\n";
-                std::string_view packet(buffer.data(), static_cast<std::size_t>(size));
+                offline_transport::address sender{};
+                offline_transport::session_id session{};
+                std::span<const std::uint8_t> payload;
+                if (!offline_transport::decode({reinterpret_cast<const std::uint8_t*>(buffer.data()),
+                    static_cast<std::size_t>(size)}, sender, session, payload)) continue;
+                if (payload.size() < 2 || payload[0] || payload[1]) continue;
+                std::string_view packet(reinterpret_cast<const char*>(payload.data() + 2), payload.size() - 2);
                 if (!packet.starts_with(prefix)) continue;
                 packet.remove_prefix(prefix.size());
                 std::map<std::string, std::string> fields;
@@ -191,7 +211,7 @@ namespace direct_connect
             }
             if (args.size() < 2 || args.size() > 3)
             {
-                console::info("connectIP <IPv4> [port] (default 1000); connectIP cancel\n");
+                console::info("connectIP <IPv4>:<port> (default port 1000); connectIP cancel\n");
                 return;
             }
             const bool offline = utils::flags::has_flag("offline")
@@ -217,12 +237,24 @@ namespace direct_connect
                 }
             }
             auto query = std::make_unique<pending_query>();
+            using transport_version = DWORD(WINAPI*)();
+            using title_address = DWORD(WINAPI*)(void*);
+            const auto shim = GetModuleHandleA("xlive.dll");
+            const auto version = xlive::is_local_shim_loaded() ? reinterpret_cast<transport_version>(
+                GetProcAddress(shim, "ConsolationOfflineTransportVersion")) : nullptr;
+            const auto get_address = reinterpret_cast<title_address>(GetProcAddress(shim, MAKEINTRESOURCEA(73)));
+            if (!version || version() != 1 || !get_address || !get_address(query->sender.data()))
+            {
+                console::error("[connectIP] rebuild/deploy the matching Consolation LAN shim on both peers\n");
+                return;
+            }
             query->target.sin_family = AF_INET;
             unsigned int port = 1000;
-            if (InetPtonA(AF_INET, args[1], &query->target.sin_addr) != 1
+            std::string_view ip;
+            if (!parse_endpoint(args[1], args.size() == 3 ? args[2] : "", ip, port)
+                || InetPtonA(AF_INET, std::string(ip).c_str(), &query->target.sin_addr) != 1
                 || query->target.sin_addr.s_addr == INADDR_ANY
-                || query->target.sin_addr.s_addr == INADDR_BROADCAST
-                || (args.size() == 3 && (!parse_number(args[2], port) || port == 0 || port > 65535)))
+                || query->target.sin_addr.s_addr == INADDR_BROADCAST)
             {
                 console::error("[connectIP] specify an IPv4 address and port 1-65535\n");
                 return;
@@ -238,8 +270,70 @@ namespace direct_connect
             query->started = GetTickCount64();
             query->challenge = std::to_string(GetCurrentProcessId()) + "-" + std::to_string(query->started);
             pending = std::move(query);
-            console::info("[connectIP] querying %s:%u\n", args[1], port);
+            console::info("[connectIP] querying %.*s:%u\n", static_cast<int>(ip.size()), ip.data(), port);
         }
+    }
+
+    bool prepare_dedicated_launch()
+    {
+        if (!utils::flags::has_flag("dedicated")) return true;
+        static bool requested = false;
+        static bool ready = false;
+        if (ready) return true;
+        auto* dedicated = game::Dvar_FindVar("dedicated");
+        auto* systemlink = game::Dvar_FindVar("systemlink");
+        auto* online = game::Dvar_FindVar("onlinegame");
+        const auto* running = game::Dvar_FindVar("sv_running");
+        using transport_version = DWORD(WINAPI*)();
+        const auto shim = GetModuleHandleA("xlive.dll");
+        const auto version = xlive::is_local_shim_loaded() ? reinterpret_cast<transport_version>(
+            GetProcAddress(shim, "ConsolationOfflineTransportVersion")) : nullptr;
+        const auto call = game::game_offset(0x102F7084);
+        constexpr unsigned char expected[] = {0xE8, 0x57, 0x2A, 0xF5, 0xFF};
+        if (!version || version() != 1 || !dedicated || !systemlink || !online || !running
+            || static_cast<int>(dedicated->type) != game::DVAR_TYPE_INT
+            || static_cast<int>(systemlink->type) != game::DVAR_TYPE_BOOL
+            || static_cast<int>(online->type) != game::DVAR_TYPE_BOOL
+            || memcmp(reinterpret_cast<const void*>(call), expected, sizeof(expected)))
+        {
+            console::error("[dedicated] local shim/native startup prerequisites missing; map commands not forwarded\n");
+            return false;
+        }
+        if (!requested)
+        {
+            if (running->current.enabled || dedicated->current.integer
+                || (dedicated->flags & game::dvar_flags::read_only))
+            {
+                console::error("[dedicated] expected initialized playable startup with no running server; refusing transition\n");
+                return false;
+            }
+            // QoS Com_CheckDedicated (103F7470) applies the native latch,
+            // shuts down local client state (1031E980), and installs server chat.
+            // Keep normal initial registration: cold dedicated init skips
+            // CL_Init, leaving the session gate dvar pointers uninitialized.
+            dedicated->latched.integer = 1;
+            dedicated->modified = true;
+            requested = true;
+            return false;
+        }
+        if (!dedicated->current.integer)
+        {
+            console::error("[dedicated] native dedicated latch was not applied; refusing map startup\n");
+            return false;
+        }
+        dvars::replace_dvar(dvars::make_bool("systemlink", "Current game is a system link game", true,
+            game::dvar_flags::none), false, false);
+        dvars::replace_dvar(dvars::make_bool("onlinegame", "Current game is an online game", false,
+            game::dvar_flags::none), false, false);
+        // SV_SpawnServer creates/processes its real System Link host session.
+        // Suppress only its local membership call, retaining caller stack cleanup.
+        // QoS 1.1, rollback: restore expected bytes; runtime proof: zero local
+        // roster entry, native active session and remote gameplay after map load.
+        utils::hook::nop(call, sizeof(expected));
+        if (const auto window = *game::main_window; window && IsWindow(window)) ShowWindow(window, SW_HIDE);
+        ready = true;
+        console::info("[dedicated] native dedicated processing enabled; no local session member (startup still initializes graphics)\n");
+        return true;
     }
 
     class component final : public component_interface
@@ -250,6 +344,25 @@ namespace direct_connect
             scheduler::once([] {
                 command::add("connectIP", start_query);
                 command::add("connect_direct", start_query); // compatibility for existing configs
+                command::add("offlineNetStatus", [] {
+                    using status_function = DWORD(WINAPI*)(char*, DWORD);
+                    const auto module = GetModuleHandleA("xlive.dll");
+                    const auto status = xlive::is_local_shim_loaded() ? reinterpret_cast<status_function>(
+                        GetProcAddress(module, "ConsolationOfflineNetStatus")) : nullptr;
+                    std::array<char, 2048> text{};
+                    if (!status || status(text.data(), static_cast<DWORD>(text.size())) != ERROR_SUCCESS)
+                        console::error("[offlineNetStatus] matching local test shim not loaded\n");
+                    else {
+                        console::info("[offlineNetStatus] %s\n", text.data());
+                        const auto* dedicated = game::Dvar_FindVar("dedicated");
+                        const auto* running = game::Dvar_FindVar("sv_running");
+                        console::info("[offlineNetStatus] dedicated=%d sv_running=%d native_session_handle=%d native_session_active=%d\n",
+                            dedicated ? dedicated->current.integer : -1,
+                            running ? static_cast<int>(running->current.enabled) : -1,
+                            *reinterpret_cast<const std::uint32_t*>(game::game_offset(0x115F607C)) != 0,
+                            *reinterpret_cast<const unsigned char*>(game::game_offset(0x115F60BC)) != 0);
+                    }
+                });
             }, scheduler::main);
             scheduler::loop(poll_query, scheduler::main, 50ms);
         }

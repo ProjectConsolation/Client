@@ -2,9 +2,10 @@
 
 ## Direct IP connections
 
-`connectIP <IPv4> [port]` queries the endpoint for its QoS session information,
+`connectIP <IPv4>:<port>` (for example `connectIP 127.0.0.1:1000`) queries the endpoint for its QoS session information,
 then invokes the native session/party connection path. The default UDP port is
-1000. `connectIP cancel` cancels a pending query; `connect_direct` remains a
+1000 when the port is omitted. The old separate-port syntax remains compatible.
+`connectIP cancel` cancels a pending query; `connect_direct` remains a
 compatibility alias. Replies must match the endpoint, challenge and Consolation
 protocol, and include valid session fields and slot counts. A query times out
 after five seconds.
@@ -19,10 +20,83 @@ before connecting. Both session join and actual gameplay still require a
 two-machine test. This command does not implement NAT traversal; the advertised
 UDP endpoint must be reachable through the firewall/router.
 
-Offline peer resolution is not yet verified: the compatibility shim currently
-reconstructs an incoming peer's XNADDR using local identity bytes, whereas QoS
-also compares complete XNADDR records when resolving party members. Treat the
-direct-IP command as a connection test, not a completed offline P2P implementation.
+### Opt-in two-process / two-machine test
+
+Rebuild and deploy both matching DLLs yourself. The replacement `xlive.dll` is
+still required; Microsoft's system runtime is not. Start the host with:
+
+```text
+JB_Launcher_s.exe -multiplayer -offline -offline_test -offline_test_port=1000 -name TestHost
+```
+
+Start the playable client with `-offline_test_port=1002 -name TestClient` and
+the same other switches. QoS opens a gameplay socket and an adjacent discovery
+socket, so reserve 1000/1001 for the host and 1002/1003 for the second process.
+`-offline_test_port=<1..65534>` overrides these binds before native networking
+starts; it has no effect without `-offline_test`. Do not use `+set net_port` as
+a substitute: launcher command forwarding happens after initial socket setup.
+
+In both consoles, run `offlineNetStatus`. It prints test-mode state, process ID,
+XUID, bound gameplay port (`0` means not bound), peer count, envelope traffic
+counters and isolated storage path, followed by native dedicated/server-running
+and session-handle/session-active state. The client-owned diagnostic contains no
+session keys. `tools/prepare_offline_connection_test.ps1 -GameDirectory <path>
+-Role Host` (or `Client`) checks required files and prints launch instructions
+and DLL hashes without launching anything or changing firewall rules.
+
+Create/start a match through the host's SYSTEM LINK / CUSTOM GAME menu, without
+bots. On the second instance use `connectIP 127.0.0.1:1000`. For two computers,
+use the host's LAN IPv4 address instead and allow the selected UDP ports on a
+trusted private network. Foreground each window in turn to control its player.
+Verify distinct XUIDs, two roster entries, movement visible to the other player,
+fire/damage/death/respawn, disconnect and rejoin. Repeat on two machines with
+matching DLL hashes. Keep both console logs; a query reply or increasing packet
+counters is not sufficient proof of authoritative gameplay.
+
+Test identities include machine name, process ID and creation time; each launch
+gets separate shim profile/title storage under `storage/debug-net/<run>/` and
+does not import a real GFWL profile. This isolation does **not** include native
+engine graphics/key-binding config files. Console logs use separate
+`console-offline-test-<pid>-<tick>.log` filenames in the usual log directories.
+Use separate game copies if configs must also be isolated. Ordinary offline identities
+and storage are unchanged when the flag is absent.
+
+The local-shim adapter preserves engine datagrams inside a versioned envelope and
+keeps advertised peer XNADDR/session records for reverse lookup instead of
+fabricating remote identities from the local user. It supports at most 64 peer
+records per XNet lifetime. It is plaintext trusted-LAN test infrastructure, not
+XNet encryption, authenticated matchmaking, Internet P2P or NAT traversal.
+Both peers need matching replacement shims. The adapter also runs for ordinary
+offline profiles; only ephemeral identities/storage and bind overrides require
+`-offline_test`. Direct queries include QoS's native two-byte VDP header and a
+reply route, so the native hard-coded port 1000 does not lose replies to an
+ephemeral query socket. Native SYSTEM LINK discovery broadcasts carry the same
+identity envelope; replies route to the client's gameplay port, not its adjacent
+discovery socket. Refresh SYSTEM LINK on the same private LAN after starting a
+host match. Discovery uses UDP broadcast port 1001, so keep the host base port
+1000 for this test. Custom host ports require direct IP connection.
+
+### Experimental offline dedicated host
+
+Add `-dedicated -set g_gametype dm -map mp_shipment` to the host launch above.
+The client first completes normal initialization, then asks QoS's native
+dedicated-latch transition to shut down local client processing before forwarding
+map commands. It enables the native System Link session gate and suppresses the
+map-start local session-membership call. Native session creation/completion and
+server gameplay remain authoritative. Missing prerequisites refuse map startup.
+
+This is **not a renderer-free cold-start server**: graphics/resources still
+initialize briefly, and the game window is then hidden. It still requires the
+full game installation. Rebuild both DLLs and prove this path at runtime before
+using it as a dedicated server: `dedicated=1`, `sv_running=1`, native session
+handle/active both `1`, no controllable host/host roster entry, and remote joins,
+movement, combat, disconnect/rejoin. A second playable debug instance must omit
+`-dedicated`. Do not force native session-active bytes to obtain a reply.
+
+QoS's dedicated `infoResponse` changes only the `hw` field; it uses the same
+session fields as a playable host. The actual response gate is an active native
+session, not a different dedicated response format. The query/discovery and
+dedicated changes are source-verified, not yet two-machine gameplay-verified.
 
 ## Discord Rich Presence
 

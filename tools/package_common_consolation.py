@@ -162,6 +162,9 @@ def build(source, directory, target, controller_directory=None, xbox_directory=N
         names = list(records)
     # Same external-technique manifest layout as build_pc_load_zone.
     entries = [(7, ",sm2/2d"), (7, ",2d")] + [(6, name) for name in names]
+    from package_controller_resources import resources
+    bundled = resources()
+    entries += [(32, name) for name in bundled]
     payload = bytearray(struct.pack("<4I", 0, 0, len(entries), x.INLINE))
     payload.extend(b"".join(struct.pack("<2I", kind, x.INLINE) for kind, _ in entries))
     tech_pointer = 0x40000001 + 4 + 8
@@ -178,6 +181,9 @@ def build(source, directory, target, controller_directory=None, xbox_directory=N
         parsed = x._pc_material_record_at(payload, name, start + 104)
         if parsed is None or parsed["end_offset"] != len(payload):
             raise ValueError(f"{name}: material did not round-trip")
+    for name, data in bundled.items():
+        payload.extend(struct.pack("<3I", x.INLINE, len(data), x.INLINE))
+        payload.extend(name.encode("ascii") + b"\0" + data + b"\0")
     allocation = len(payload) + 65536
     blob = struct.pack("<7I", 470, len(payload), allocation, 65536, allocation, 0, 0)
     blob += zlib.compress(payload, 1)

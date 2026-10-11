@@ -112,6 +112,20 @@ Device discovery runs on a worker, publishing through the synchronized registry.
 
 ## Known Limitations
 
+The shipped `common_consolation.ff` also bundles all 13 shared/controller
+Scaleform movies and 11 original Xbox config references as native rawfiles,
+in addition to the existing glyphs and controller diagrams. Movie lookup uses
+the bundled `consolation/scaleform/` assets once the zone is resident. Keep the
+loose movie bundle for bootstrap requests made before that zone loads and native
+file-based requests. The original Xbox configs are namespaced references, not
+automatic replacements for PC multiplayer bindings; their absent Xbox MP cfg
+dependencies are not executed. Supported PC presets remain owned by the client.
+
+`tools/package_controller_resources.py <source.ff> <new.ff>` refreshes embedded
+movies/config references while preserving existing compressed HUD pixels.
+It refuses to overwrite output or discard unrelated rawfiles. After editing
+movies, refresh this zone too; already loaded movies require a full restart.
+
 - Device output capabilities do not imply all gameplay rumble or adaptive-trigger events are wired.
 - Not every decorative Scaleform label is an input-binding prompt.
 - SDL support is still early and currently focused on basic PlayStation-style controller detection/polling

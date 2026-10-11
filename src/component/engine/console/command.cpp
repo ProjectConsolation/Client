@@ -3,6 +3,7 @@
 
 #include "command.hpp"
 #include "console.hpp"
+#include "direct_connect.hpp"
 #include "component/utils/scheduler.hpp"
 #include "component/engine/scripting/gametypes.hpp"
 
@@ -45,7 +46,8 @@ namespace command
 		{
 			const auto lower = utils::string::to_lower(command_name);
 			return lower == "multiplayer" || lower == "offline"
-				|| lower == "local_offline" || lower == "local-offline";
+				|| lower == "local_offline" || lower == "local-offline"
+				|| lower == "dedicated" || lower == "offline_test" || lower.starts_with("offline_test_port=");
 		}
 
 		std::string quote_launch_argument(std::string argument)
@@ -62,6 +64,15 @@ namespace command
 
 		void forward_launch_commands()
 		{
+			if (!direct_connect::prepare_dedicated_launch())
+			{
+				static bool retried = false;
+				if (!retried) {
+					retried = true;
+					scheduler::once(forward_launch_commands, scheduler::main);
+				}
+				return;
+			}
 			const auto& arguments = utils::flags::get_launch_arguments();
 			std::string commands;
 			std::size_t forwarded_count = 0;

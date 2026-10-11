@@ -41,6 +41,18 @@ different offline profile.
 
 ## Runtime requirement
 
+The replacement shim uses experimental plaintext LAN transport with versioned
+identity envelopes for native gameplay and System Link discovery.
+`-offline_test` enables process-unique test XUIDs and separate
+`storage/debug-net/<machine-pid-start-time>/` persistence.
+Legacy GFWL imports are skipped in this mode. `-offline_test_port=<port>` reserves
+the gameplay port and adjacent discovery port before native socket binding.
+Use base ports 1000 and 1002 for two playable instances on one machine.
+Both peers require matching client/shim versions. No encryption,
+peer authentication or NAT traversal is provided. Native engine configs are
+not isolated; client console logs get per-process test filenames. See `docs/wiki/Commands.md` for
+the runtime proof checklist and dedicated-host limitations.
+
 `-offline`, `-local_offline`, and `-local-offline` enable the client-side
 offline patches and skip the installed-GFWL check. They do not change Windows'
 PE loading order: the project's replacement `xlive.dll` must still be placed

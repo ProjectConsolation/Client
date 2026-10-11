@@ -9,6 +9,7 @@
 #include <utils/concurrency.hpp>
 #include <utils/string.hpp>
 #include <utils/thread.hpp>
+#include <utils/flags.hpp>
 
 #include <array>
 #include <cstring>
@@ -159,6 +160,7 @@ namespace scheduler
 
 		bool game_window_closed()
 		{
+			if (utils::flags::has_flag("dedicated")) return false;
 			static bool saw_game_window = false;
 			static auto window_missing_since = std::chrono::steady_clock::time_point{};
 

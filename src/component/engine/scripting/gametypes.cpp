@@ -239,6 +239,14 @@ namespace gametypes
 					}
 					return original;
 				}
+				// Use bundled movies once common_consolation is resident. Bootstrap
+				// movies requested before that zone loads retain the loose fallback.
+				if (const auto bundled = scaleform::bundled_path(name); !bundled.empty())
+				{
+					auto header = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(
+						type, bundled.c_str(), 0);
+					if (rawfile_has_data(header.rawfile)) return header;
+				}
 				if (auto* rawfile = scaleform::try_override(name))
 				{
 					game::XAssetHeader header{};

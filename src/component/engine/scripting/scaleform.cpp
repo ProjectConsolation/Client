@@ -106,6 +106,12 @@ namespace scaleform
 		return normalized.empty() ? nullptr : load_override(normalized);
 	}
 
+	std::string bundled_path(const char* name)
+	{
+		const auto path = normalize_path(name);
+		return path.starts_with("scaleform/") ? "consolation/" + path : std::string{};
+	}
+
 	void clear_overrides()
 	{
 		auto& cache = get_override_cache();
