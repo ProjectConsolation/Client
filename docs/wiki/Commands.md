@@ -1,5 +1,18 @@
 # Commands
 
+## Scaleform frontend recovery
+
+`sf_restart` restores QoS's captured native frontend movie state and requests
+the multiplayer main menu. Use it from the console if returning from a match
+or disconnect leaves an empty/unresponsive frontend. Close the console afterward.
+It clears pending custom menu routes and does not automatically reopen System Link.
+
+The command is restricted to a disconnected frontend with a ready native movie
+and no running local server. It does not disconnect a match, restart the renderer,
+recreate the GFx heap, or change profiles/session settings. This is a manual recovery
+adapter, not a confirmed repair of the transition bug; test recovery with a rebuilt
+client DLL. `sf_open` alone only requests navigation and does not restore movie state.
+
 ## Direct IP connections
 
 `connectIP <IPv4>:<port>` (for example `connectIP 127.0.0.1:1000`) queries the endpoint for its QoS session information,

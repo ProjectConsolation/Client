@@ -1220,7 +1220,7 @@ namespace menu_file
 				const bool has_error = error && static_cast<unsigned char>(error->type) == game::DVAR_TYPE_STRING
 					&& error->current.string && *error->current.string;
 				// Bootstrap the resident frontend through its native root first.
-				// 102DC580 resets the GFx movie before delivering this screen. A
+				// 102DC580 restores captured GFx state before delivering this screen. A
 				// direct lobby destination can leave its rebuilt root/stack blank.
 				// Route only once the new root is actually visible in the movie.
 				return_systemlink_after_bootstrap = frontend_systemlink_match && !has_error;
@@ -1671,6 +1671,52 @@ namespace menu_file
 
 		void register_commands()
 		{
+			command::add("sf_restart", [](const command::params& args)
+			{
+				if (args.size() != 1) { console::info("usage: sf_restart\n"); return; }
+				auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
+				const auto client = *reinterpret_cast<const int*>(context);
+				const auto count = *reinterpret_cast<const int*>(context + 2172);
+				const auto* server = game::Dvar_FindVar("sv_running");
+				if (client != 0 || count < 0 || count > 16
+					|| *reinterpret_cast<const int*>(game::game_offset(0x111F45F8)) != 0
+					|| (server && server->current.enabled)
+					|| *reinterpret_cast<const int*>(game::game_offset(0x105618D8)) != 0)
+				{
+					console::warn("sf_restart: available only in the disconnected frontend\n");
+					return;
+				}
+				const auto* table = *reinterpret_cast<unsigned char**>(game::game_offset(0x11A761E0));
+				if (!table || !table[5156] || *reinterpret_cast<const int*>(table) != 1
+					|| *reinterpret_cast<const int*>(table + 4 + 628) != 0
+					|| !*reinterpret_cast<void* const*>(table + 4 + 552))
+				{
+					console::warn("sf_restart: native frontend movie is not ready\n");
+					return;
+				}
+				// QoS PC 1.1: 102DC580 -> 1040E7F0 -> 1040CCE0 restores
+				// the movie's captured initial state (vtable +24), then requests
+				// the root screen. Unlike sf_open, this resets the AS timeline.
+				// Do not destroy the GFx heap, restart the renderer, or replay a
+				// lobby route. Retire this recovery adapter once return is reliable.
+				std::array<game::menuDef_t*, 16> open{};
+				std::copy_n(reinterpret_cast<game::menuDef_t**>(context + 2108), count, open.begin());
+				for (int i = count - 1; i >= 0; --i)
+					if (open[i] && open[i]->window.name && std::string_view(open[i]->window.name).starts_with("csl_"))
+						utils::hook::invoke<void>(game::game_offset(0x102CE070), context, open[i]);
+				pending_scaleform_screen.clear();
+				return_frontend_page.clear();
+				frontend_was_away = false;
+				frontend_match_active = false;
+				frontend_systemlink_match = false;
+				frontend_match_origin_recorded = false;
+				return_systemlink_after_bootstrap = false;
+				restore_scaleform(true);
+				if (auto* enabled = game::Dvar_FindVar("sf_enable")) set_scaleform_enabled(enabled, true);
+				utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, "main");
+				frontend_screen_stub("mpmainmenu");
+				console::info("sf_restart: native frontend state restored; opening main menu\n");
+			});
 			command::add("cslMenuRoute", [](const command::params& args)
 			{
 				if (args.size() != 2) { console::info("usage: cslMenuRoute <options|host|join|online|private|loadout|stats|map|mode|rules|main|browserback|leave|discord>\n"); return; }
