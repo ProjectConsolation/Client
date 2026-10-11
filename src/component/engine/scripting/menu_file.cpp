@@ -1169,6 +1169,42 @@ namespace menu_file
 			scaleform_suppressed = false;
 		}
 
+		bool frontend_root_visible()
+		{
+			// QoS PC 1.1: sf_current_menu is written by RootController.loadScreen
+			// BEFORE preloading and Out/In animations. Query the resident movie,
+			// not that request dvar, before issuing a second JumpToScreen.
+			// 1004EBB0 (movie vtable +48) is GetVariable(result, path), thiscall;
+			// 1004E9C0 writes type at +0 and bool/string payload at +8. Strings
+			// belong to the movie's scratch cache and expire on the next query.
+			struct value { unsigned int type, reserved; union { const char* string; bool boolean; double number; } data; };
+			static_assert(sizeof(value) == 16);
+			static_assert(offsetof(value, data) == 8);
+			if (*reinterpret_cast<const int*>(game::game_offset(0x105618D8)) != 0) return false;
+			const auto* table = *reinterpret_cast<unsigned char**>(game::game_offset(0x11A761E0));
+			if (!table || !table[5156]) return false;
+			const auto count = *reinterpret_cast<const int*>(table);
+			if (count < 1 || count > 8) return false;
+			for (int i = 0; i < count; ++i)
+			{
+				const auto* record = table + 4 + i * 644;
+				if (*reinterpret_cast<const int*>(record + 628) != 0) continue;
+				auto* movie = *reinterpret_cast<void* const*>(record + 552);
+				if (!movie) continue;
+				const auto get = reinterpret_cast<bool(__thiscall*)(void*, value*, const char*)>(
+					(*reinterpret_cast<void***>(movie))[12]);
+				value result{};
+				if (!get(movie, &result, "_global.currentScreen._name") || result.type != 4
+					|| !result.data.string || _stricmp(result.data.string, "mpmainmenu")) continue;
+				result = {};
+				if (!get(movie, &result, "_global.currentScreen._visible") || result.type != 2 || !result.data.boolean) continue;
+				result = {};
+				if (!get(movie, &result, "_global.outAnimStarted") || result.type != 2 || result.data.boolean) continue;
+				return true;
+			}
+			return false;
+		}
+
 		void __cdecl frontend_screen_stub(const char* name)
 		{
 			// UI_SetActiveMenu calls 102DC580 on return to the frontend too.
@@ -1186,7 +1222,7 @@ namespace menu_file
 				// Bootstrap the resident frontend through its native root first.
 				// 102DC580 resets the GFx movie before delivering this screen. A
 				// direct lobby destination can leave its rebuilt root/stack blank.
-				// Route only once the new root reports itself via the AS callback.
+				// Route only once the new root is actually visible in the movie.
 				return_systemlink_after_bootstrap = frontend_systemlink_match && !has_error;
 				frontend_systemlink_match = false;
 				frontend_match_origin_recorded = false;
@@ -1255,7 +1291,8 @@ namespace menu_file
 			}
 			const auto* screen = game::Dvar_FindVar("sf_current_menu");
 			if (!screen || static_cast<unsigned char>(screen->type) != game::DVAR_TYPE_STRING || !screen->current.string) return;
-			if (return_systemlink_after_bootstrap && !_stricmp(screen->current.string, "mpmainmenu"))
+			if (return_systemlink_after_bootstrap && !_stricmp(screen->current.string, "mpmainmenu")
+				&& frontend_root_visible())
 			{
 				return_systemlink_after_bootstrap = false;
 				restore_scaleform(true);

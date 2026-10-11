@@ -307,6 +307,27 @@ Loadouts opened from the System Link host (including its settings tab) go direct
 
 ## Launch Commands
 
+### Temporary audio tracing (Debug DLL only)
+
+`snd_trace start [seconds]` records a bounded, read-only trace of native sound
+resumes, ends, pauses, and channel state after `SND_Update`. The default is five
+seconds; accepted durations are 1–15 seconds. Close the console and fire/move
+while it records. It automatically saves a uniquely named
+`consolation/sound-trace-<pid>-<tick>.csv`. `snd_trace stop` stops early and saves
+the current records. Capture separately on a silent map and a working map.
+
+The trace records sample status, byte position, volume, native callsite, pause/
+mute state, and nonzero values in Miles' software mixer buffer. Mixer values
+are not proof of audible output. Resume events precede native channel alias
+registration, so their alias field may be empty or refer to the previous voice;
+subsequent frame events provide the registered alias. The trace does not alter
+audio state, substitute samples, or apply map-specific behavior. Hooks are
+installed only on first use, limited to the verified QoS 1.1/Miles build, and
+removed during shutdown. Background-thread events are excluded. The capture
+is limited to 4096 records and loaded 2D/3D channels, not streamed voices.
+This is a temporary investigation tool, not a sound repair, and requires a
+rebuilt Debug DLL. Release DLLs do not register it.
+
 ### In-game video menu adapter
 
 `cslIngameVideo <action>` is the native pause menu's staged-video adapter.
