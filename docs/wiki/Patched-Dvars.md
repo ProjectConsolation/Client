@@ -14,6 +14,13 @@ These saved non-cheat controls apply immediately, without a renderer restart.
 Opening the menu does not replace custom console values; changing the slider
 selects a supported menu value. The console FOV domain remains unchanged.
 
+Game Settings also contains **HORIZONTAL SAFE AREA** and **VERTICAL SAFE AREA**
+sliders. Their visible integer percentages run from 0 to 100 in steps of 5
+(default 85), writing `safeArea_horizontal` / `safeArea_vertical` as fractions
+from 0 to 1. They apply immediately to HUD bounds and are saved; front-end menus,
+the watermark and version overlay are not shifted. Very small values can crowd
+HUD elements together.
+
 The stock Graphics menu exposes these console settings; Apply uses the native
 renderer restart and Keep/Restore confirmation flow:
 

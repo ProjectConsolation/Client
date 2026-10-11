@@ -237,6 +237,12 @@ replacing gametype scripts in `patch_consolation.ff`.
 
 Options → Gameplay (Game Settings) includes native **FOV** and **MAXIMUM FPS** sliders with visible numeric values. FOV selects 65–160 degrees in steps of 5. Maximum FPS selects 30 (NATIVE), 60, 85, 125, 250, 333, or 0 (UNLIMITED). FPS help warns that going over 333 FPS may break physics. Mouse dragging, keyboard arrows and controller navigation use the stock slider handling.
 
+**HORIZONTAL SAFE AREA** and **VERTICAL SAFE AREA** use the same native slider
+handling with integer percentages from 0 to 100 in steps of 5 (default 85).
+They control `safeArea_horizontal` and `safeArea_vertical`; console values remain
+fractions (for example, `safeArea_horizontal 0.85`). Both are saved and apply to
+the in-game HUD without changing front-end menus or overlays.
+
 Both controls apply immediately and use the saved, non-cheat `cg_fov` and `com_maxfps` dvars; no video restart is needed. Graphics retains its FPS control. Console values outside these presets are not rewritten merely by opening Game Settings; adjusting a slider selects a preset.
 
 Ship both `common_consolation.ff` (menu movies/controller art) and `patch_consolation.ff` (gameplay scripts) under `consolation/zone/`. The script zone contains namespaced adaptations of retail respawn, killcam, match-clock and System Link money scripts, plus authored ambience source/placement inputs for all 12 retail MP maps. Namespaced lookup prevents later map-zone loading from replacing fixes. Explicit loose gametype overrides still take priority. Ambience retains runtime sound-alias validation rather than blindly enabling all CreateFX content. Install the matching client DLL and restart; regenerating assets alone does not update the lookup hook.

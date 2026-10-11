@@ -8,6 +8,7 @@
 #include "fastfiles.hpp"
 #include "xenon.hpp"
 #include "dlc_zone_policy.hpp"
+#include "map_audio_policy.hpp"
 #include "portal_links.hpp"
 #include "component/engine/console/command.hpp"
 
@@ -917,7 +918,7 @@ namespace fastfiles
 			return handle;
 		}
 
-		int db_load_xassets_stub(game::XZoneInfo* zones, const int count, const int sync)
+		int db_load_xassets_stub(game::XZoneInfo* zones, int count, const int sync)
 		{
 			bool multiplayer_map_requested = false;
 			bool donor_map_requested = false;
@@ -934,8 +935,44 @@ namespace fastfiles
 
 			// Preflight before native DB_LoadXAssets can unload existing zones or queue IO.
 			// QoS PC 1.1, 0x103E1CF0. Remove this adapter when native Xenon schemas exist.
+			std::vector<std::string> audio_names;
+			std::vector<game::XZoneInfo> audio_batch;
 			try
 			{
+				// QoS DB_LoadXAssets frees all requested ownership classes BEFORE
+				// queuing names. Insert audio in the SAME batch ahead of its map;
+				// a separate map-owned preload would be freed by the map request.
+				// DB_RegisterPendingZones copies names into its native queue, as
+				// does KisakCOD DB_LoadXZone. Keep storage stable through the call.
+				if (zones && count > 0 && count <= 8)
+				{
+					audio_names.reserve(count);
+					audio_batch.reserve(count * 2);
+					for (int i = 0; i < count; ++i)
+					{
+						const auto name = zones[i].name ? utils::string::to_lower(zones[i].name) : std::string{};
+						const auto companion = map_audio::companion_name(name);
+						bool listed = false;
+						for (int j = 0; j < count; ++j)
+							listed |= zones[j].name && utils::string::to_lower(zones[j].name) == companion;
+						if (!companion.empty() && zones[i].allocFlags && !listed && find_zone_file(companion + ".ff"))
+						{
+							audio_names.push_back(companion);
+							audio_batch.push_back({audio_names.back().c_str(), zones[i].allocFlags, 0});
+							game::Com_Printf(16, "^5[Zones] Queued map audio companion %s\n", companion.c_str());
+						}
+						audio_batch.push_back(zones[i]);
+					}
+					if (!audio_names.empty())
+					{
+						const auto named_count = std::count_if(audio_batch.begin(), audio_batch.end(), [](const auto& zone) { return zone.name != nullptr; });
+						// Conservative inherited queue bound; never expand beyond
+						// KisakCOD's eight pending entries without QoS validation.
+						if (named_count > 8) throw std::runtime_error("map audio expansion exceeds verified pending-zone batch bound");
+						zones = audio_batch.data();
+						count = static_cast<int>(audio_batch.size());
+					}
+				}
 				if (multiplayer_map_requested && !donor_map_requested && common_xenon_attempted)
 				{
 					// Release only donor-owned assets. Freeing 0x11 would also

@@ -19,11 +19,9 @@ namespace fastfiles::dlc
     constexpr bool requires_shared_assets(std::string_view name)
     {
         if (name.ends_with("_load")) name.remove_suffix(5);
-        // The IW3 Shipment conversion deliberately does not emit QoS audio.
-        // Like the Xenon DLC, it needs the resident native PC donor before
-        // CG registers weapon/footstep/impact aliases. Keep this separate
-        // from DLC image-archive policy: Shipment must not load Camille art.
-        return requires_donor(name) || name == "mp_shipment";
+        // Native audio is packaged by custom maps (embedded or *_audio.ff).
+        // Only legacy Xenon DLC still needs the render/audio donor.
+        return requires_donor(name);
     }
 
     // DLC textures reuse PC image names, including normal/specular maps. They
