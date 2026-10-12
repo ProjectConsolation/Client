@@ -2,7 +2,7 @@
 
 ## Scaleform frontend recovery
 
-`sf_restart` restores QoS's captured native frontend movie state and requests
+`sf_restart` resumes QoS's saved native frontend movie play state and requests
 the multiplayer main menu. Use it from the console if returning from a match
 or disconnect leaves an empty/unresponsive frontend. Close the console afterward.
 It clears pending custom menu routes and does not automatically reopen System Link.
@@ -11,7 +11,8 @@ The command is restricted to a disconnected frontend with a ready native movie
 and no running local server. It does not disconnect a match, restart the renderer,
 recreate the GFx heap, or change profiles/session settings. This is a manual recovery
 adapter, not a confirmed repair of the transition bug; test recovery with a rebuilt
-client DLL. `sf_open` alone only requests navigation and does not restore movie state.
+client DLL. Neither command reconstructs the ActionScript loader or restores an
+initial-state snapshot; the native resume operation only restores play/pause state.
 
 The frontend transition repair is separate from this recovery command. Native
 `startInAnimASAP` now retains a pending destination when its movie has not loaded;
@@ -21,7 +22,10 @@ The initial screen and explicit suppressed-Out requests own their handoff direct
 there is no outgoing timeline to signal completion. Already-cached screens start
 immediately; asynchronous screens retain their destination for `onLoadInit`.
 Superseded navigation cannot activate an old screen. System Link return waits for
-the incoming movie's native `Screen` resting frame, not merely its visibility.
+the main menu's native `Screen` resting frame, then requests `popup:mpsyslink`.
+PC `mpsyslink` is an Option popup using the existing popup movie, not a separate
+`mpsyslink.swf`. Requesting it as a movie plays the main menu's Out animation and
+leaves an empty destination marked `Loading`.
 Navigation to the same screen name is skipped only when that screen is visible,
 interactive and has completed its incoming animation—not when a hidden or
 deactivated clip merely retains the requested name.
@@ -45,6 +49,14 @@ already contains the previous asynchronous handoff fixes.
 Verify ordinary match completion, manual disconnect, and repeated host/join
 cycles without invoking `sf_restart`. Compilation/read-back and event-order
 tests do not prove that every GFx runtime return path is repaired.
+
+`sf_status` prints the resident frontend's current/destination screen, pending
+load, Out-animation flag, readiness, visibility, controller activation and frame
+numbers. It also reports the System Link loader cache entry and destination clip
+name, loaded frames, timeline position and controller activation, distinguishing
+a pending load from an initialized clip that never became interactive.
+It is read-only and does not restart the movie. Use its output when
+reporting a frontend that freezes at the end of an animation.
 
 ## Killcam and flash HUD behavior
 

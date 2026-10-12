@@ -2068,6 +2068,13 @@ namespace patches
 		}
 		game::dvar_s* Dvar_RegisterNew_Stub(const char* dvarName, game::DvarType type, unsigned short flags, char* desc, int unk, game::DvarValue value, game::DvarLimits domain)
 		{
+			// Retail rule initialization creates this external string before the
+			// patched tweakables fallback runs (icehotel_render.dmp: reset/current
+			// both "5", type STRING, flags 0x4000). Change the initial stock value,
+			// not subsequent live writes; keep the native type, flags and domain.
+			if (type == game::DVAR_TYPE_STRING && !_stricmp(dvarName, "scr_player_respawndelay")
+				&& (flags & 0x4000) && value.string && !std::strcmp(value.string, "5"))
+				value.string = "0";
 			if (type == game::DVAR_TYPE_BOOL && !_stricmp(dvarName, "cg_thirdPerson"))
 			{
 				const auto native_default = value.enabled;

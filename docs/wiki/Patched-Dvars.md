@@ -136,8 +136,10 @@ movement remain active. Verify player and bot melee on a listen server and
 with remote clients before relying on the experimental option.
 
 `scr_player_respawndelay` controls the player respawn wait in seconds, default `0`.
-The native script registration supplies that default only when no value is
-configured; an explicitly configured delay is preserved. The
+The native script fallback supplies zero when no value exists. Retail rule
+initialization can create an external string with value/reset `5` before that
+fallback runs; the DLL changes that initial stock registration to `0` as well.
+Later console/script writes are not forced back to zero. The
 client adapts the original QoS `_tweakables.gsc` getter to read this setting
 live instead of its server-start cache; changes also shorten an already-running
 player-delay wait. Negative values are treated as zero.

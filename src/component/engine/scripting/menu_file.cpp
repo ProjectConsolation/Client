@@ -1224,8 +1224,8 @@ namespace menu_file
 				const bool has_error = error && static_cast<unsigned char>(error->type) == game::DVAR_TYPE_STRING
 					&& error->current.string && *error->current.string;
 				// Bootstrap the resident frontend through its native root first.
-				// 102DC580 restores captured GFx state before delivering this screen. A
-				// direct lobby destination can leave its rebuilt root/stack blank.
+				// 102DC580 resumes the movie's saved play state before delivering this
+				// screen; it does not restore an ActionScript snapshot or rebuild it.
 				// Route only once the new root is actually visible in the movie.
 				return_systemlink_after_bootstrap = frontend_systemlink_match && !has_error;
 				frontend_systemlink_match = false;
@@ -1300,7 +1300,11 @@ namespace menu_file
 			{
 				return_systemlink_after_bootstrap = false;
 				restore_scaleform(true);
-				command::execute("sf_open mpsyslink\n");
+				// PC menuData defines mpsyslink as an Option popup, not a movie.
+				// JumpToScreen("mpsyslink") incorrectly preloads mpsyslink.swf,
+				// plays Out on the main menu and waits forever for that absent file.
+				// Native JumpToScreen's popup: branch uses the existing popMovie.
+				command::execute("sf_open popup:mpsyslink\n");
 				return;
 			}
 			// A queued sf_open can leave the previous screen reported for a frame.
@@ -1675,6 +1679,45 @@ namespace menu_file
 
 		void register_commands()
 		{
+			command::add("sf_status", [](const command::params& args)
+			{
+				if (args.size() != 1) { console::info("usage: sf_status\n"); return; }
+				// Same verified GetVariable ABI as frontend_root_visible. Read only:
+				// record the interrupted handoff without restarting its timeline.
+				struct value { unsigned int type, reserved; union { const char* string; bool boolean; double number; } data; };
+				static_assert(sizeof(value) == 16);
+				const auto* table = *reinterpret_cast<unsigned char**>(game::game_offset(0x11A761E0));
+				const int count = table ? *reinterpret_cast<const int*>(table) : 0;
+				if (!table || !table[5156] || count < 1 || count > 8)
+				{ console::info("sf_status: no ready movie table\n"); return; }
+				for (int i = 0; i < count; ++i)
+				{
+					const auto* record = table + 4 + i * 644;
+					if (*reinterpret_cast<const int*>(record + 628) != 0) continue;
+					auto* movie = *reinterpret_cast<void* const*>(record + 552);
+					if (!movie) continue;
+					const auto get = reinterpret_cast<bool(__thiscall*)(void*, value*, const char*)>(
+						(*reinterpret_cast<void***>(movie))[12]);
+					for (const auto* path : { "_global.currentScreen._name", "_global.nextScreenName",
+						"_global.startOnLoad", "_global.outAnimStarted", "_global.cslScreenReady",
+						"_global.currentScreen._visible", "_global.currentScreen.controller._isActive",
+						"_global.currentScreen._currentframe", "_global.currentScreen._totalframes",
+						"_global.controller._screenLoader._cachedFiles.mpsyslink",
+						"_global.controller._screenLoader._cachedFiles.mpsyslink._name",
+						"_level0.mpsyslink._name", "_level0.mpsyslink._framesloaded",
+						"_level0.mpsyslink._currentframe", "_level0.mpsyslink._totalframes",
+						"_level0.mpsyslink.controller._isActive" })
+					{
+						value result{};
+						if (!get(movie, &result, path)) console::info("sf_status: %s unavailable\n", path);
+						else if (result.type == 4 && result.data.string)
+							console::info("sf_status: %s = %s\n", path, result.data.string);
+						else if (result.type == 2) console::info("sf_status: %s = %i\n", path, result.data.boolean ? 1 : 0);
+						else if (result.type == 3) console::info("sf_status: %s = %g\n", path, result.data.number);
+						else console::info("sf_status: %s type=%u\n", path, result.type);
+					}
+				}
+			});
 			command::add("sf_restart", [](const command::params& args)
 			{
 				if (args.size() != 1) { console::info("usage: sf_restart\n"); return; }
@@ -1699,8 +1742,9 @@ namespace menu_file
 					return;
 				}
 				// QoS PC 1.1: 102DC580 -> 1040E7F0 -> 1040CCE0 restores
-				// the movie's captured initial state (vtable +24), then requests
-				// the root screen. Unlike sf_open, this resets the AS timeline.
+				// the movie's saved play state (vtable +24 -> 1004E680 ->
+				// 10056ED0 writes sprite+172), then requests the root screen.
+				// It does not reset the AS timeline or reconstruct the loader.
 				// Do not destroy the GFx heap, restart the renderer, or replay a
 				// lobby route. Retire this recovery adapter once return is reliable.
 				std::array<game::menuDef_t*, 16> open{};
