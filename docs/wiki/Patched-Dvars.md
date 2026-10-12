@@ -135,7 +135,9 @@ friction-timed charge state machine. Native QoS collision and subsequent
 movement remain active. Verify player and bot melee on a listen server and
 with remote clients before relying on the experimental option.
 
-`scr_player_respawndelay` controls the player respawn wait in seconds. The
+`scr_player_respawndelay` controls the player respawn wait in seconds, default `0`.
+The native script registration supplies that default only when no value is
+configured; an explicitly configured delay is preserved. The
 client adapts the original QoS `_tweakables.gsc` getter to read this setting
 live instead of its server-start cache; changes also shorten an already-running
 player-delay wait. Negative values are treated as zero.

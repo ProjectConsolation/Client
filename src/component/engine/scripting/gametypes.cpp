@@ -427,6 +427,7 @@ namespace gametypes
 				if (normalized_name == "maps/mp/gametypes/_tweakables.gsc"
 					|| normalized_name == "maps/mp/gametypes/_globallogic.gsc"
 					|| normalized_name == "maps/mp/gametypes/_killcam.gsc"
+					|| normalized_name == "maps/mp/gametypes/_damagefeedback.gsc"
 					|| normalized_name == "maps/mp/gametypes/_persistence_util.gsc")
 				{
 					const auto bundled = "consolation/scripts/" + normalized_name;
@@ -439,12 +440,15 @@ namespace gametypes
 					if (normalized_name == "maps/mp/gametypes/_tweakables.gsc"
 						|| normalized_name == "maps/mp/gametypes/_globallogic.gsc"
 						|| normalized_name == "maps/mp/gametypes/_killcam.gsc"
+						|| normalized_name == "maps/mp/gametypes/_damagefeedback.gsc"
 						|| normalized_name == "maps/mp/gametypes/_persistence_util.gsc")
 					{
 						std::string data(fastfile_header.rawfile->buffer, fastfile_header.rawfile->len);
 						while (!data.empty() && data.back() == '\0') data.pop_back();
 						bool patched = normalized_name == "maps/mp/gametypes/_persistence_util.gsc"
 							? systemlink_progression::enable_money(data)
+							: normalized_name == "maps/mp/gametypes/_damagefeedback.gsc"
+							? respawn_script::make_damage_feedback_visible(data)
 							: normalized_name == "maps/mp/gametypes/_tweakables.gsc"
 							? respawn_script::make_delay_live(data)
 							: normalized_name == "maps/mp/gametypes/_killcam.gsc"

@@ -4,6 +4,68 @@
 
 namespace gametypes::respawn_script
 {
+	inline bool make_damage_feedback_visible(std::string& source)
+	{
+		const std::string anchor = "player.hud_damagefeedback.archived = true;";
+		const auto at = source.find(anchor);
+		if (at == std::string::npos || source.find(anchor, at + anchor.size()) != std::string::npos
+			|| source.find("player.hud_damagefeedback.foreground") != std::string::npos) return false;
+		// Preserve archived killer feedback; only change the native draw pass.
+		source.insert(at + anchor.size(), "\n\t\tplayer.hud_damagefeedback.foreground = true;");
+		return true;
+	}
+
+	inline bool make_respawn_default_zero(std::string& source)
+	{
+		const std::string name = "\"scr_player_respawndelay\"";
+		const auto at = source.find(name);
+		if (at == std::string::npos || source.find(name, at + name.size()) != std::string::npos) return false;
+		const auto line = source.rfind('\n', at);
+		const auto comma = source.find(',', at + name.size());
+		const auto end = source.find(')', at + name.size());
+		if (comma == std::string::npos || end == std::string::npos || comma >= end) return false;
+		const auto prefix = source.substr(line == std::string::npos ? 0 : line + 1,
+			at - (line == std::string::npos ? 0 : line + 1));
+		if (prefix.find("registerTweakable(") == std::string::npos
+			|| prefix.find("\"player\"") == std::string::npos
+			|| prefix.find("\"respawndelay\"") == std::string::npos) return false;
+		const auto value = source.find_first_not_of(" \t", comma + 1);
+		if (value == std::string::npos || value >= end || source[value] != '5'
+			|| source.substr(value + 1, end - value - 1).find_first_not_of(" \t") != std::string::npos) return false;
+		source[value] = '0';
+		return true;
+	}
+
+	inline bool make_killcam_identity(std::string& source)
+	{
+		const std::string timer = "self.kc_timer.y = -32;";
+		const std::string begin = "self thread spawnedKillcamCleanup();";
+		const std::string cleanup = "self.killcam = undefined;";
+		if (source.find("kc_killer") != std::string::npos) return false;
+		for (const auto& anchor : {timer, begin, cleanup})
+		{
+			const auto at = source.find(anchor);
+			if (at == std::string::npos || source.find(anchor, at + anchor.size()) != std::string::npos) return false;
+		}
+		source.replace(source.find(timer), timer.size(), "self.kc_timer.y = -20;");
+		source.insert(source.find(begin),
+			"// Consolation: resolve the actual attacker, never the replay victim.\n"
+			"\tplayers = getEntArray( \"player\", \"classname\" );\n"
+			"\tfor ( i = 0; i < players.size; i++ )\n\t{\n"
+			"\t\tif ( players[i] getEntityNumber() != attackerNum ) continue;\n"
+			"\t\tself.kc_killer = newClientHudElem( self );\n"
+			"\t\tself.kc_killer.archived = false;\n\t\tself.kc_killer.foreground = true;\n"
+			"\t\tself.kc_killer.horzAlign = \"center_safearea\";\n"
+			"\t\tself.kc_killer.vertAlign = \"bottom\";\n"
+			"\t\tself.kc_killer.alignX = \"center\";\n\t\tself.kc_killer.alignY = \"middle\";\n"
+			"\t\tself.kc_killer.x = 0;\n\t\tself.kc_killer.y = -60;\n"
+			"\t\tself.kc_killer.fontScale = 1.6;\n\t\tself.kc_killer.sort = 1;\n"
+			"\t\tself.kc_killer setText( \"Killed by \" + players[i].name );\n"
+			"\t\tbreak;\n\t}\n\n\t");
+		source.insert(source.find(cleanup),
+			"if ( isDefined( self.kc_killer ) ) self.kc_killer destroy();\n\t");
+		return true;
+	}
 	inline bool make_match_clock_hud(std::string& source)
 	{
 		// QoS common_mp _globallogic.gsc getClock(), recovered from invis.dmp:
@@ -89,6 +151,8 @@ namespace gametypes::respawn_script
 			"\tself setClientDvar( \"ui_hud_showscore\", value );\n"
 			"\tself setClientDvar( \"ui_hud_showweaponinfo\", value );\n"
 			"\tself setClientDvar( \"ui_hud_showstanceicon\", value );\n}\n";
+		// Apply only when the complete native timer/cleanup layout is present.
+		make_killcam_identity(patched);
 		source.swap(patched);
 		return true;
 	}
@@ -112,6 +176,7 @@ namespace gametypes::respawn_script
 			"\tif ( category == \"player\" && name == \"forcerespawn\" )\n"
 			"\t\treturn getDvarInt( \"scr_player_forcerespawn\" ) != 0;\n";
 		if (source.find("// Consolation: live respawn delay") != std::string::npos) return false;
+		make_respawn_default_zero(source);
 		source.insert(brace + 1, patch);
 		return true;
 	}
