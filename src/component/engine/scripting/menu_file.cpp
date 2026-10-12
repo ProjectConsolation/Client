@@ -1218,15 +1218,11 @@ namespace menu_file
 			frontend_return_requested = !frontend_transition;
 			if (frontend_return_requested)
 			{
-				// Remember the match's origin, not systemlink after teardown (the
-				// native exit path can reset it). Do not hide a native error screen.
 				const auto* error = game::Dvar_FindVar("com_errorMessage");
 				const bool has_error = error && static_cast<unsigned char>(error->type) == game::DVAR_TYPE_STRING
 					&& error->current.string && *error->current.string;
-				// Bootstrap the resident frontend through its native root first.
-				// 102DC580 resumes the movie's saved play state before delivering this
-				// screen; it does not restore an ActionScript snapshot or rebuild it.
-				// Route only once the new root is actually visible in the movie.
+				// Resume the native root before reopening System Link setup. Keep
+				// error destinations native; mpsyslink itself is only an Option popup.
 				return_systemlink_after_bootstrap = frontend_systemlink_match && !has_error;
 				frontend_systemlink_match = false;
 				frontend_match_origin_recorded = false;
@@ -1300,11 +1296,11 @@ namespace menu_file
 			{
 				return_systemlink_after_bootstrap = false;
 				restore_scaleform(true);
-				// PC menuData defines mpsyslink as an Option popup, not a movie.
-				// JumpToScreen("mpsyslink") incorrectly preloads mpsyslink.swf,
-				// plays Out on the main menu and waits forever for that absent file.
-				// Native JumpToScreen's popup: branch uses the existing popMovie.
-				command::execute("sf_open popup:mpsyslink\n");
+				// PC menuData: mpsyssetup is the actual host lobby/setup Screen.
+				// Its onEnterScreen only refreshes map/mode fields; StartServer is
+				// attached to its explicit Start Match item, not navigation here.
+				// mpsyslink is a Create/Join Option popup, not a standalone movie.
+				command::execute("sf_open mpsyssetup\n");
 				return;
 			}
 			// A queued sf_open can leave the previous screen reported for a frame.
@@ -1908,6 +1904,7 @@ namespace menu_file
 				frontend_match_active = false;
 				frontend_systemlink_match = false;
 				frontend_match_origin_recorded = false;
+				return_systemlink_after_bootstrap = false;
 				local_loadout_active = false;
 				pending_scaleform_screen.clear();
 				return_frontend_page.clear();

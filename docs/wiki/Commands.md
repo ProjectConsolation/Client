@@ -22,10 +22,12 @@ The initial screen and explicit suppressed-Out requests own their handoff direct
 there is no outgoing timeline to signal completion. Already-cached screens start
 immediately; asynchronous screens retain their destination for `onLoadInit`.
 Superseded navigation cannot activate an old screen. System Link return waits for
-the main menu's native `Screen` resting frame, then requests `popup:mpsyslink`.
-PC `mpsyslink` is an Option popup using the existing popup movie, not a separate
-`mpsyslink.swf`. Requesting it as a movie plays the main menu's Out animation and
-leaves an empty destination marked `Loading`.
+the main menu's native `Screen` resting frame, then requests `mpsyssetup`, the
+System Link Create Game screen with Start Match, Select Map, Select Game Mode
+and Match Options. Opening that screen refreshes map/mode fields; it does not
+activate Start Match. PC `mpsyslink` is only the Create/Join Option popup, not
+the lobby and not a separate `mpsyslink.swf`. Requesting it as a movie plays the
+main menu's Out animation and leaves an empty destination marked `Loading`.
 Navigation to the same screen name is skipped only when that screen is visible,
 interactive and has completed its incoming animation—not when a hidden or
 deactivated clip merely retains the requested name.
