@@ -15,14 +15,18 @@ namespace killcam_hud
 
 		bool flashbang_active()
 		{
-			// QoS 102C9EE0: shellshock parms/start/duration and current game clock.
+			// QoS 102C9EE0: shellshock parms/start/duration and current game time.
+			// Its SUB at 102C9EE5 reads [12A4CDD8] directly (2B 05 ...),
+			// not through a time pointer. Hex-Rays's pointer annotation is wrong.
 			// KisakCOD CG_Flashbanged is comparative; QoS's own blend test wins.
 			const auto parms = *reinterpret_cast<const std::uintptr_t*>(game::game_offset(0x12A57540));
-			const auto clock = *reinterpret_cast<const std::uintptr_t*>(game::game_offset(0x12A4CDD8));
-			if (!parms || !clock) return false;
-			return policy::flashbang_active(*reinterpret_cast<const int*>(clock),
-				*reinterpret_cast<const int*>(game::game_offset(0x12A57544)),
-				*reinterpret_cast<const int*>(game::game_offset(0x12A57548)),
+			const auto now = *reinterpret_cast<const std::int32_t*>(game::game_offset(0x12A4CDD8));
+			const auto start = *reinterpret_cast<const std::int32_t*>(game::game_offset(0x12A57544));
+			const auto duration = *reinterpret_cast<const std::int32_t*>(game::game_offset(0x12A57548));
+			// Match native short-circuiting: expired effects do not access parms.
+			// A zero game time is valid, not a missing-pointer sentinel.
+			if (!parms || !policy::flashbang_active(now, start, duration, 1)) return false;
+			return policy::flashbang_active(now, start, duration,
 				*reinterpret_cast<const int*>(parms + 16));
 		}
 

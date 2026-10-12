@@ -17,21 +17,53 @@ The frontend transition repair is separate from this recovery command. Native
 `startInAnimASAP` now retains a pending destination when its movie has not loaded;
 `ScreenLoader.onLoadInit` completes that handoff only for the current destination
 after the outgoing animation ends. Missing cache entries no longer count as loaded.
+The initial screen and explicit suppressed-Out requests own their handoff directly:
+there is no outgoing timeline to signal completion. Already-cached screens start
+immediately; asynchronous screens retain their destination for `onLoadInit`.
 Superseded navigation cannot activate an old screen. System Link return waits for
 the incoming movie's native `Screen` resting frame, not merely its visibility.
 Navigation to the same screen name is skipped only when that screen is visible,
 interactive and has completed its incoming animation—not when a hidden or
 deactivated clip merely retains the requested name.
 
-Deploy the updated client DLL and matching `patch_consolation.ff` together. The
-zone includes the repaired frontend/shared movie classes alongside the existing
-script fixes; the matching loose Scaleform bundle is retained for fallback.
+Deploy the updated client DLL and synchronized embedded/loose frontend movies.
+Do not assume a script-only `patch_consolation.ff` contains repaired movies:
+inspect its rawfile inventory before relying on it as a frontend override.
 `tools/patch_scaleform_transitions.py` updates all embedded class copies without
 replacing menu settings or controller art. `tools/package_scaleform_patch.py`
 preserves existing patch rawfiles when adding the repaired movie bundle.
+If movies are embedded in `common_consolation.ff`, refresh that zone with
+`tools/package_controller_resources.py` after changing the loose release bundle.
+Its embedded rawfiles must match `required_files/consolation/scaleform` byte for
+byte. Either source may resolve and cache first during startup, so updating only
+the embedded zone or only the loose files can leave an old movie resident even
+with a current DLL. Synchronize the installed `consolation/scaleform` directory
+as well as the zone, then fully restart the game to discard cached movies.
+`tools/test_build_common_consolation.py` checks this packaging invariant.
+Use `--initial-load-only` with the transition patcher to upgrade a bundle that
+already contains the previous asynchronous handoff fixes.
 Verify ordinary match completion, manual disconnect, and repeated host/join
 cycles without invoking `sf_restart`. Compilation/read-back and event-order
 tests do not prove that every GFx runtime return path is repaired.
+
+## Killcam and flash HUD behavior
+
+The packaged killcam script places the countdown 12 virtual pixels lower and
+shows `Killed by NAME` above it, resolving the actual attacker entity. The label
+is a live, non-archived foreground element and is destroyed with the other
+killcam elements. The native damage-feedback hitmarker remains archived, but
+uses the foreground pass so recorded killer hits remain visible while the
+ordinary gameplay HUD is hidden. Chat retains its existing replay drawing path.
+The marker uses a zero-position center/middle origin rather than signed
+half-size offsets, keeping its center on the crosshair in archived snapshots.
+
+The DLL suppresses the native crosshair/friendly-name drawing pass during the
+same flash state tested by QoS's `Flashbanged()` menu expression. It does not
+disable all HUD elements, alter shellshock duration, or change spectator names.
+The guard reads native game time as a scalar, including valid time zero, and
+only examines screen-blend parameters while the effect is active.
+Install the matching `patch_consolation.ff`, rebuild the DLL, and restart to
+validate replay hits, label cleanup, and name suppression/recovery after flashes.
 
 ## Direct IP connections
 

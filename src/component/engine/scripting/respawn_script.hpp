@@ -4,14 +4,36 @@
 
 namespace gametypes::respawn_script
 {
+	inline bool center_damage_feedback(std::string& source)
+	{
+		// QoS 102BAAA0 subtracts half the material dimensions for center/middle
+		// alignOrg (5). Anchor at zero instead of a signed half-size offset:
+		// hm.dmp's archived marker contained +12,+12 despite retail's -12,-12.
+		const std::string x = "player.hud_damagefeedback.x = -12;";
+		const std::string y = "player.hud_damagefeedback.y = -12;";
+		const auto unique = [&](const std::string& token)
+		{
+			const auto at = source.find(token);
+			return at != std::string::npos && source.find(token, at + token.size()) == std::string::npos;
+		};
+		if (!unique(x) || !unique(y)
+			|| source.find("player.hud_damagefeedback.alignX") != std::string::npos
+			|| source.find("player.hud_damagefeedback.alignY") != std::string::npos) return false;
+		source.replace(source.find(x), x.size(), "player.hud_damagefeedback.alignX = \"center\";\n"
+			"\t\tplayer.hud_damagefeedback.alignY = \"middle\";\n\t\tplayer.hud_damagefeedback.x = 0;");
+		source.replace(source.find(y), y.size(), "player.hud_damagefeedback.y = 0;");
+		return true;
+	}
+
 	inline bool make_damage_feedback_visible(std::string& source)
 	{
 		const std::string anchor = "player.hud_damagefeedback.archived = true;";
 		const auto at = source.find(anchor);
-		if (at == std::string::npos || source.find(anchor, at + anchor.size()) != std::string::npos
-			|| source.find("player.hud_damagefeedback.foreground") != std::string::npos) return false;
+		if (at == std::string::npos || source.find(anchor, at + anchor.size()) != std::string::npos) return false;
+		const bool centered = center_damage_feedback(source);
+		if (source.find("player.hud_damagefeedback.foreground") != std::string::npos) return centered;
 		// Preserve archived killer feedback; only change the native draw pass.
-		source.insert(at + anchor.size(), "\n\t\tplayer.hud_damagefeedback.foreground = true;");
+		source.insert(source.find(anchor) + anchor.size(), "\n\t\tplayer.hud_damagefeedback.foreground = true;");
 		return true;
 	}
 
