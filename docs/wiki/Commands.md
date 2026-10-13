@@ -60,9 +60,10 @@ implemented by this supported SDK adapter.
 - `steam_init`: retry SDK initialization; print a nonfatal warning on failure.
 - `steam_status`: show actual App ID, Steam user, online state and current lobby.
 - `steam_find_match`: same search as confirming a playlist in **Find Match**.
-  Search running public Steam hosts whose current map/mode is an entry in the
+  Search public Steam hosts whose current/planned map/mode is an entry in the
   selected native playlist, then join a compatible lobby and query its LAN
-  endpoint. An empty result reports a menu error; it does not create a host.
+  endpoint. If none exists, reserve a public lobby, select an entry with QoS'
+  native weighted rotation, apply its native rules and start the match.
 - `steam_match_cancel`: cancel Find Match without stopping a manually hosted
   lobby. Leaving the native match-search screen also cancels the search.
 - `steam_lobby_create [friends|public] [LAN IPv4:port]`: create an 18-member
@@ -81,16 +82,32 @@ implemented by this supported SDK adapter.
   completion first so an asynchronous join cannot create untracked membership.
 - `steam_lobby_invite`: open Steam's invite overlay for the current lobby.
 
-This is **Steam discovery with a direct LAN gameplay handoff**, not Internet
-relay matchmaking. Both peers need the matching local `xlive.dll` shim and
-reachable host UDP port (normally 1000). Start the host through System Link;
-creating a Steam lobby does not start a server. Native **Find Match** playlist
-confirmation is routed to Steam instead of starting the old LIVE search loop.
+This is **automated Steam discovery/hosting with direct LAN gameplay**, not
+Internet relay matchmaking. Both peers need the matching local `xlive.dll`
+shim and reachable host UDP port (normally 1000). No System Link navigation or
+lobby commands are needed: use **Find Match** to join or create a match. Starting
+a hosted game through other menus or a map command also creates a public Steam
+lobby automatically. The manual `steam_lobby_create` command remains a diagnostic
+operation and does not itself launch a server.
 Gun Game matches `gg` entries; `[DEV] Shipment 24/7` accepts only
 `mp_shipment/gg` and `mp_shipment/dm`. Hosts publish their current map/mode.
-Searches are bounded to 20 seconds and preserve cancellation across late Steam
-join callbacks. Finding a host does not prove the subsequent QoS handshake
-succeeded; verify both players enter the map.
+Search/reservation requests are bounded to 20 seconds and preserve cancellation
+across late Steam join/create callbacks. Reserved starting hosts are discoverable;
+joining peers wait up to 60 seconds for the host's actual running endpoint.
+A five-second reservation visibility window and follow-up search prefer an
+existing running match or a lower visible Steam owner before launching another
+host. This is best-effort lobby coordination, not an authoritative distributed
+matchmaker; simultaneous starts require a two-account runtime test.
+Finding a host does not prove the subsequent QoS handshake succeeded; verify
+both players enter the map.
+
+`steam_autoLobby` defaults to `1` and advertises manually started native hosts;
+set it to `0` to disable that implicit advertisement. Explicit Find Match still
+creates a host when necessary. `steam_hostAddress` defaults to an empty string
+(select the unique local IPv4 address). On VPN/multi-adapter PCs set it to the
+reachable LAN endpoint, for example `seta steam_hostAddress "192.168.1.20:1000"`.
+Automatic host lobbies are left when the match stops. Explicitly leaving a lobby
+during a running match suppresses recreation until that match ends.
 
 Find Match currently supports solo joining, not moving a multi-player party.
 It will not silently leave an existing Steam lobby or stop your own match.
