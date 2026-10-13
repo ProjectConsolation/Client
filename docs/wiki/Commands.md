@@ -1,5 +1,24 @@
 # Commands
 
+## Local QoS playlists
+
+The adapted `playlists.info` preserves the dumped QoS stock playlists 1–9,
+including their localized text and weighted map rotations. Stock modes and Gun
+Game set `scr_player_respawndelay` to zero. CTF definitions, if present in the
+source, retain their existing delay; CTF is absent from the current retail dump.
+Playlist 10 adds Gun Game (`gg`) on Conflict's stock rotation. Playlist 11 is
+`[DEV] Shipment 24/7`, rotating Gun Game and Conflict exclusively
+on `mp_shipment`. It is selectable but excluded from random Quick Match.
+
+`tools/package_playlists.py` adapts an original dump without transcoding its
+localized bytes, preserves existing patch rawfiles, and bundles the playlist
+and the existing Gun Game script under its canonical `gg.gsc` name. Install the
+resulting `patch_consolation.ff` and rebuild the client for the local acquisition
+adapter. With the offline LIVE shim, playlist acquisition invokes QoS's native
+parser and reports ready only after nonempty native playlist tables exist.
+This replaces the earlier success-only download probe; it does not supply a
+remote playlist server or connect native Find Match searches to Steam lobbies.
+
 ## Steam lobby integration (development)
 
 Generate the solution with `generate.bat --steamworks-sdk="C:\path\to\sdk"`
@@ -17,10 +36,14 @@ initialization produces the same warning once, not every frame. Run `steam_init`
 to retry initialization after starting/signing into Steam. A build generated
 without SDK support also warns and retains offline play.
 
-Supply an authorized App ID through the normal Steam launch environment or a
-local development `steam_appid.txt` in the working directory. No App ID is
-silently selected and the integration does not overwrite that file. Valve's
-SDK sample uses 480 for development; its Steam title is Spacewar, not Consolation.
+Initialization supplies the configured build-time App ID automatically when no
+`SteamAppId`/`SteamGameId` launch environment or `steam_appid.txt` in the working
+directory exists. It sets only the current process environment, never overwrites
+the file, and prints the selected default. `--steam-app-id=<ID>` selects a different
+authorized ID during solution generation. The current default **480** is explicitly
+a Spacewar development probe, not a finished release identity. Its Steam title
+is Spacewar, not Consolation. No manual `steam_init` or App ID file is needed for
+this default test startup; initialization still requires Steam to be running.
 App 10080 belongs to Quantum of Solace, not this project. The lobby's `name`
 metadata is **Project: Consolation**; this does not rename Steam's app title.
 IW4x-style custom mod presence uses internal Steam interfaces and is not

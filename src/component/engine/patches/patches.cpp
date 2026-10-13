@@ -1615,10 +1615,33 @@ namespace patches
 				|| xlive::is_local_shim_loaded();
 		}
 
+		char __cdecl read_local_playlists(int /*controller*/)
+		{
+			// QoS PC 1.1 DownloadPlaylists (10240B30): EDI is the download
+			// context, controller is its one stack argument, result is AL.
+			// Replace title-storage acquisition with a real native parse, not
+			// the former ret_one probe. Native completion (10240710) sets this
+			// readiness flag only after parsing and repairs the selected index.
+			const auto header = game::DB_FindXAssetHeader(game::ASSET_TYPE_RAWFILE, "playlists.info");
+			const auto* file = header.rawfile;
+			if (!file || !file->buffer || file->len <= 0 || file->len > 128 * 1024)
+			{
+				console::warn("playlists: local playlists.info unavailable; not reporting ready\n");
+				return 0;
+			}
+			reinterpret_cast<void(__cdecl*)(const char*)>(game::game_offset(0x102E1D60))(file->buffer);
+			const auto count = reinterpret_cast<int(__cdecl*)()>(game::game_offset(0x102E1800))();
+			if (count <= 0 || count > 32) return 0;
+			auto* selection = reinterpret_cast<int*>(game::game_offset(0x115FB3DC));
+			if (*selection < 0 || *selection >= count) *selection = 0;
+			*reinterpret_cast<unsigned char*>(game::game_offset(0x115FB9A8)) = 1;
+			console::info("playlists: parsed %d native playlists from local asset\n", count);
+			return 1;
+		}
+
 		void apply_local_offline_mode_patches()
 		{
-			// No remote playlist backend. Keep local map bring-up independent of it.
-			utils::hook::jump(game::game_offset(0x10240B30), ret_one);
+			utils::hook::jump(game::game_offset(0x10240B30), read_local_playlists);
 			// QoS DownloadStats (10240A30) reads mpdata through XStorage. Our shim
 			// implements that SDK path, including native missing-file initialization
 			// in StatsReadComplete (10240C60). Bypassing it leaves stats unready and

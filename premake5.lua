@@ -75,6 +75,18 @@ newoption {
 	value = "PATH"
 }
 
+newoption {
+	trigger = "steam-app-id",
+	description = "Default Steam App ID; 480 is the Spacewar development probe, not a release identity.",
+	value = "ID"
+}
+
+local steamAppId = _OPTIONS["steam-app-id"] or "480"
+if not steamAppId:match("^%d+$") or tonumber(steamAppId) < 1 or tonumber(steamAppId) > 4294967295 then
+	error("steam-app-id must be a nonzero uint32 decimal App ID")
+end
+steamAppId = string.format("%.0f", tonumber(steamAppId))
+
 local steamworksSdk = _OPTIONS["steamworks-sdk"] or os.getenv("STEAMWORKS_SDK")
 if steamworksSdk and (not os.isfile(path.join(steamworksSdk, "public/steam/steam_api.h"))
 	or not os.isfile(path.join(steamworksSdk, "redistributable_bin/steam_api.lib"))
@@ -335,7 +347,7 @@ workspace "consolation-client"
 		dependson { "xlive" }
 		links { "hid", "setupapi" }
 		if steamworksSdk then
-			defines { "CSL_STEAMWORKS" }
+			defines { "CSL_STEAMWORKS", "CSL_STEAM_APP_ID=" .. steamAppId }
 			includedirs { path.join(steamworksSdk, "public") }
 			libdirs { path.join(steamworksSdk, "redistributable_bin") }
 			links { "steam_api", "delayimp" }

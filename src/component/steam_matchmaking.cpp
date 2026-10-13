@@ -9,6 +9,7 @@
 #ifdef CSL_STEAMWORKS
 #pragma warning(push)
 #pragma warning(disable: 4996) // Vendor SDK uses strncpy in inline helpers.
+#pragma warning(disable: 4828) // SDK 1.65 has ANSI copyright bytes in three headers.
 #include <steam/steam_api.h>
 #pragma warning(pop)
 #endif
@@ -31,6 +32,28 @@ namespace steam_matchmaking
 			void initialize()
 			{
 				if (stopped_ || active_) return;
+				// IW4x Proxy::SetGame also sets SteamAppId before initializing.
+				// This adapter uses the supported SDK, not its internal client ABI.
+				// Preserve an explicit Steam launch or local developer App ID.
+				std::error_code appid_error;
+				const bool has_appid_file = std::filesystem::exists("steam_appid.txt", appid_error);
+				if (appid_error)
+				{
+					unavailable("Cannot inspect steam_appid.txt; not overriding the configured identity.");
+					return;
+				}
+				if (!GetEnvironmentVariableA("SteamAppId", nullptr, 0) &&
+					!GetEnvironmentVariableA("SteamGameId", nullptr, 0) && !has_appid_file)
+				{
+					const auto default_id = std::to_string(CSL_STEAM_APP_ID);
+					if (!SetEnvironmentVariableA("SteamAppId", default_id.c_str()))
+					{
+						unavailable("Cannot set the default Steam App ID.");
+						return;
+					}
+					console::info("Steam: using configured default App ID %s%s.\n", default_id.c_str(),
+						CSL_STEAM_APP_ID == 480 ? " (Spacewar development test, not a release identity)" : "");
+				}
 				// Load only a redistributable explicitly installed beside the host.
 				// Keep the module resident: delay imports and SDK callback destructors
 				// can still reference it during CRT teardown.
