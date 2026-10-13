@@ -58,6 +58,28 @@ namespace gametypes::respawn_script
 		return true;
 	}
 
+	inline bool migrate_legacy_respawn_default(std::string& source)
+	{
+		// The native rule initializer preserves every nonempty dvar. Therefore
+		// changing its fallback alone leaves the old stock five-second value
+		// active (icehotel_gi.dmp: current=5, reset=0). Migrate that legacy stock
+		// value at rule registration, before the native playerTweaks cache is
+		// populated. This is initialization policy, not a live-value clamp.
+		const std::string marker = "// Consolation: migrate legacy stock respawn default.";
+		if (source.find(marker) != std::string::npos) return false;
+		const std::string signature = "registerTweakable( category, name, dvar, value )";
+		const auto start = source.find(signature);
+		if (start == std::string::npos || source.find(signature, start + signature.size()) != std::string::npos)
+			return false;
+		const auto brace = source.find('{', start + signature.size());
+		if (brace == std::string::npos || source.substr(start + signature.size(),
+			brace - start - signature.size()).find_first_not_of(" \t\r\n") != std::string::npos) return false;
+		source.insert(brace + 1, "\n\t" + marker + "\n"
+			"\tif ( category == \"player\" && name == \"respawndelay\" && dvar == \"scr_player_respawndelay\" && getDvar( dvar ) == \"5\" )\n"
+			"\t\tsetDvar( dvar, 0 );\n");
+		return true;
+	}
+
 	inline bool make_killcam_identity(std::string& source)
 	{
 		const std::string timer = "self.kc_timer.y = -32;";
@@ -199,7 +221,10 @@ namespace gametypes::respawn_script
 			"\t\treturn getDvarInt( \"scr_player_forcerespawn\" ) != 0;\n";
 		if (source.find("// Consolation: live respawn delay") != std::string::npos) return false;
 		make_respawn_default_zero(source);
-		source.insert(brace + 1, patch);
+		migrate_legacy_respawn_default(source);
+		// Default migration inserts text earlier in the same script; locate the
+		// getter again rather than applying its old byte offset to new text.
+		source.insert(source.find('{', source.find(signature) + signature.size()) + 1, patch);
 		return true;
 	}
 

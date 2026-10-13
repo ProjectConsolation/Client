@@ -2294,7 +2294,6 @@ namespace patches
 				static_cast<unsigned int>(game::dvar_flags::read_only));
 			dvars::overrides::register_string("gamedate", build_game_date_string(),
 				static_cast<unsigned int>(game::dvar_flags::read_only));
-			//dvars::overrides::register_float("r_lodScale", 0, 0, 3, game::dvar_flags::saved); //doesn't save
 			//dvars::overrides::register_float("jump_height", 39.0, 0, 1000, game::dvar_flags::saved); //adjusted to 39 to allow cod4-like jump onto ledges
 
 			
@@ -2306,21 +2305,21 @@ namespace patches
 				dvars::Dvar_RegisterBool("sv_allowKillcams", 1,
 					"Enable native archived killcam replay; changes apply during the match.", game::dvar_flags::none);
 				pm_adsStopsSprint = dvars::Dvar_RegisterBool("pm_adsStopsSprint", 0,
-					"ADS ends sprint in shared player movement (0 = stock QoS).", game::dvar_flags::replicated);
+					"ADS ends sprint in shared player movement (0 = stock).", game::dvar_flags::replicated);
 				bg_improvedMeleeLunge = dvars::Dvar_RegisterBool("bg_improvedMeleeLunge", 0,
-					"Use COD4 distance-based melee launch speed; subsequent movement remains native QoS.", game::dvar_flags::replicated);
+					"Use COD4 distance-based melee launch speed", game::dvar_flags::replicated);
 				install_melee_launch_patch();
 				pm_allowProne = dvars::Dvar_RegisterInt("pm_allowProne",
 					"Prone permission: 0 disabled, 1 enabled with native clearance, 2 stock weapon rules.",
 					2, 0, 2, game::dvar_flags::replicated);
 				pm_adsExitOnDamage = dvars::Dvar_RegisterBool("pm_adsExitOnDamage", 1,
-					"Allow stock scope cancellation on damage (0 keeps ADS; recoil is unchanged).", game::dvar_flags::replicated);
+					"Allow stock scope cancellation on damage (0 keeps ADS).", game::dvar_flags::replicated);
 				pm_allowCover = dvars::Dvar_RegisterBool("pm_allowCover", 1,
 					"Allow native cover entry (0 starts a native exit from active cover).", game::dvar_flags::replicated);
 				pm_mantleFirstPerson = dvars::Dvar_RegisterBool("pm_mantleFirstPerson", 0,
-					"Use first-person camera during native mantle traversals (0 = stock camera).", game::dvar_flags::replicated);
+					"Use first-person camera during native mantle traversals (0 = stock).", game::dvar_flags::replicated);
 				pm_climbFirstPerson = dvars::Dvar_RegisterBool("pm_climbFirstPerson", 0,
-					"Use first-person camera on native ladders, ledges and pipes (0 = stock camera).", game::dvar_flags::replicated);
+					"Use first-person camera on native ladders, ledges and pipes (0 = stock).", game::dvar_flags::replicated);
 				pm_airborneBobScale = dvars::Dvar_RegisterFloat("pm_airborneBobScale",
 					"Airborne movement camera bob scale: 0 suppresses, 1 restores stock; grounded bob is unchanged.",
 					1.0f, 0.0f, 1.0f, game::dvar_flags::replicated);
@@ -2330,7 +2329,7 @@ namespace patches
 				movement_domain.enumeration.stringCount = static_cast<int>(std::size(movement_mode_names));
 				movement_domain.enumeration.strings = movement_mode_names;
 				pm_movement_mode = game::Dvar_RegisterVariant("pm_movement_mode", game::DVAR_TYPE_ENUM,
-					game::dvar_flags::replicated, "Movement preset: stock QoS or experimental COD4-style iw3.",
+					game::dvar_flags::replicated, "Movement preset: stock QoS or the experimental iw3 port.",
 					0, movement_default, movement_domain);
 				apply_movement_preset();
 				scheduler::loop(apply_movement_preset, scheduler::main);
@@ -2338,7 +2337,7 @@ namespace patches
 					"Overhead font: 0 native, 1 normal, 2 big, 3 small, 4 bold (missing fonts use native).",
 					2, 0, 4, game::dvar_flags::saved | game::dvar_flags::cheat_protected);
 				pm_noclipScale = dvars::Dvar_RegisterFloat("pm_noclipScale",
-					"Noclip movement speed multiplier (1 = native speed).",
+					"Noclip movement speed multiplier.",
 					1.0f, 0.0f, 20.0f, game::dvar_flags::saved);
 
 				// Run outside DLL initialization. The native frame loop uses

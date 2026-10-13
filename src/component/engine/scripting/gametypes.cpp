@@ -432,7 +432,24 @@ namespace gametypes
 				{
 					const auto bundled = "consolation/scripts/" + normalized_name;
 					const auto patch = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, bundled.c_str(), 0);
-					if (rawfile_has_data(patch.rawfile)) return patch;
+					if (rawfile_has_data(patch.rawfile))
+					{
+						if (normalized_name == "maps/mp/gametypes/_tweakables.gsc")
+						{
+							std::string data(patch.rawfile->buffer, patch.rawfile->len);
+							while (!data.empty() && data.back() == '\0') data.pop_back();
+							if (respawn_script::migrate_legacy_respawn_default(data))
+							{
+								const auto key = std::string("respawn-default:") + data;
+								auto& cache = loaded_gametype_rawfiles();
+								if (!cache.contains(key)) cache[key] = make_rawfile(normalized_name.c_str(), data);
+								game::XAssetHeader adapted{};
+								adapted.rawfile = cache[key];
+								return adapted;
+							}
+						}
+						return patch;
+					}
 				}
 				auto fastfile_header = db_find_xasset_header_internal_hook.invoke<game::XAssetHeader>(type, normalized_name.c_str(), create_default);
 				if (rawfile_has_data(fastfile_header.rawfile))
