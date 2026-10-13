@@ -13,6 +13,8 @@
 #include <utils/io.hpp>
 #include "component/engine/zones/fastfiles.hpp"
 #include <game/dvars.hpp>
+#include "component/steam_identity.hpp"
+#include <utils/hook.hpp>
 
 namespace command
 {
@@ -29,6 +31,9 @@ namespace command
 		constexpr auto LIVE_CLAN_TARGET_SECONDARY = 0x111F1C00;
 		constexpr auto CLAN_DIRTY_FLAGS = 0x1149E6BC;
 		constexpr auto GAMETYPES_RAWFILE = "maps/mp/gametypes/_gametypes.txt";
+		std::atomic<std::uint64_t> signed_in_steam_id{0};
+		std::atomic<bool> steam_identity_known{false};
+		utils::hook::detour clan_userinfo_hook;
 
 		std::unordered_map<std::string, std::function<void(params&)>> handlers;
 		int next_bot_number = 1;
@@ -898,13 +903,42 @@ namespace command
 			return dvar && dvar->current.string ? dvar->current.string : "";
 		}
 
-		void update_clan_name_state(const std::string& clan_name)
+		bool update_clan_name_state(const std::string& clan_name)
 		{
+			if (!steam_identity::clan_allowed(signed_in_steam_id.load(), clan_name))
+			{ console::warn("clanName: CSL is reserved for the authorized Steam account; sign in to that account first.\n"); return false; }
 			game::Dvar_SetString("clanName", clan_name.c_str());
 			game::GamerProfile_UpdateProfileFromDvars(ACTIVE_PROFILE_INDEX, 1);
 			game::Live_UpdateClan(game::game_offset(LIVE_CLAN_TARGET_PRIMARY), const_cast<char*>(clan_name.c_str()));
 			game::Live_UpdateClan(game::game_offset(LIVE_CLAN_TARGET_SECONDARY), const_cast<char*>(clan_name.c_str()));
 			*reinterpret_cast<std::uint32_t*>(game::game_offset(CLAN_DIRTY_FLAGS)) |= 2u;
+			return true;
+		}
+
+		int __cdecl clan_userinfo_stub(const int index)
+		{
+			const auto base = get_clients_base();
+			if (base && index >= 0 && index < std::min(get_max_clients(), 18))
+			{
+				const auto client = get_client(index);
+				auto* userinfo = reinterpret_cast<char*>(client + CLIENT_USERINFO_OFFSET);
+				if (const auto* end = static_cast<const char*>(std::memchr(userinfo, 0, CLIENT_USERINFO_SIZE)))
+				{
+					std::string info(userinfo, static_cast<std::size_t>(end - userinfo));
+					// QoS 102EF550: netadr type +32 == 2 is loopback (its address
+					// branch uses 127.0.0.1). Peer userinfo Steam IDs are NOT proof.
+					const bool local = *reinterpret_cast<const int*>(client + 32) == 2;
+					const bool authorized = local && steam_identity::clan_allowed(signed_in_steam_id.load(), "CSL");
+					if (steam_identity::filter_clan_userinfo(info, authorized))
+					{
+						std::memset(userinfo, 0, CLIENT_USERINFO_SIZE);
+						std::memcpy(userinfo, info.data(), info.size());
+						// 102EF550 also caches clanAbbrev at +8491*16, five bytes.
+						std::memset(reinterpret_cast<void*>(client + 0x212B0), 0, 5);
+					}
+				}
+			}
+			return clan_userinfo_hook.invoke<int>(index);
 		}
 
 		int rename_new_bot_client()
@@ -925,7 +959,7 @@ namespace command
 
 				auto updated = info;
 				set_info_value(updated, "name", get_next_bot_name());
-				set_info_value(updated, "clanAbbrev", "CSL");
+				set_info_value(updated, "clanAbbrev", ""); // bots are not the authorized Steam account
 
 				std::memset(userinfo, 0, CLIENT_USERINFO_SIZE);
 				std::memcpy(userinfo, updated.data(), std::min(updated.size(), static_cast<size_t>(CLIENT_USERINFO_SIZE - 1)));
@@ -1019,11 +1053,30 @@ namespace command
 		game::Cbuf_AddText(0, command.data());
 	}
 
+	void set_steam_identity(const std::uint64_t steam_id)
+	{
+		signed_in_steam_id.store(steam_id);
+		steam_identity_known.store(true);
+	}
+
 	class component final : public component_interface
 	{
 	public:
 		void post_load() override
 		{
+			// QoS PC 1.1 Game ClientUserinfoChanged, cdecl client index. Validate
+			// its stack/cookie prologue before installing the server-side guard.
+			const auto userinfo = game::game_offset(0x104149C0);
+			constexpr unsigned char prefix[] = {0x81, 0xEC, 0x10, 0x08, 0x00, 0x00, 0xA1};
+			if (!std::memcmp(reinterpret_cast<const void*>(userinfo), prefix, sizeof(prefix)))
+				clan_userinfo_hook.create(userinfo, clan_userinfo_stub);
+			else console::error("Reserved clan guard: unsupported QoS userinfo bytes; server tag filtering unavailable.\n");
+			scheduler::loop([]() {
+				const auto* clan = game::Dvar_FindVar("clanName");
+				if (steam_identity_known.load() && clan && clan->current.string
+					&& !steam_identity::clan_allowed(signed_in_steam_id.load(), clan->current.string))
+					update_clan_name_state(""); // native UI/profile/seta routes must not bypass the reservation
+			}, scheduler::main, 250ms);
 				scheduler::once([&]()
 				{
 					forward_launch_commands();
@@ -1101,8 +1154,8 @@ namespace command
 							}
 
 							const auto normalized = normalize_clan_name(args.join(1));
-							update_clan_name_state(normalized);
-							console::info("clanName: set tag to \"%s\"\n", normalized.c_str());
+							if (update_clan_name_state(normalized))
+								console::info("clanName: set tag to \"%s\"\n", normalized.c_str());
 						});
 
 					add("dvarDump", [](const params& argument)
@@ -1309,6 +1362,7 @@ namespace command
 
 		void pre_destroy() override
 		{
+			clan_userinfo_hook.clear();
 			cmd_allocator.clear();
 		}
 	};

@@ -9,7 +9,33 @@ $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
 if (!$ReleaseDirectory) { $ReleaseDirectory = Join-Path $RepositoryRoot 'build/bin/Release' }
 if (!$OutputPath) { $OutputPath = Join-Path $RepositoryRoot 'consolation-nightly.zip' }
 $requiredDirectory = Join-Path $RepositoryRoot 'required_files'
+$companionFiles = @()
+$companionPath = Join-Path $requiredDirectory 'companion64.dll'
+if (Test-Path -LiteralPath $companionPath -PathType Leaf) {
+    $companionBytes = [System.IO.File]::ReadAllBytes($companionPath)
+    if ($companionBytes.Length -lt 64 -or [System.BitConverter]::ToUInt16($companionBytes, 0) -ne 0x5A4D) {
+        throw 'companion64.dll is not a Windows PE image'
+    }
+    $companionPeOffset = [System.BitConverter]::ToInt32($companionBytes, 0x3C)
+    if ($companionPeOffset -lt 64 -or $companionPeOffset -gt ($companionBytes.Length - 26) -or
+            [System.BitConverter]::ToUInt32($companionBytes, $companionPeOffset) -ne 0x4550 -or
+            [System.BitConverter]::ToUInt16($companionBytes, $companionPeOffset + 4) -ne 0x8664 -or
+            [System.BitConverter]::ToUInt16($companionBytes, $companionPeOffset + 24) -ne 0x20B) {
+        throw 'Companion requires the native Windows AMD64 DLL, not an x86/Linux module'
+    }
+    $companionFiles = @('companion64.dll', 'licenses/companion/LICENSE.md',
+        'licenses/companion/LICENSE-EXCEPTION.md', 'licenses/companion/LEGAL',
+        'licenses/companion/AUTHORS', 'licenses/companion/SOURCE.txt')
+    foreach ($notice in $companionFiles) {
+        if (!(Test-Path -LiteralPath (Join-Path $requiredDirectory $notice) -PathType Leaf)) {
+            throw "Companion distribution is missing $notice (SOURCE.txt must identify the matching corresponding source)"
+        }
+    }
+} else {
+    Write-Warning 'Companion module is not supplied: custom Steam activity will be unavailable; SDK matchmaking still works.'
+}
 $stockMenuFiles = @(
+    'consolation/menu/ui_mp/steam_lobby.menu',
     'consolation/scaleform/MpMainMenu.gfx',
     'consolation/scaleform/CmOptions.gfx',
     'consolation/scaleform/cmoptionsgraphics.gfx',
@@ -74,7 +100,7 @@ try {
     $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
     foreach ($required in @('d3d9.dll', 'steam_api.dll', 'Launch Consolation.bat', 'JB_Launcher_s.exe',
             'README.txt', 'README_XLIVE.txt', 'consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff',
-            'optional/offline/xlive.dll') + $stockMenuFiles) {
+            'optional/offline/xlive.dll') + $stockMenuFiles + $companionFiles) {
         if ($required -notin $names) { throw "Nightly ZIP is missing $required" }
     }
     if ('xlive.dll' -in $names) { throw 'Offline replacement must not be installed from the ZIP root' }
@@ -82,7 +108,7 @@ try {
     # library must travel with the screens whose class definitions it supplies.
     $sha256 = [System.Security.Cryptography.SHA256]::Create()
     try {
-        foreach ($menu in $stockMenuFiles + @('consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff', 'steam_api.dll')) {
+        foreach ($menu in $stockMenuFiles + $companionFiles + @('consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff', 'steam_api.dll')) {
             $entry = $archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq $menu }
             $stream = $entry.Open()
             try { $packedHash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') }

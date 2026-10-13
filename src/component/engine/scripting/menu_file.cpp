@@ -553,6 +553,8 @@ namespace menu_file
 		int resolve_font_enum(tokenizer& tok, const std::string& name)
 		{
 			const auto normalized = lower(name);
+			// Native QoS pause/menu rows use fontEnum 1 for normal text.
+			if (normalized == "normalfont" || normalized == "1") return 1;
 			if (normalized == "bigfont" || normalized == "fonts/bigfont") return 2;
 			if (normalized == "objectivefont" || normalized == "fonts/objectivefont") return 6;
 			if (normalized == "consolefont" || normalized == "fonts/consolefont") return 5;
@@ -983,6 +985,8 @@ namespace menu_file
 		bool frontend_systemlink_match = false;
 		bool frontend_match_origin_recorded = false;
 		bool return_systemlink_after_bootstrap = false;
+		bool steam_match_lobby_active = false;
+		std::unordered_map<std::string, std::string> steam_match_lobby_text;
 		bool local_loadout_active = false;
 		std::string pending_scaleform_screen;
 		std::string return_frontend_page;
@@ -1223,7 +1227,7 @@ namespace menu_file
 					&& error->current.string && *error->current.string;
 				// Resume the native root before reopening System Link setup. Keep
 				// error destinations native; mpsyslink itself is only an Option popup.
-				return_systemlink_after_bootstrap = frontend_systemlink_match && !has_error;
+				return_systemlink_after_bootstrap = frontend_systemlink_match && !steam_match_lobby_active && !has_error;
 				frontend_systemlink_match = false;
 				frontend_match_origin_recorded = false;
 				pending_scaleform_screen.clear();
@@ -1250,6 +1254,11 @@ namespace menu_file
 			// Menu_PaintAll also runs on the separate in-game UI context.
 			// Never consume frontend transition state while painting pause menus.
 			if (context != reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38))) return;
+			if (auto* lobby = find("csl_steam_lobby"))
+				for (int i = 0; i < lobby->itemCount; ++i)
+					if (auto* item = lobby->items[i]; item && item->window.name)
+						if (const auto field = steam_match_lobby_text.find(item->window.name); field != steam_match_lobby_text.end())
+							item->text = field->second.c_str();
 			const auto client = *reinterpret_cast<const int*>(context);
 			const auto count = *reinterpret_cast<const int*>(context + 2172);
 			if (client < 0 || client > 3 || count < 0 || count > 16) { restore_scaleform(); return; }
@@ -1289,6 +1298,19 @@ namespace menu_file
 				restore_scaleform();
 				return;
 			}
+			// Leaving Steam membership must remove the old lobby from the native
+			// stack, not merely paint a main-menu page on top of its controls.
+			if (!steam_match_lobby_active)
+				for (int i = count - 1; i >= 0; --i)
+				{
+					auto* menu = reinterpret_cast<game::menuDef_t**>(context + 2108)[i];
+					if (menu && menu->window.name && !_stricmp(menu->window.name, "csl_steam_lobby"))
+					{
+						utils::hook::invoke<void>(game::game_offset(0x102CE070), context, menu);
+						frontend_return_requested = true;
+						return; // stack count changed; reopen the owning page next paint
+					}
+				}
 			const auto* screen = game::Dvar_FindVar("sf_current_menu");
 			if (!screen || static_cast<unsigned char>(screen->type) != game::DVAR_TYPE_STRING || !screen->current.string) return;
 			if (return_systemlink_after_bootstrap && !_stricmp(screen->current.string, "mpmainmenu")
@@ -1317,7 +1339,11 @@ namespace menu_file
 				frontend_transition = false;
 			}
 			const bool root = !_stricmp(screen->current.string, "mpmainmenu");
-			const char* replacement_name = root ? "csl_main"
+			const bool steam_lobby_screen = steam_match_lobby_active &&
+				(!_stricmp(screen->current.string, "mpmainmenu") || !_stricmp(screen->current.string, "mpsyssetup")
+					|| !_stricmp(screen->current.string, "mpxblobbymatch") || !_stricmp(screen->current.string, "mpxbplaylistselect")
+					|| !_stricmp(screen->current.string, "mpxblivemain"));
+			const char* replacement_name = steam_lobby_screen ? "csl_steam_lobby" : root ? "csl_main"
 				: !_stricmp(screen->current.string, "mpsyslink") ? "csl_systemlink"
 				: !_stricmp(screen->current.string, "mpsyssetup") ? "csl_host"
 				: !_stricmp(screen->current.string, "mpxblobbyprivatematch") ? "csl_private"
@@ -1351,7 +1377,7 @@ namespace menu_file
 					for (int i = 0; i < count; ++i)
 						present |= reinterpret_cast<game::menuDef_t**>(context + 2108)[i] == replacement;
 					if (!present) utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, replacement->window.name);
-					if (root && !return_frontend_page.empty())
+					if (root && !steam_lobby_screen && !return_frontend_page.empty())
 					{
 						if (auto* page = find(return_frontend_page))
 							utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, page->window.name);
@@ -1362,7 +1388,7 @@ namespace menu_file
 				}
 			}
 			else if (top && top->window.name
-				&& (!_stricmp(top->window.name, "csl_main") || !_stricmp(top->window.name, "csl_host") || !_stricmp(top->window.name, "csl_private") || !_stricmp(top->window.name, "csl_serverbrowser"))
+				&& (!_stricmp(top->window.name, "csl_main") || !_stricmp(top->window.name, "csl_host") || !_stricmp(top->window.name, "csl_private") || !_stricmp(top->window.name, "csl_serverbrowser") || !_stricmp(top->window.name, "csl_steam_lobby"))
 				&& (!replacement_name || _stricmp(top->window.name, replacement_name)))
 				utils::hook::invoke<void>(game::game_offset(0x102CE070), context, top);
 			bool custom_frontend = false;
@@ -1974,6 +2000,29 @@ namespace menu_file
 		ensure_loaded();
 		const auto it = loaded_menus.find(lower(name));
 		return it == loaded_menus.end() ? nullptr : it->second;
+	}
+
+	void set_match_lobby(const bool active)
+	{
+		if (active != steam_match_lobby_active) frontend_return_requested = true;
+		steam_match_lobby_active = active;
+		if (active) { return_systemlink_after_bootstrap = false; return_frontend_page.clear(); }
+	}
+
+	void set_match_lobby_text(const std::string& item, const std::string& text)
+	{
+		auto& stored = steam_match_lobby_text[item];
+		if (stored == text) return;
+		stored = text;
+		// Replace the pointer immediately, before input can visit a menu item
+		// whose previous std::string storage was reallocated by this update.
+		if (auto* menu = find("csl_steam_lobby"))
+			for (int i = 0; i < menu->itemCount; ++i)
+				if (auto* field = menu->items[i]; field && field->window.name && item == field->window.name)
+				{
+					field->text = stored.c_str();
+					for (auto& rect : field->textRect) rect.w = 0;
+				}
 	}
 
 	const std::unordered_map<std::string, game::menuDef_t*>& all()

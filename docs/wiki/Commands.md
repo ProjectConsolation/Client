@@ -54,8 +54,71 @@ is Spacewar, not Consolation. No manual `steam_init` or App ID file is needed fo
 this default test startup; initialization still requires Steam to be running.
 App 10080 belongs to Quantum of Solace, not this project. The lobby's `name`
 metadata is **Project: Consolation**; this does not rename Steam's app title.
-IW4x-style custom mod presence uses internal Steam interfaces and is not
-implemented by this supported SDK adapter.
+The separate Companion adapter publishes the title **Project Consolation**.
+It does not rename the storefront App ID or change matchmaking's App ID.
+
+### Steam display names and developer tag
+
+`steam_useSteamName` defaults to `1` (saved). The local offline-shim display
+name follows your Steam persona in the lobby; connecting/loading and active
+matches freeze that name until returning to the lobby. A Steam rename during
+a match applies to the next match, not the current game. Late SDK initialization
+retains the already-active name. QoS' LIVE name cache accepts 15 UTF-8 bytes;
+names are truncated at a complete character and userinfo/control syntax is removed.
+XUID and signed-in profile identity are reserved before display changes and are
+not replaced by a Steam ID or derived again from your new display name.
+
+`name <display name>` selects a custom name and disables `steam_useSteamName`.
+During a match that custom name is queued for the next lobby/match. `name` with
+no arguments prints the current display name. Use `seta steam_useSteamName 1`
+to resume Steam naming. This adapter requires the local shim; real GFWL
+signed-in identities are not rewritten. Direct `set name` is protected in-game.
+
+The `CSL` clan tag is never automatically applied. Use `clanName CSL` manually;
+it is reserved for the configured owner Steam account and requires the initialized
+SDK to report that account signed in. Debug and Release builds use the same rule.
+Other accounts and signed-out Steam are denied, including case/color/whitespace
+variants; native UI/profile/`seta clanName` routes are also checked. Bots no longer
+receive the reserved tag automatically.
+
+The server userinfo guard strips `CSL` from unverified remote clients; only the
+authorized owner's local loopback client is currently exempt. **Even the owner's
+remote connection is denied until Steam authentication tickets are bound to QoS
+connections.** A peer-supplied Steam ID or lobby membership does not prove who
+owns a gameplay connection. This is fail-closed tag filtering, not completed
+Steam gameplay authentication or an authorization role. Modified/older servers
+without the guard cannot be secured by this client-side policy.
+
+### Companion custom Steam activity (Windows)
+
+The client implements the documented Companion Windows IPC protocol v1/build 2.
+It publishes a per-game registration and automatically runs the official
+`companion_attach` entry through hidden native 64-bit `rundll32.exe` when a
+compatible `companion64.dll` is present beside `JB_LiveEngine_s.exe`. It never
+loads that x64 DLL into the x86 game. Startup is asynchronous and nonfatal.
+The module modifies Steam itself and remains resident until Steam exits; game
+shutdown withdraws only this game's registration, not the Steam hook.
+
+- `steam_presence_status`: print registration, actual module state/build/hook,
+  Steam PID and requested title. State `1` means active; registration alone
+  does not prove friends see the title.
+- `steam_presence_retry`: retry attachment after supplying the missing DLL.
+  A resident unsupported/failed module cannot be replaced without manually
+  restarting Steam. The client does not restart Steam for you.
+
+`steam_presenceStatus` defaults to `1` (saved), adding a short activity suffix:
+menus, searching, lobby member count, or the active map/mode. Set it to `0` for
+exactly `Project Consolation`. Companion supports changing this title text, not
+a separate rich-presence panel or a gameplay/relay implementation. Text fits its
+64-byte UTF-8 record; only adapter-generated ASCII status is published.
+
+The Companion DLL is an external dependency, not built by this project. No
+Windows release asset was available from its official repository at integration
+time. The adapter is present but custom activity is unavailable until a compatible
+module is supplied. Distribute the external module with its license notices and
+corresponding source information; the adapter does not link its library code.
+Protocol-layout declarations are attributed to the
+[IW4x Companion manual](https://github.com/iw4x/companion/blob/main/libcompanion/doc/manual.cli).
 
 - `steam_init`: retry SDK initialization; print a nonfatal warning on failure.
 - `steam_status`: show actual App ID, Steam user, online state and current lobby.
@@ -63,7 +126,14 @@ implemented by this supported SDK adapter.
   Search public Steam hosts whose current/planned map/mode is an entry in the
   selected native playlist, then join a compatible lobby and query its LAN
   endpoint. If none exists, reserve a public lobby, select an entry with QoS'
-  native weighted rotation, apply its native rules and start the match.
+  native weighted rotation and wait for the host to start (or start automatically
+  when `sv_autostart` is `1`). Native rules are applied when starting.
+- `steam_match_start`: start the selected match from your waiting Find Match
+  lobby. Host-only; pending Steam operations must complete first. The higher
+  voted option wins; ties retain the native weighted first option.
+- `steam_match_vote <1|2>`: vote for one of the two map/mode options in the
+  current Steam match lobby. One changeable vote per current member; ballots
+  from departed members or previous rounds are not counted.
 - `steam_match_cancel`: cancel Find Match without stopping a manually hosted
   lobby. Leaving the native match-search screen also cancels the search.
 - `steam_lobby_create [friends|public] [LAN IPv4:port]`: create an 18-member
@@ -85,7 +155,11 @@ implemented by this supported SDK adapter.
 This is **automated Steam discovery/hosting with direct LAN gameplay**, not
 Internet relay matchmaking. Both peers need the matching local `xlive.dll`
 shim and reachable host UDP port (normally 1000). No System Link navigation or
-lobby commands are needed: use **Find Match** to join or create a match. Starting
+lobby commands are needed for discovery: use **Find Match** to join or create a
+lobby. With the default `sv_autostart 0`, the host uses `steam_match_start` when
+ready; `steam_status` shows the lobby member count. This is Steam lobby membership,
+not a native QoS party roster. The native-rendered match lobby shows Steam names,
+vote totals, and Start Match/Invite Friends/Leave Lobby actions. Starting
 a hosted game through other menus or a map command also creates a public Steam
 lobby automatically. The manual `steam_lobby_create` command remains a diagnostic
 operation and does not itself launch a server.
@@ -93,7 +167,8 @@ Gun Game matches `gg` entries; `[DEV] Shipment 24/7` accepts only
 `mp_shipment/gg` and `mp_shipment/dm`. Hosts publish their current map/mode.
 Search/reservation requests are bounded to 20 seconds and preserve cancellation
 across late Steam join/create callbacks. Reserved starting hosts are discoverable;
-joining peers wait up to 60 seconds for the host's actual running endpoint.
+joining peers remain in deliberately waiting lobbies without a startup timeout.
+Once startup begins they wait up to 60 seconds for the actual running endpoint.
 A five-second reservation visibility window and follow-up search prefer an
 existing running match or a lower visible Steam owner before launching another
 host. This is best-effort lobby coordination, not an authoritative distributed
@@ -106,8 +181,22 @@ set it to `0` to disable that implicit advertisement. Explicit Find Match still
 creates a host when necessary. `steam_hostAddress` defaults to an empty string
 (select the unique local IPv4 address). On VPN/multi-adapter PCs set it to the
 reachable LAN endpoint, for example `seta steam_hostAddress "192.168.1.20:1000"`.
-Automatic host lobbies are left when the match stops. Explicitly leaving a lobby
+Find Match lobbies persist when the match stops: members return to the voting
+screen, retaining the lobby ID. The host prepares another pair of playlist
+map/mode options. With `sv_autostart 0`, Start Match launches the winning option;
+`sv_autostart 1` launches without waiting for votes. Gameplay still uses the native
+LAN transport, but its System Link return page no longer owns Steam lobby routing.
+Host migration after the host leaves is not implemented; remaining members must
+leave and find/create another lobby. Diagnostic/manual-map auto-advertisements,
+which have no playlist rotation, are still left when the match stops.
+Explicitly leaving a lobby
 during a running match suppresses recreation until that match ends.
+
+`sv_autostart` is a saved boolean preference, default `0`. Set
+`seta sv_autostart 1` to launch a newly elected Find Match host automatically;
+setting it while your lobby is waiting also starts that match. Use
+`seta sv_autostart 0` to wait for a manual `steam_match_start`. It does not gate
+explicit System Link Start Match actions or `map`/`devmap` commands.
 
 Find Match currently supports solo joining, not moving a multi-player party.
 It will not silently leave an existing Steam lobby or stop your own match.

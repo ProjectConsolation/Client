@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 namespace command
 {
@@ -25,4 +26,6 @@ namespace command
 	void add(const char* name, const std::function<void(const params&)>& callback);
 	void add(const char* name, const std::function<void()>& callback);
 	void execute(std::string command);
+	// Main-pipeline identity supplied only by the initialized Steam SDK.
+	void set_steam_identity(std::uint64_t steam_id);
 }

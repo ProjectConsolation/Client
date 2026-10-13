@@ -32,4 +32,8 @@ namespace menu_file
 
 	// Every currently loaded custom menu, keyed by lowercase name.
 	const std::unordered_map<std::string, game::menuDef_t*>& all();
+
+	// Main-pipeline Steam control-plane state, not a fabricated native party.
+	void set_match_lobby(bool active);
+	void set_match_lobby_text(const std::string& item, const std::string& text);
 }
