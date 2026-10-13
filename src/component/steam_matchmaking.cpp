@@ -3,7 +3,6 @@
 #include "engine/console/command.hpp"
 #include "engine/console/console.hpp"
 #include "utils/scheduler.hpp"
-#include <utils/flags.hpp>
 #include <charconv>
 #include <memory>
 
@@ -14,7 +13,7 @@
 #pragma warning(pop)
 #endif
 
-// Optional Steam control plane. It does not replace QoS sessions, XUIDs,
+// Default Steam control plane with nonfatal offline fallback. It does not replace QoS sessions, XUIDs,
 // persistence or gameplay transport. No native game addresses are patched here.
 namespace steam_matchmaking
 {
@@ -37,20 +36,24 @@ namespace steam_matchmaking
 				// can still reference it during CRT teardown.
 				wchar_t host[MAX_PATH]{};
 				const auto length = GetModuleFileNameW(nullptr, host, MAX_PATH);
-				if (!length || length >= MAX_PATH) return;
+				if (!length || length >= MAX_PATH)
+				{
+					unavailable("Cannot locate the Steam API redistributable.");
+					return;
+				}
 				const auto dll = std::filesystem::path(host).parent_path() / L"steam_api.dll";
 				std::error_code file_error;
 				if (!module_ && std::filesystem::is_regular_file(dll, file_error))
 					module_ = LoadLibraryExW(dll.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
 				if (!module_)
 				{
-					console::error("Steam: install the SDK's x86 steam_api.dll beside the game executable.\n");
+					unavailable("Install the SDK's x86 steam_api.dll beside the game executable.");
 					return;
 				}
 				SteamErrMsg error{};
 				if (SteamAPI_InitEx(&error) != k_ESteamAPIInitResult_OK)
 				{
-					console::error("Steam initialization failed: %s\n", error);
+					unavailable(error);
 					return;
 				}
 				active_ = true;
@@ -58,18 +61,23 @@ namespace steam_matchmaking
 				{
 					SteamAPI_Shutdown();
 					active_ = false;
-					console::error("Steam: required SDK interfaces unavailable.\n");
+					unavailable("Required SDK interfaces unavailable.");
 					return;
 				}
 				invites_.Register(this, &service::invited);
 				kicked_.Register(this, &service::kicked);
 				console::info("Steam initialized for App ID %u. Lobby title: Project: Consolation.\n", SteamUtils()->GetAppID());
+				check_sign_in();
 				status();
 			}
 
 			void pump()
 			{
-				if (active_ && !stopped_) SteamAPI_RunCallbacks();
+				if (active_ && !stopped_)
+				{
+					SteamAPI_RunCallbacks();
+					check_sign_in();
+				}
 			}
 
 			void status()
@@ -135,9 +143,13 @@ namespace steam_matchmaking
 			{
 				stopped_ = true;
 				created_.Cancel(); listed_.Cancel(); joined_.Cancel();
-				invites_.Unregister(); kicked_.Unregister();
 				if (active_)
 				{
+					// SDK 1.65 CCallback::Unregister calls the DLL unconditionally,
+					// even for an unregistered manual callback. steam.dmp captured
+					// __delayLoadHelper2 from this path after missing-DLL startup.
+					// Only initialized sessions have registered these callbacks.
+					invites_.Unregister(); kicked_.Unregister();
 					if (lobby_.IsValid()) SteamMatchmaking()->LeaveLobby(lobby_);
 					SteamAPI_Shutdown();
 				}
@@ -146,6 +158,7 @@ namespace steam_matchmaking
 
 		private:
 			bool active_ = false, pending_ = false, stopped_ = false;
+			bool offline_warning_shown_ = false;
 			HMODULE module_ = nullptr;
 			CSteamID lobby_;
 			CCallResult<service, LobbyCreated_t> created_;
@@ -153,6 +166,25 @@ namespace steam_matchmaking
 			CCallResult<service, LobbyEnter_t> joined_;
 			CCallbackManual<service, GameLobbyJoinRequested_t> invites_;
 			CCallbackManual<service, LobbyKicked_t> kicked_;
+
+			void unavailable(const char* reason)
+			{
+				console::warn("Steam online services unavailable: %s\n", reason);
+				warn_sign_in();
+			}
+
+			void warn_sign_in()
+			{
+				if (offline_warning_shown_) return;
+				offline_warning_shown_ = true;
+				console::warn("To access online services, you must be signed into Steam. Offline play remains available.\n");
+			}
+
+			void check_sign_in()
+			{
+				if (SteamUser()->BLoggedOn()) offline_warning_shown_ = false;
+				else warn_sign_in();
+			}
 
 			void invited(GameLobbyJoinRequested_t* result)
 			{
@@ -172,8 +204,11 @@ namespace steam_matchmaking
 
 			bool ready()
 			{
-				if (!active_ || stopped_) { console::warn("Steam: initialize with steam_init first.\n"); return false; }
-				if (!SteamUser()->BLoggedOn()) { console::warn("Steam: user is offline.\n"); return false; }
+				if (!active_ || stopped_ || !SteamUser()->BLoggedOn())
+				{
+					console::warn("To access online services, you must be signed into Steam. Use steam_init to retry after signing in.\n");
+					return false;
+				}
 				if (pending_) { console::warn("Steam: lobby operation already pending.\n"); return false; }
 				return true;
 			}
@@ -287,8 +322,13 @@ namespace steam_matchmaking
 				state->pump();
 				return scheduler::cond_continue;
 			}, scheduler::main);
-			if (utils::flags::has_flag("steam")) enqueue([](service& s) { s.initialize(); });
+			// Always initialize on the main frame, not during DLL attachment.
+			enqueue([](service& s) { s.initialize(); });
 #else
+			scheduler::once([]()
+			{
+				console::warn("Steam online services unavailable in this build. To access online services, you must be signed into Steam and use a Steam-enabled client. Offline play remains available.\n");
+			}, scheduler::main);
 			for (const auto* name : { "steam_init", "steam_status", "steam_lobby_create", "steam_lobby_list",
 				"steam_lobby_join", "steam_lobby_leave", "steam_lobby_invite" })
 				command::add(name, []() { console::info("Steam support not compiled; regenerate with --steamworks-sdk=<sdk root>.\n"); });

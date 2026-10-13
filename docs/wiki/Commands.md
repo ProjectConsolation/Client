@@ -5,9 +5,17 @@
 Generate the solution with `generate.bat --steamworks-sdk="C:\path\to\sdk"`
 or set `STEAMWORKS_SDK` to that SDK root. Build the client yourself. Deploy the
 SDK's **32-bit** `redistributable_bin/steam_api.dll` beside `JB_LiveEngine_s.exe`;
-it is also copied into the build output. Steam is optional and delay-loaded:
-normal offline launches do not initialize it. `-steam` initializes it on the
-game's main frame, or run `steam_init` manually with Steam running.
+it is also copied into the build output. Nightly packaging requires this x86
+redistributable, includes it at the ZIP root beside the client, and verifies its
+packaged hash. Missing or wrong-architecture redistributables fail packaging.
+Steam initialization runs by default
+on the game's main frame; no `-steam` switch is required. Delay-loading keeps
+a missing Steam redistributable from preventing offline startup. If Steam is
+unavailable or the user is not signed in, the client warns that online services
+require signing into Steam and continues with offline play. A sign-out after
+initialization produces the same warning once, not every frame. Run `steam_init`
+to retry initialization after starting/signing into Steam. A build generated
+without SDK support also warns and retains offline play.
 
 Supply an authorized App ID through the normal Steam launch environment or a
 local development `steam_appid.txt` in the working directory. No App ID is
@@ -18,7 +26,7 @@ metadata is **Project: Consolation**; this does not rename Steam's app title.
 IW4x-style custom mod presence uses internal Steam interfaces and is not
 implemented by this supported SDK adapter.
 
-- `steam_init`: initialize the SDK; print its detailed error on failure.
+- `steam_init`: retry SDK initialization; print a nonfatal warning on failure.
 - `steam_status`: show actual App ID, Steam user, online state and current lobby.
 - `steam_lobby_create [friends|public]`: create an 18-member lobby; friends-only
   by default. Public creation explicitly advertises the lobby for discovery.

@@ -26,10 +26,22 @@ $stockMenuFiles = @(
 )
 
 # Package only selected build outputs, never a reused build directory wholesale.
-foreach ($name in @('d3d9.dll', 'xlive.dll')) {
+foreach ($name in @('d3d9.dll', 'xlive.dll', 'steam_api.dll')) {
     if (!(Test-Path -LiteralPath (Join-Path $ReleaseDirectory $name) -PathType Leaf)) {
         throw "Missing build output: $name"
     }
+}
+# Refuse a 64-bit redistributable in this x86 client package.
+$steamApiPath = Join-Path $ReleaseDirectory 'steam_api.dll'
+$steamBytes = [System.IO.File]::ReadAllBytes($steamApiPath)
+if ($steamBytes.Length -lt 64 -or [System.BitConverter]::ToUInt16($steamBytes, 0) -ne 0x5A4D) {
+    throw 'steam_api.dll is not a Windows PE image'
+}
+$steamPeOffset = [System.BitConverter]::ToInt32($steamBytes, 0x3C)
+if ($steamPeOffset -lt 64 -or $steamPeOffset -gt ($steamBytes.Length - 6) -or
+        [System.BitConverter]::ToUInt32($steamBytes, $steamPeOffset) -ne 0x4550 -or
+        [System.BitConverter]::ToUInt16($steamBytes, $steamPeOffset + 4) -ne 0x14C) {
+    throw 'Nightly requires the Windows x86 steam_api.dll, not steam_api64.dll'
 }
 foreach ($name in @('Launch Consolation.bat', 'JB_Launcher_s.exe', 'README.txt',
         'README_XLIVE.txt', 'consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff') + $stockMenuFiles) {
@@ -42,7 +54,7 @@ $stagingParent = Join-Path $RepositoryRoot 'build/nightly-packages'
 $staging = Join-Path $stagingParent ([guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 foreach ($file in Get-ChildItem -LiteralPath $requiredDirectory -Recurse -File) {
-    if ($file.Name -in @('AGENTS.md', 'AGENTS.override.md', 'xlive.dll') -or
+    if ($file.Name -in @('AGENTS.md', 'AGENTS.override.md', 'xlive.dll', 'steam_api.dll') -or
             $file.Extension -in @('.lnk', '.sum', '.pdb', '.lib', '.exp')) { continue }
     $relative = [System.IO.Path]::GetRelativePath($requiredDirectory, $file.FullName)
     $destination = Join-Path $staging $relative
@@ -50,6 +62,7 @@ foreach ($file in Get-ChildItem -LiteralPath $requiredDirectory -Recurse -File) 
     Copy-Item -LiteralPath $file.FullName -Destination $destination
 }
 Copy-Item -LiteralPath (Join-Path $ReleaseDirectory 'd3d9.dll') -Destination $staging
+Copy-Item -LiteralPath $steamApiPath -Destination $staging
 $offline = Join-Path $staging 'optional/offline'
 New-Item -ItemType Directory -Path $offline -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $ReleaseDirectory 'xlive.dll') -Destination $offline
@@ -59,7 +72,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead([System.IO.Path]::GetFullPath($OutputPath))
 try {
     $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
-    foreach ($required in @('d3d9.dll', 'Launch Consolation.bat', 'JB_Launcher_s.exe',
+    foreach ($required in @('d3d9.dll', 'steam_api.dll', 'Launch Consolation.bat', 'JB_Launcher_s.exe',
             'README.txt', 'README_XLIVE.txt', 'consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff',
             'optional/offline/xlive.dll') + $stockMenuFiles) {
         if ($required -notin $names) { throw "Nightly ZIP is missing $required" }
@@ -69,12 +82,13 @@ try {
     # library must travel with the screens whose class definitions it supplies.
     $sha256 = [System.Security.Cryptography.SHA256]::Create()
     try {
-        foreach ($menu in $stockMenuFiles + @('consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff')) {
+        foreach ($menu in $stockMenuFiles + @('consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff', 'steam_api.dll')) {
             $entry = $archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq $menu }
             $stream = $entry.Open()
             try { $packedHash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') }
             finally { $stream.Dispose() }
-            $sourceHash = (Get-FileHash -LiteralPath (Join-Path $requiredDirectory $menu) -Algorithm SHA256).Hash
+            $hashSource = if ($menu -eq 'steam_api.dll') { $steamApiPath } else { Join-Path $requiredDirectory $menu }
+            $sourceHash = (Get-FileHash -LiteralPath $hashSource -Algorithm SHA256).Hash
             if ($packedHash -ne $sourceHash) { throw "Nightly menu hash mismatch: $menu" }
         }
     } finally { $sha256.Dispose() }
