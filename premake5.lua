@@ -69,6 +69,19 @@ newoption {
 	value = "PATH"
 }
 
+newoption {
+	trigger = "steamworks-sdk",
+	description = "Enable optional Steam lobby integration using a local Steamworks SDK root (sdk/).",
+	value = "PATH"
+}
+
+local steamworksSdk = _OPTIONS["steamworks-sdk"] or os.getenv("STEAMWORKS_SDK")
+if steamworksSdk and (not os.isfile(path.join(steamworksSdk, "public/steam/steam_api.h"))
+	or not os.isfile(path.join(steamworksSdk, "redistributable_bin/steam_api.lib"))
+	or not os.isfile(path.join(steamworksSdk, "redistributable_bin/steam_api.dll"))) then
+	error("steamworks-sdk must contain public/steam/steam_api.h and the Windows x86 redistributables")
+end
+
 newaction {
 	trigger = "version",
 	description = "Returns the version string for the current commit of the source code.",
@@ -321,6 +334,18 @@ workspace "consolation-client"
 		-- This is a build-order dependency, not a link dependency.
 		dependson { "xlive" }
 		links { "hid", "setupapi" }
+		if steamworksSdk then
+			defines { "CSL_STEAMWORKS" }
+			includedirs { path.join(steamworksSdk, "public") }
+			libdirs { path.join(steamworksSdk, "redistributable_bin") }
+			links { "steam_api", "delayimp" }
+			-- Offline startup must not depend on Steam or its redistributable.
+			linkoptions { "/DELAYLOAD:steam_api.dll" }
+			postbuildcommands {
+				"copy /y \"" .. path.translate(path.getabsolute(path.join(steamworksSdk, "redistributable_bin/steam_api.dll")), "\\")
+					.. "\" \"$(TargetDir)steam_api.dll\""
+			}
+		end
 		buildoptions { "/utf-8" }
 
 		files 

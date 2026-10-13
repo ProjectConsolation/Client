@@ -1,5 +1,46 @@
 # Commands
 
+## Steam lobby integration (development)
+
+Generate the solution with `generate.bat --steamworks-sdk="C:\path\to\sdk"`
+or set `STEAMWORKS_SDK` to that SDK root. Build the client yourself. Deploy the
+SDK's **32-bit** `redistributable_bin/steam_api.dll` beside `JB_LiveEngine_s.exe`;
+it is also copied into the build output. Steam is optional and delay-loaded:
+normal offline launches do not initialize it. `-steam` initializes it on the
+game's main frame, or run `steam_init` manually with Steam running.
+
+Supply an authorized App ID through the normal Steam launch environment or a
+local development `steam_appid.txt` in the working directory. No App ID is
+silently selected and the integration does not overwrite that file. Valve's
+SDK sample uses 480 for development; its Steam title is Spacewar, not Consolation.
+App 10080 belongs to Quantum of Solace, not this project. The lobby's `name`
+metadata is **Project: Consolation**; this does not rename Steam's app title.
+IW4x-style custom mod presence uses internal Steam interfaces and is not
+implemented by this supported SDK adapter.
+
+- `steam_init`: initialize the SDK; print its detailed error on failure.
+- `steam_status`: show actual App ID, Steam user, online state and current lobby.
+- `steam_lobby_create [friends|public]`: create an 18-member lobby; friends-only
+  by default. Public creation explicitly advertises the lobby for discovery.
+- `steam_lobby_list`: search worldwide for available Consolation protocol-v1
+  lobbies, excluding unrelated games sharing a development App ID.
+- `steam_lobby_join <decimal lobby SteamID>`: join and check protocol metadata;
+  incompatible lobbies are immediately left.
+- `steam_lobby_leave`: leave the current lobby. Wait for pending create/join/list
+  completion first so an asynchronous join cannot create untracked membership.
+- `steam_lobby_invite`: open Steam's invite overlay for the current lobby.
+
+This is an initial **control-plane integration**, not completed online play.
+Lobby operations and callbacks run on the main pipeline. It does not change
+XUIDs/profiles, start a server, connect to a match, relay game packets, authenticate
+gameplay peers. Accepted overlay invites request a compatible lobby join, without
+silently leaving an existing lobby. Lobby metadata is not
+trusted input for engine commands. Test create/list/join/leave on two Steam
+accounts with matching App IDs; validate failure/offline behavior separately.
+
+References: [Steamworks API](https://partner.steamgames.com/doc/sdk/api),
+[matchmaking and lobbies](https://partner.steamgames.com/doc/features/multiplayer/matchmaking).
+
 ## Scaleform frontend recovery
 
 `sf_restart` resumes QoS's saved native frontend movie play state and requests
