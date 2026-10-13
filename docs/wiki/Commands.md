@@ -16,8 +16,15 @@ and the existing Gun Game script under its canonical `gg.gsc` name. Install the
 resulting `patch_consolation.ff` and rebuild the client for the local acquisition
 adapter. With the offline LIVE shim, playlist acquisition invokes QoS's native
 parser and reports ready only after nonempty native playlist tables exist.
+The local adapter waits for the unique `consolation/playlists.info` rawfile;
+parsing the stock asset before the patch zone loads would permanently cache
+only the retail nine playlists. Both canonical and namespaced copies are bundled.
 This replaces the earlier success-only download probe; it does not supply a
 remote playlist server or connect native Find Match searches to Steam lobbies.
+The shim does not advertise its own private party as a discovered remote host:
+native session search is empty until a real discovery provider is connected.
+With no XHV voice engine, the native join headset query reports no headset
+instead of dereferencing null. This is not an implementation of voice chat.
 
 ## Steam lobby integration (development)
 

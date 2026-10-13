@@ -1,0 +1,64 @@
+PROJECT: CONSOLATION - STEAM / PLAYLIST PLAYTEST
+
+This is a development playtest, not completed Internet matchmaking.
+Steam currently displays Spacewar (App ID 480). Steam lobby membership does
+not connect players to a QoS match. Find Match still uses native session search.
+
+INSTALL ON EACH PC
+1. Use a supported patched QoS 1.1 multiplayer installation.
+2. Close the game and back up the existing client DLLs and consolation folder.
+3. Extract this ZIP into the game root, beside JB_LiveEngine_s.exe.
+4. For this local-playlist/LAN test, copy optional/offline/xlive.dll into the
+   game root too. Back up an existing game-root xlive.dll first. Do not change
+   the Windows system xlive.dll. Both LAN peers need the supplied shim.
+5. Keep matching map files on both PCs. Shipment is not distributed in this ZIP;
+   install the working mp_shipment map/zone and its dependencies on both PCs.
+6. Run Steam, sign into different Steam accounts on the two PCs, then launch
+   with Launch Consolation.bat. Do not copy profiles/storage/identity files.
+
+STEAM INITIALIZATION AND DISCOVERY
+Run steam_status. Expect app=480 and online=1. No manual steam_init should be
+needed at startup. Existing SteamAppId/SteamGameId or steam_appid.txt settings
+take precedence over the default; use matching App IDs for the test.
+
+Host:   steam_lobby_create public
+Friend: steam_lobby_list
+Friend: steam_lobby_join <decimal lobby ID printed by host>
+
+Both should report the same nonzero lobby ID. A two-member count should appear
+when listing the lobby. Test steam_lobby_leave and rejoin. Test the invitation
+overlay with steam_lobby_invite and accepting the invitation on the other PC.
+These operations verify Steam discovery/membership only, not game connection.
+
+PLAYLISTS AND GAMEPLAY
+Open Play Online / Find Match. Look for the log:
+  playlists: parsed 11 native playlists from local asset
+The playlist selector should include Gun Game and [DEV] Shipment 24/7.
+The latter has only equally weighted mp_shipment/gg and mp_shipment/dm entries;
+it is excluded from automatic Quick Match. Stock playlists 1-9 are preserved.
+The updated playlists.info and Gun Game script are embedded in patch_consolation.ff.
+
+If native Find Match cannot start a session, report it separately. Use System
+Link or devmap to verify the game modes; native online search is not Steam yet.
+Console single-player bring-up:
+  g_gametype gg
+  devmap mp_shipment
+Then repeat with g_gametype dm. Check weapon progression and ending Gun Game,
+player spawning, deaths, zero respawn countdown, and return to the frontend.
+Check a stock mode too. CTF is absent from the retail playlist and was not added
+or given a new delay rule. Killcam duration is separate from respawn delay.
+
+For actual two-PC LAN play, host through System Link. The other PC uses its
+System Link browser or connectIP <host-LAN-IP>:1000. Do not use 127.0.0.1 for
+another PC. Steam lobby membership does not establish this LAN connection.
+
+FAILURE / SHUTDOWN CHECKS
+1. Exit normally after a menu session, a match, and Steam lobby leave/rejoin.
+2. Close Steam before starting the game: expect a nonfatal online-services
+   warning and usable offline/System Link play. Exit again; no shutdown crash.
+3. Start/sign into Steam and use steam_init to retry, then steam_status.
+
+REPORT
+Include the client version/build label, test step, expected/actual behavior,
+steam_status output, console.log and a full dump if there is a crash. Never
+distribute private identity files, profile storage or Steam credentials.

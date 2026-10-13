@@ -8,6 +8,7 @@
 #include "traversal_camera_policy.hpp"
 #include "ui_directive_abi.hpp"
 #include "killcam_hud.hpp"
+#include "headset_presence.hpp"
 #include "component/utils/resources.hpp"
 #include "component/utils/scheduler.hpp"
 
@@ -1622,11 +1623,14 @@ namespace patches
 			// Replace title-storage acquisition with a real native parse, not
 			// the former ret_one probe. Native completion (10240710) sets this
 			// readiness flag only after parsing and repairs the selected index.
-			const auto header = game::DB_FindXAssetHeader(game::ASSET_TYPE_RAWFILE, "playlists.info");
+			// Startup requests precede patch_consolation loading. Do not parse
+			// the stock canonical asset and cache readiness before the override
+			// is resident (gmmm.dmp had 9 tables despite the 11-playlist zone).
+			const auto header = game::DB_FindXAssetHeader(game::ASSET_TYPE_RAWFILE, "consolation/playlists.info");
 			const auto* file = header.rawfile;
 			if (!file || !file->buffer || file->len <= 0 || file->len > 128 * 1024)
 			{
-				console::warn("playlists: local playlists.info unavailable; not reporting ready\n");
+				console::info("playlists: waiting for bundled consolation/playlists.info; not reporting ready\n");
 				return 0;
 			}
 			reinterpret_cast<void(__cdecl*)(const char*)>(game::game_offset(0x102E1D60))(file->buffer);
@@ -1642,6 +1646,21 @@ namespace patches
 		void apply_local_offline_mode_patches()
 		{
 			utils::hook::jump(game::game_offset(0x10240B30), read_local_playlists);
+			// gmmm.dmp: XHVCreateEngine correctly returned E_NOTIMPL/null,
+			// but PartyAskToJoin unconditionally queried headset presence.
+			// Replace just its vtable lookup with the verified nullable query;
+			// keep the native stack adjustment, arguments and stdcall intact.
+			const auto headset_site = game::game_offset(0x10323904);
+			constexpr unsigned char headset_expected[] = {0x8B, 0x08, 0x8B, 0x51, 0x34, 0x83, 0xC4, 0x0C, 0x53, 0x50, 0xFF, 0xD2};
+			if (!std::memcmp(reinterpret_cast<const void*>(headset_site), headset_expected, sizeof(headset_expected)))
+			{
+				// mov edx, headset_present: five bytes replace the two loads.
+				unsigned char replacement[] = {0xBA, 0, 0, 0, 0};
+				const auto target = reinterpret_cast<std::uint32_t>(&voice_compatibility::headset_present);
+				std::memcpy(replacement + 1, &target, sizeof(target));
+				utils::hook::set(headset_site, replacement);
+			}
+			else console::error("voice: join headset guard skipped: unsupported instructions\n");
 			// QoS DownloadStats (10240A30) reads mpdata through XStorage. Our shim
 			// implements that SDK path, including native missing-file initialization
 			// in StatsReadComplete (10240C60). Bypassing it leaves stats unready and

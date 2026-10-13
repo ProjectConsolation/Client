@@ -1559,7 +1559,7 @@ extern "C"
 		}
 		return finish_operation(overlapped, result);
 	}
-	DWORD WINAPI xlive_XSessionSearchEx(DWORD, DWORD, DWORD max_results, DWORD num_users, WORD, WORD, const void*, const void*,
+	DWORD WINAPI xlive_XSessionSearchEx(DWORD, DWORD, DWORD, DWORD, WORD, WORD, const void*, const void*,
 		DWORD* result_size, xsession_search_result_header* results, xoverlapped* overlapped)
 	{
 		if (!result_size)
@@ -1567,34 +1567,11 @@ extern "C"
 			return finish_operation(overlapped, invalid_parameter);
 		}
 
-		local_session_state session;
-		bool has_session = false;
-		{
-			std::lock_guard lock(local_session_mutex);
-			if (max_results)
-			{
-				const auto it = std::find_if(local_sessions.begin(), local_sessions.end(),
-					[num_users](const auto& candidate)
-					{
-						const auto open_public_slots = candidate.max_public_slots > candidate.filled_public_slots
-							? candidate.max_public_slots - candidate.filled_public_slots : 0;
-						return candidate.handle && open_public_slots >= num_users;
-					});
-				if (it != local_sessions.end())
-				{
-					session = *it;
-					has_session = true;
-				}
-			}
-		}
-		if (!has_session)
-		{
-			*result_size = 0;
-			return finish_operation(overlapped, success);
-		}
-
-		const auto required_size = static_cast<DWORD>(sizeof(xsession_search_result_header)
-			+ sizeof(xsession_search_result));
+		// Local session handles are bookkeeping, not discovered remote hosts.
+		// gmmm.dmp showed native matchmaking joining its own private party.
+		// Until a real discovery provider is connected, report an empty search
+		// with the SDK's actual header/buffer contract; never fabricate a peer.
+		const auto required_size = static_cast<DWORD>(sizeof(xsession_search_result_header));
 		if (!results || *result_size < required_size)
 		{
 			*result_size = required_size;
@@ -1602,20 +1579,8 @@ extern "C"
 		}
 
 		memset(results, 0, required_size);
-		results->result_count = 1;
-		results->results = reinterpret_cast<xsession_search_result*>(
-			reinterpret_cast<BYTE*>(results) + sizeof(*results));
-		results->results[0].info = session.info;
-		results->results[0].open_public_slots = session.max_public_slots
-			> session.filled_public_slots
-			? session.max_public_slots - session.filled_public_slots
-			: 0;
-		results->results[0].open_private_slots = session.max_private_slots
-			> session.filled_private_slots
-			? session.max_private_slots - session.filled_private_slots
-			: 0;
-		results->results[0].filled_public_slots = session.filled_public_slots;
-		results->results[0].filled_private_slots = session.filled_private_slots;
+		results->result_count = 0;
+		results->results = nullptr;
 		*result_size = required_size;
 		return finish_operation(overlapped, success, required_size);
 	}
