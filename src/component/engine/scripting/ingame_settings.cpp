@@ -119,9 +119,9 @@ namespace ingame_settings
       result->parent = menu;
       result->window.name = "cslNativeSettings";
       result->window.group = nullptr;
-      result->window.rect = result->window.rectClient = {50, y, 440, 20, 0, 0};
-      result->window.style = 1;
-      result->window.backColor[3] = 0.15f;
+      result->window.rect = result->window.rectClient = source->window.rectClient;
+      result->window.rect.y = result->window.rectClient.y = y;
+      result->window.style = 0;
       result->window.dynamicFlags[0] = 4;
       result->type = 1;
       result->dataType = 0;
@@ -133,14 +133,14 @@ namespace ingame_settings
       result->foreColorAlphaExp = {};
       result->text = caption;
       result->textRect[0] = result->textRect[1] = result->textRect[2] = result->textRect[3] = {};
-      result->textAlignMode = 0;
-      result->textalignx = 8;
-      result->textaligny = 15;
-      result->textscale = 0.26f;
+      // Preserve the retail font, scale and right/vertical-center alignment.
+      // The backgrounds are separate native items, not a filled text button.
       result->action = action;
       result->onAccept = nullptr;
-      result->onFocus = "play mouse_over ;";
-      result->leaveFocus = nullptr;
+      const int highlight = 1000 + static_cast<int>(y);
+      result->onFocus = copy("play mouse_over ; setLocalVarInt ui_highlight " + std::to_string(highlight)
+        + " ; setLocalVarString ui_choicegroup \"\" ;");
+      result->leaveFocus = "setLocalVarInt ui_highlight 0 ;";
       result->mouseEnterText = result->mouseExitText = nullptr;
       result->mouseEnter = result->mouseExit = nullptr;
       result->dvar = result->dvarTest = result->enableDvar = nullptr;
@@ -148,13 +148,60 @@ namespace ingame_settings
       return result;
     }
 
+    void decorate(std::vector<game::itemDef_s*>& items, game::menuDef_t* menu,
+      const game::itemDef_s* source, float y)
+    {
+      // QoS retail rows comprise two background pieces, two focus pieces and
+      // the control. QoS 1.1 runtime verifies items 16..19 and the 12-entry
+      // ui_highlight/ui_choicegroup expression; clone it rather than importing
+      // KisakCOD's different expression-op enum or changing stock allocations.
+      const auto* stock = source->parent;
+      if (!stock || stock->itemCount < 20) return;
+      for (int index = 16; index < 20; ++index)
+      {
+        auto* piece = memory.allocate<game::itemDef_s>();
+        *piece = *stock->items[index];
+        piece->parent = menu;
+        piece->window.rect = piece->window.rectClient;
+        piece->window.rect.y = piece->window.rectClient.y = y;
+        if (index >= 18)
+        {
+          const auto& expression = piece->visibleExp;
+          if (expression.numEntries != 12 || !expression.entries) continue;
+          auto** entries = memory.allocate_array<game::expressionEntry*>(12);
+          for (int i = 0; i < 12; ++i)
+          {
+            entries[i] = memory.allocate<game::expressionEntry>();
+            *entries[i] = *expression.entries[i];
+          }
+          entries[5]->data.operand.internals.intVal = 1000 + static_cast<int>(y);
+          piece->visibleExp.entries = entries;
+        }
+        items.push_back(piece);
+      }
+    }
+
+    void button(std::vector<game::itemDef_s*>& items, game::menuDef_t* menu,
+      const game::itemDef_s* source, float y, const char* caption, const char* action)
+    {
+      decorate(items, menu, source, y);
+      items.push_back(item(menu, source, y, caption, action));
+    }
+
     void row(std::vector<game::itemDef_s*>& items, game::menuDef_t* menu,
       const game::itemDef_s* source, float y, const char* caption,
       const char* dvar, const char* action, float minimum = 0, float maximum = 0)
     {
+      decorate(items, menu, source, y);
       auto* control = item(menu, source, y, caption, action);
       if (maximum > minimum)
       {
+        auto* label = item(menu, source, y, caption, nullptr);
+        label->type = 0;
+        label->window.staticFlags |= 0x100000; // native decoration, no input focus
+        items.push_back(label);
+        control->text = nullptr;
+        control->window.rect.w = control->window.rectClient.w = 440;
         control->type = 10;
         control->dataType = 4;
         control->dvar = dvar;
@@ -165,17 +212,19 @@ namespace ingame_settings
         range->range = maximum - minimum;
         control->typeData.editField = range;
         // Native sensitivity uses this same left-label/right-slider geometry.
-        control->textalignx = 220;
-        control->textAlignMode = 2;
+        control->textalignx = 340;
+        control->textAlignMode = 8;
       }
       items.push_back(control);
       if (!dvar) return;
       auto* value = item(menu, source, y, "", nullptr);
       value->window.name = copy(std::string("cslLive_") + dvar);
       value->window.style = 0;
-      value->window.rect.x = value->window.rectClient.x = 505;
-      value->window.rect.w = value->window.rectClient.w = 130;
+      value->window.rect.x = value->window.rectClient.x = maximum > minimum ? 505.0f : 386.0f;
+      value->window.rect.w = value->window.rectClient.w = maximum > minimum ? 89.0f : 208.0f;
       value->type = 0;
+      value->window.staticFlags |= 0x100000;
+      value->textAlignMode = 8;
       value->textalignx = 0;
       value->text = values[dvar].data();
       items.push_back(value);
@@ -191,7 +240,7 @@ namespace ingame_settings
       menu->window.name = name;
       menu->onESC = copy(std::string("close ") + name + " ;");
       menu->onClose = copy(std::string("open ") + back + " ; exec updategamerprofile ;");
-      menu->onOpen = nullptr;
+      menu->onOpen = "setLocalVarInt ui_highlight 0 ;";
       menu->itemCount = 16; // Retail header, backdrop, separators and BACK.
       menu->items = memory.allocate_array<game::itemDef_s*>(16);
       for (int i = 0; i < 16; ++i)
@@ -200,8 +249,7 @@ namespace ingame_settings
         *menu->items[i] = *stock->items[i];
         menu->items[i]->parent = menu;
         auto* decoration = menu->items[i];
-        if (decoration->window.rect.y >= 45 && decoration->window.rect.y < 90
-            && (decoration->text || decoration->textExp.numEntries))
+        if (i == 15) // verified retail title item at y=40, not the team header
         {
           decoration->textExp = {};
           decoration->text = title;
@@ -248,8 +296,9 @@ namespace ingame_settings
           controls->items[i]->window.rect.y += 24;
           controls->items[i]->window.rectClient.y += 24;
         }
-        append(controls, {item(controls, source, 270, "CONTROLLER",
-          "open ingame_controller ;")});
+        additions.clear();
+        button(additions, controls, source, 270, "CONTROLLER", "open ingame_controller ;");
+        append(controls, additions);
       }
       if (auto* controller = page(context, gameplay, "ingame_controller", "CONTROLLER", "ingame_controls"))
       {
@@ -281,7 +330,7 @@ namespace ingame_settings
       }
       if (auto* graphics = page(context, gameplay, "ingame_graphics", "GRAPHICS", "ingame"))
       {
-        graphics->onOpen = "exec \"cslIngameVideo begin\" ;";
+        graphics->onOpen = "setLocalVarInt ui_highlight 0 ; exec \"cslIngameVideo begin\" ;";
         graphics->onESC = "exec \"cslIngameVideo exit\" ;";
         graphics->items[14]->action = graphics->onESC;
         additions.clear();
@@ -304,11 +353,17 @@ namespace ingame_settings
         if (auto* confirm = page(context, gameplay, "ingame_video_discard", "EXIT WITHOUT SAVING?", "ingame_graphics"))
         {
           confirm->onClose = nullptr;
-          append(confirm, {item(confirm, source, 150, "YES", "exec \"cslIngameVideo discard\" ;"),
-            item(confirm, source, 174, "NO", "close ingame_video_discard ;")});
+          additions.clear();
+          button(additions, confirm, source, 150, "YES", "exec \"cslIngameVideo discard\" ;");
+          button(additions, confirm, source, 174, "NO", "close ingame_video_discard ;");
+          append(confirm, additions);
         }
-        if (pause && !extended(pause))
-          append(pause, {item(pause, source, 222, "GRAPHICS", "open ingame_graphics ; close ingame ;")});
+        if (pause && pause->itemCount > 20 && !extended(pause))
+        {
+          additions.clear();
+          button(additions, pause, pause->items[20], 222, "GRAPHICS", "open ingame_graphics ; close ingame ;");
+          append(pause, additions);
+        }
       }
     }
 

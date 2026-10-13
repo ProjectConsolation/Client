@@ -1655,9 +1655,8 @@ namespace patches
 			if (!std::memcmp(reinterpret_cast<const void*>(headset_site), headset_expected, sizeof(headset_expected)))
 			{
 				// mov edx, headset_present: five bytes replace the two loads.
-				unsigned char replacement[] = {0xBA, 0, 0, 0, 0};
 				const auto target = reinterpret_cast<std::uint32_t>(&voice_compatibility::headset_present);
-				std::memcpy(replacement + 1, &target, sizeof(target));
+				const auto replacement = voice_compatibility::headset_lookup_patch(target);
 				utils::hook::set(headset_site, replacement);
 			}
 			else console::error("voice: join headset guard skipped: unsupported instructions\n");

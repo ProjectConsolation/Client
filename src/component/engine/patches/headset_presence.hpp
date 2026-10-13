@@ -1,9 +1,18 @@
 #pragma once
 #include <Windows.h>
 #include <cstddef>
+#include <array>
+#include <cstdint>
 
 namespace voice_compatibility
 {
+	inline std::array<unsigned char, 5> headset_lookup_patch(std::uint32_t target)
+	{
+		// Value-type byte storage: a C array decays to a pointer when passed
+		// to hook::set<T>, writing the pointer instead of these instructions.
+		return {0xBA, static_cast<unsigned char>(target), static_cast<unsigned char>(target >> 8),
+			static_cast<unsigned char>(target >> 16), static_cast<unsigned char>(target >> 24)};
+	}
 	// Partial binding, not a voice implementation. GFWL SDK include/xhv.h:
 	// IXHVEngine has no QueryInterface slot; IsHeadsetPresent is slot 13.
 	// QoS 10323904/1032390E uses this exact stdcall (this, user-index) ABI.

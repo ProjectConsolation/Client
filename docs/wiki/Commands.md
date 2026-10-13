@@ -58,23 +58,34 @@ implemented by this supported SDK adapter.
 
 - `steam_init`: retry SDK initialization; print a nonfatal warning on failure.
 - `steam_status`: show actual App ID, Steam user, online state and current lobby.
-- `steam_lobby_create [friends|public]`: create an 18-member lobby; friends-only
-  by default. Public creation explicitly advertises the lobby for discovery.
+- `steam_lobby_create [friends|public] [LAN IPv4:port]`: create an 18-member
+  lobby, friends-only by default. Public lobbies appear in searches. With a
+  unique local IPv4 address the host address is selected automatically; on
+  VPN/multi-adapter PCs specify the reachable LAN address explicitly. The
+  running System Link match is advertised with its actual shim bind port.
 - `steam_lobby_list`: search worldwide for available Consolation protocol-v1
   lobbies, excluding unrelated games sharing a development App ID.
 - `steam_lobby_join <decimal lobby SteamID>`: join and check protocol metadata;
-  incompatible lobbies are immediately left.
+  incompatible lobbies are immediately left. Wait for the host to start a
+  match, then query its advertised endpoint through `connectIP` and enter the
+  native QoS connection handshake. A failed query does not retry forever;
+  fix connectivity, leave the lobby and rejoin to retry.
 - `steam_lobby_leave`: leave the current lobby. Wait for pending create/join/list
   completion first so an asynchronous join cannot create untracked membership.
 - `steam_lobby_invite`: open Steam's invite overlay for the current lobby.
 
-This is an initial **control-plane integration**, not completed online play.
-Lobby operations and callbacks run on the main pipeline. It does not change
-XUIDs/profiles, start a server, connect to a match, relay game packets, authenticate
-gameplay peers. Accepted overlay invites request a compatible lobby join, without
-silently leaving an existing lobby. Lobby metadata is not
-trusted input for engine commands. Test create/list/join/leave on two Steam
-accounts with matching App IDs; validate failure/offline behavior separately.
+This is **Steam discovery with a direct LAN gameplay handoff**, not Internet
+relay matchmaking. Both peers need the matching local `xlive.dll` shim and
+reachable host UDP port (normally 1000). Start the host through System Link;
+creating a Steam lobby does not start a server. Native **Find Match** still uses
+the original session search and is not wired to these Steam lobbies.
+
+Lobby operations and callbacks run on the main pipeline. XUIDs/profiles stay
+unchanged. There is no Steam gameplay authentication, NAT traversal or relay.
+Accepted overlay invites follow the same validated lobby/game handoff without
+silently leaving an existing lobby. Only validated numeric SDK IP/port fields
+are passed to `connectIP`, never command text from lobby metadata. Test on two
+Steam accounts with matching App IDs; validate failure/offline behavior separately.
 
 References: [Steamworks API](https://partner.steamgames.com/doc/sdk/api),
 [matchmaking and lobbies](https://partner.steamgames.com/doc/features/multiplayer/matchmaking).
