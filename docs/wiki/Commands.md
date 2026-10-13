@@ -20,7 +20,8 @@ The local adapter waits for the unique `consolation/playlists.info` rawfile;
 parsing the stock asset before the patch zone loads would permanently cache
 only the retail nine playlists. Both canonical and namespaced copies are bundled.
 This replaces the earlier success-only download probe; it does not supply a
-remote playlist server or connect native Find Match searches to Steam lobbies.
+remote playlist server. Find Match uses the loaded native rotation to filter
+Steam hosts (see the Steam section below).
 The shim does not advertise its own private party as a discovered remote host:
 native session search is empty until a real discovery provider is connected.
 With no XHV voice engine, the native join headset query reports no headset
@@ -58,6 +59,12 @@ implemented by this supported SDK adapter.
 
 - `steam_init`: retry SDK initialization; print a nonfatal warning on failure.
 - `steam_status`: show actual App ID, Steam user, online state and current lobby.
+- `steam_find_match`: same search as confirming a playlist in **Find Match**.
+  Search running public Steam hosts whose current map/mode is an entry in the
+  selected native playlist, then join a compatible lobby and query its LAN
+  endpoint. An empty result reports a menu error; it does not create a host.
+- `steam_match_cancel`: cancel Find Match without stopping a manually hosted
+  lobby. Leaving the native match-search screen also cancels the search.
 - `steam_lobby_create [friends|public] [LAN IPv4:port]`: create an 18-member
   lobby, friends-only by default. Public lobbies appear in searches. With a
   unique local IPv4 address the host address is selected automatically; on
@@ -77,8 +84,17 @@ implemented by this supported SDK adapter.
 This is **Steam discovery with a direct LAN gameplay handoff**, not Internet
 relay matchmaking. Both peers need the matching local `xlive.dll` shim and
 reachable host UDP port (normally 1000). Start the host through System Link;
-creating a Steam lobby does not start a server. Native **Find Match** still uses
-the original session search and is not wired to these Steam lobbies.
+creating a Steam lobby does not start a server. Native **Find Match** playlist
+confirmation is routed to Steam instead of starting the old LIVE search loop.
+Gun Game matches `gg` entries; `[DEV] Shipment 24/7` accepts only
+`mp_shipment/gg` and `mp_shipment/dm`. Hosts publish their current map/mode.
+Searches are bounded to 20 seconds and preserve cancellation across late Steam
+join callbacks. Finding a host does not prove the subsequent QoS handshake
+succeeded; verify both players enter the map.
+
+Find Match currently supports solo joining, not moving a multi-player party.
+It will not silently leave an existing Steam lobby or stop your own match.
+Old hosts without map/mode metadata are not eligible; rebuild both peers.
 
 Lobby operations and callbacks run on the main pipeline. XUIDs/profiles stay
 unchanged. There is no Steam gameplay authentication, NAT traversal or relay.

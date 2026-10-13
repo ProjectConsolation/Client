@@ -3,6 +3,7 @@
 #include "engine/console/command.hpp"
 #include "engine/console/console.hpp"
 #include "utils/scheduler.hpp"
+#include "utils/hook.hpp"
 #include "game/game.hpp"
 #include "engine/console/ip_endpoint.hpp"
 #include "engine/patches/xlive.hpp"
@@ -23,11 +24,117 @@
 // or Steam authentication is implied by lobby membership.
 namespace steam_matchmaking
 {
+	namespace
+	{
+		utils::hook::detour select_playlist_hook, leave_match_hook;
+		std::function<void()> find_match_action, cancel_match_action;
+
+		void find_match_stub()
+		{
+			if (find_match_action) find_match_action();
+		}
+
+		void leave_match_stub()
+		{
+			if (cancel_match_action) cancel_match_action();
+			leave_match_hook.invoke<void>(); // retain native party cleanup
+		}
+
+		void find_match_error(const char* message)
+		{
+			console::warn("Steam Find Match: %s\n", message);
+			// QoS 1.1 selectplaylist's error path: title in EDI, return screen
+			// and message on the stack, caller cleanup. Copies all three strings.
+			const auto entry = game::game_offset(0x1040E7F0);
+			constexpr unsigned char expected[] = {0x53, 0x8B, 0x5C, 0x24, 0x0C, 0x56};
+			if (std::memcmp(reinterpret_cast<const void*>(entry), expected, sizeof(expected))) return;
+			const char* title = "@MPUI_ERROR_TITLE";
+			const char* screen = "mpxblivemain";
+			__asm
+			{
+				push edi
+				mov edi, title
+				push message
+				push screen
+				call entry
+				add esp, 8
+				pop edi
+			}
+		}
+	}
 #ifdef CSL_STEAMWORKS
 	namespace
 	{
 		constexpr auto product = "project-consolation";
 		constexpr auto protocol = "qos-pc-1.1-lobby-v1";
+
+		// QoS PC parser 102E1D60: map[32], gametype[16], weight at +48,
+		// 56-byte entries at playlist +1344, count at +8512, stride 8532.
+		// Read-only views; names/layout come from QoS, not another title.
+		struct rotation_entry
+		{
+			char map[32];
+			char gametype[16];
+			int weight;
+			int remaining;
+		};
+		struct playlist_view
+		{
+			char name[64], description[256], rules[1024];
+			rotation_entry entries[128];
+			int count;
+			char tail[16];
+		};
+		static_assert(sizeof(rotation_entry) == 56);
+		static_assert(offsetof(rotation_entry, weight) == 48);
+		static_assert(offsetof(playlist_view, entries) == 1344);
+		static_assert(offsetof(playlist_view, count) == 8512);
+		static_assert(sizeof(playlist_view) == 8532);
+
+		bool matches_rotation(const std::vector<rotation_entry>& rotation, const char* map, const char* mode)
+		{
+			for (const auto& entry : rotation)
+				if (entry.weight > 0 && std::memchr(entry.map, 0, sizeof(entry.map))
+					&& std::memchr(entry.gametype, 0, sizeof(entry.gametype))
+					&& !std::strcmp(entry.map, map) && !std::strcmp(entry.gametype, mode)) return true;
+			return false;
+		}
+
+		bool copy_rotation(const playlist_view* playlists, int ordinal,
+			std::vector<rotation_entry>& rotation, std::string& name)
+		{
+			if (!playlists || ordinal < 0 || ordinal >= 32) return false;
+			// Native 102E1A20 maps the displayed ordinal to nonempty table IDs.
+			for (int id = 0, index = 0; id < 32; ++id)
+			{
+				const auto& playlist = playlists[id];
+				if (!playlist.count) continue;
+				if (playlist.count < 0 || playlist.count > 128) return false;
+				if (index++ != ordinal) continue;
+				if (!std::memchr(playlist.name, 0, sizeof(playlist.name))) return false;
+				rotation.assign(playlist.entries, playlist.entries + playlist.count);
+				name = playlist.name;
+				return true;
+			}
+			return false;
+		}
+
+		bool selected_rotation(std::vector<rotation_entry>& rotation, std::string& name)
+		{
+			if (!*reinterpret_cast<const unsigned char*>(game::game_offset(0x115FB9A8))) return false;
+			const auto* selected = game::Dvar_FindVar("playlist");
+			if (!selected) return false;
+			int ordinal = selected->current.integer;
+			const auto type = static_cast<unsigned char>(selected->type);
+			if (type != game::DVAR_TYPE_INT && type != game::DVAR_TYPE_ENUM)
+			{
+				if (type != game::DVAR_TYPE_STRING || !selected->current.string) return false;
+				const std::string_view text = selected->current.string;
+				const auto parsed = std::from_chars(text.data(), text.data() + text.size(), ordinal);
+				if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) return false;
+			}
+			return copy_rotation(reinterpret_cast<const playlist_view*>(game::game_offset(0x11384508)), ordinal, rotation, name);
+		}
 
 		bool valid_game_ip(uint32 ip)
 		{
@@ -150,6 +257,8 @@ namespace steam_matchmaking
 				{
 					SteamAPI_RunCallbacks();
 					check_sign_in();
+					if (finding_ && GetTickCount64() - find_started_ >= 20000)
+						finish_find("Steam search timed out. Check your connection and try Find Match again.");
 					if (GetTickCount64() - last_game_poll_ >= 1000)
 					{
 						last_game_poll_ = GetTickCount64();
@@ -166,6 +275,39 @@ namespace steam_matchmaking
 					SteamUtils()->GetAppID(), SteamUser()->GetSteamID().ConvertToUint64(),
 					SteamUser()->BLoggedOn(), lobby_.ConvertToUint64(), pending_);
 				console::info("Steam lobby joins use direct LAN game connections; Steam relay is not implemented.\n");
+				console::info("Steam Find Match: searching=%d playlist=%s\n", finding_, find_name_.c_str());
+			}
+
+			void find_match()
+			{
+				if (!ready()) { find_match_error("Sign into Steam and wait for any pending lobby operation before searching."); return; }
+				if (lobby_.IsValid() || running_server())
+				{ find_match_error("Leave your Steam lobby and stop your own match before using Find Match."); return; }
+				if (!xlive::is_local_shim_loaded())
+				{ find_match_error("Install the matching Consolation LAN xlive.dll before using Steam Find Match."); return; }
+				using party_count = int(__thiscall*)(void*);
+				if (reinterpret_cast<party_count>(game::game_offset(0x10322720))(
+					reinterpret_cast<void*>(game::game_offset(0x111CF170))) > 1)
+				{ find_match_error("Steam Find Match currently supports solo joining, not moving a grouped party."); return; }
+				if (!selected_rotation(find_rotation_, find_name_))
+				{ find_match_error("The selected playlist is unavailable. Reload the playlists and try again."); return; }
+				finding_ = true; find_join_pending_ = cancelled_find_join_ = false;
+				find_started_ = GetTickCount64(); candidates_.clear();
+				console::info("Steam Find Match: searching for running hosts in %s.\n", find_name_.c_str());
+				list();
+				if (!pending_) finish_find("Steam could not submit the lobby search. Please try again.");
+			}
+
+			void cancel_find()
+			{
+				if (!finding_) return;
+				finding_ = false;
+				candidates_.clear();
+				// Keep an in-flight JoinLobby result registered so a late successful
+				// join can be left immediately, never orphaning membership.
+				if (find_join_pending_) cancelled_find_join_ = true;
+				else { listed_.Cancel(); pending_ = false; }
+				console::info("Steam Find Match: search ended/cancelled.\n");
 			}
 
 			void create(const bool public_lobby, const std::string& endpoint)
@@ -194,6 +336,7 @@ namespace steam_matchmaking
 				matchmaking->AddRequestLobbyListStringFilter("csl_product", product, k_ELobbyComparisonEqual);
 				matchmaking->AddRequestLobbyListStringFilter("csl_protocol", protocol, k_ELobbyComparisonEqual);
 				matchmaking->AddRequestLobbyListFilterSlotsAvailable(1);
+				if (finding_) matchmaking->AddRequestLobbyListStringFilter("csl_game_ready", "1", k_ELobbyComparisonEqual);
 				matchmaking->AddRequestLobbyListDistanceFilter(k_ELobbyDistanceFilterWorldwide);
 				matchmaking->AddRequestLobbyListResultCountFilter(50);
 				const auto call = matchmaking->RequestLobbyList();
@@ -212,11 +355,16 @@ namespace steam_matchmaking
 					return;
 				}
 				const auto call = SteamMatchmaking()->JoinLobby(target);
-				if (begin(call)) joined_.Set(call, this, &service::joined);
+				if (begin(call))
+				{
+					find_join_pending_ = finding_;
+					joined_.Set(call, this, &service::joined);
+				}
 			}
 
 			void leave()
 			{
+				cancel_find();
 				// Do not cancel an in-flight join/create: cancelling its call result
 				// would hide a successful join and leak untracked lobby membership.
 				if (pending_) { console::warn("Steam: wait for the pending lobby operation, then leave.\n"); return; }
@@ -236,6 +384,7 @@ namespace steam_matchmaking
 			void shutdown()
 			{
 				stopped_ = true;
+				finding_ = false; candidates_.clear();
 				created_.Cancel(); listed_.Cancel(); joined_.Cancel();
 				if (active_)
 				{
@@ -259,12 +408,50 @@ namespace steam_matchmaking
 			uint16 host_port_ = 0, published_port_ = 0, attempted_port_ = 0;
 			bool published_ready_ = false;
 			ULONGLONG last_game_poll_ = 0;
+			bool finding_ = false, find_join_pending_ = false, cancelled_find_join_ = false;
+			ULONGLONG find_started_ = 0;
+			std::string find_name_;
+			std::vector<rotation_entry> find_rotation_;
+			std::vector<CSteamID> candidates_;
 			CCallResult<service, LobbyCreated_t> created_;
 			CCallResult<service, LobbyMatchList_t> listed_;
 			CCallResult<service, LobbyEnter_t> joined_;
 			CCallbackManual<service, GameLobbyJoinRequested_t> invites_;
 			CCallbackManual<service, LobbyKicked_t> kicked_;
 			CCallbackManual<service, LobbyGameCreated_t> game_created_;
+
+			void finish_find(const char* error)
+			{
+				cancel_find();
+				find_match_error(error);
+			}
+
+			bool eligible(CSteamID lobby)
+			{
+				auto* matchmaking = SteamMatchmaking();
+				uint32 ip = 0; uint16 port = 0; CSteamID server;
+				return lobby.IsValid() && lobby.IsLobby()
+					&& matchmaking->GetLobbyOwner(lobby) != SteamUser()->GetSteamID()
+					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_product"), product)
+					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_protocol"), protocol)
+					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_game_ready"), "1")
+					&& matches_rotation(find_rotation_, matchmaking->GetLobbyData(lobby, "csl_map"),
+						matchmaking->GetLobbyData(lobby, "csl_gametype"))
+					&& matchmaking->GetLobbyGameServer(lobby, &ip, &port, &server) && valid_game_ip(ip) && port;
+			}
+
+			void next_candidate()
+			{
+				find_join_pending_ = false;
+				while (finding_ && !candidates_.empty())
+				{
+					const auto candidate = candidates_.back(); candidates_.pop_back();
+					if (!eligible(candidate)) continue;
+					join(std::to_string(candidate.ConvertToUint64()));
+					if (pending_) return;
+				}
+				if (finding_) finish_find("No compatible running Steam hosts were found for this playlist. Start a host on your LAN and try again.");
+			}
 
 			bool running_server() const
 			{
@@ -283,6 +470,13 @@ namespace steam_matchmaking
 						published_ready_ = false;
 					return;
 				}
+				const auto* map = game::Dvar_FindVar("mapname");
+				const auto* mode = game::Dvar_FindVar("g_gametype");
+				if (!map || !mode || static_cast<unsigned char>(map->type) != game::DVAR_TYPE_STRING
+					|| static_cast<unsigned char>(mode->type) != game::DVAR_TYPE_STRING
+					|| !map->current.string || !mode->current.string) return;
+				if (!matchmaking->SetLobbyData(lobby_, "csl_map", map->current.string)
+					|| !matchmaking->SetLobbyData(lobby_, "csl_gametype", mode->current.string)) return;
 				// GFWL SDK XNADDR is 36 bytes; wPortOnline is network-order at +8.
 				// Use the actual shim bind port, not Steam's server/query defaults.
 				using title_address = DWORD(WINAPI*)(void*);
@@ -417,6 +611,18 @@ namespace steam_matchmaking
 			void listed(LobbyMatchList_t* result, const bool failed)
 			{
 				pending_ = false;
+				if (finding_)
+				{
+					if (failed) { finish_find("Steam lobby search failed. Please try again."); return; }
+					// Steam returns sorted results; reverse storage preserves that order.
+					for (uint32 i = result->m_nLobbiesMatching < 50 ? result->m_nLobbiesMatching : 50; i > 0; --i)
+					{
+						const auto candidate = SteamMatchmaking()->GetLobbyByIndex(static_cast<int>(i - 1));
+						if (eligible(candidate)) candidates_.push_back(candidate);
+					}
+					next_candidate();
+					return;
+				}
 				if (failed) { console::error("Steam: lobby search failed.\n"); return; }
 				console::info("Steam: %u matching Consolation lobbies.\n", result->m_nLobbiesMatching);
 				for (uint32 i = 0; i < result->m_nLobbiesMatching && i < 50; ++i)
@@ -430,12 +636,26 @@ namespace steam_matchmaking
 			void joined(LobbyEnter_t* result, const bool failed)
 			{
 				pending_ = false;
+				const bool find_join = find_join_pending_;
+				find_join_pending_ = false;
 				if (failed || result->m_EChatRoomEnterResponse != k_EChatRoomEnterResponseSuccess)
 				{
 					console::error("Steam: lobby join failed (IO=%d response=%u).\n", failed, failed ? 0u : result->m_EChatRoomEnterResponse);
+					cancelled_find_join_ = false;
+					if (finding_ && find_join) next_candidate();
 					return;
 				}
 				lobby_ = CSteamID(result->m_ulSteamIDLobby);
+				if (cancelled_find_join_)
+				{
+					cancelled_find_join_ = false; leave(); return;
+				}
+				if (finding_ && find_join && !eligible(lobby_))
+				{
+					// Leave this stale/full/changed candidate without cancelling the search.
+					SteamMatchmaking()->LeaveLobby(lobby_); lobby_ = CSteamID();
+					next_candidate(); return;
+				}
 				if (std::strcmp(SteamMatchmaking()->GetLobbyData(lobby_, "csl_product"), product) ||
 					std::strcmp(SteamMatchmaking()->GetLobbyData(lobby_, "csl_protocol"), protocol))
 				{
@@ -444,6 +664,7 @@ namespace steam_matchmaking
 					return;
 				}
 				status();
+				finding_ = false; candidates_.clear();
 				connect_game();
 				if (!attempted_ip_) console::info("Steam: lobby joined; waiting for the host to start its QoS match.\n");
 			}
@@ -472,6 +693,10 @@ namespace steam_matchmaking
 			};
 			command::add("steam_init", [enqueue]() { enqueue([](service& s) { s.initialize(); }); });
 			command::add("steam_status", [enqueue]() { enqueue([](service& s) { s.status(); }); });
+			find_match_action = [enqueue]() { enqueue([](service& s) { s.find_match(); }); };
+			cancel_match_action = [enqueue]() { enqueue([](service& s) { s.cancel_find(); }); };
+			command::add("steam_find_match", []() { if (find_match_action) find_match_action(); });
+			command::add("steam_match_cancel", []() { if (cancel_match_action) cancel_match_action(); });
 			command::add("steam_lobby_create", [enqueue](const command::params& p)
 			{
 				if (p.size() > 3 || (p.size() >= 2 && std::strcmp(p[1], "public") && std::strcmp(p[1], "friends")))
@@ -500,18 +725,50 @@ namespace steam_matchmaking
 			// Always initialize on the main frame, not during DLL attachment.
 			enqueue([](service& s) { s.initialize(); });
 #else
+			find_match_action = []() {
+				scheduler::once([]() { find_match_error("Steam support is unavailable in this build. Offline and System Link play remain available."); }, scheduler::main);
+			};
+			cancel_match_action = {};
 			scheduler::once([]()
 			{
 				console::warn("Steam online services unavailable in this build. To access online services, you must be signed into Steam and use a Steam-enabled client. Offline play remains available.\n");
 			}, scheduler::main);
 			for (const auto* name : { "steam_init", "steam_status", "steam_lobby_create", "steam_lobby_list",
-				"steam_lobby_join", "steam_lobby_leave", "steam_lobby_invite" })
+				"steam_lobby_join", "steam_lobby_leave", "steam_lobby_invite", "steam_find_match", "steam_match_cancel" })
 				command::add(name, []() { console::info("Steam support not compiled; regenerate with --steamworks-sdk=<sdk root>.\n"); });
 #endif
+			// QoS 1.1: the Scaleform playlist confirmation executes selectplaylist,
+			// whose native tail enqueues xstartparty/LIVE search. Redirect only that
+			// boundary; leave runplaylistrules, System Link and LAN sessions native.
+			const auto select = game::game_offset(0x10325190);
+			const auto cancel = game::game_offset(0x10323000);
+			constexpr unsigned char select_prefix[] = {0x51, 0x56, 0x57, 0x68};
+			constexpr unsigned char select_call[] = {0xE8, 0xA3, 0x0E, 0xF5, 0xFF};
+			constexpr unsigned char cancel_test[] = {0x00, 0x74, 0x50, 0x83, 0x3D};
+			if (std::memcmp(reinterpret_cast<const void*>(select), select_prefix, sizeof(select_prefix))
+				|| std::memcmp(reinterpret_cast<const void*>(select + 8), select_call, sizeof(select_call))
+				|| std::memcmp(reinterpret_cast<const void*>(cancel + 6), cancel_test, sizeof(cancel_test)))
+			{
+				console::error("Steam Find Match: unsupported native command bytes; menu routing was not installed.\n");
+				return;
+			}
+			try
+			{
+				select_playlist_hook.create(select, find_match_stub);
+				leave_match_hook.create(cancel, leave_match_stub);
+				console::info("Steam Find Match: native playlist-confirmation routing installed.\n");
+			}
+			catch (const std::exception& error)
+			{
+				select_playlist_hook.clear(); leave_match_hook.clear();
+				console::error("Steam Find Match: menu routing failed: %s\n", error.what());
+			}
 		}
 
 		void pre_destroy() override
 		{
+			select_playlist_hook.clear(); leave_match_hook.clear();
+			find_match_action = {}; cancel_match_action = {};
 #ifdef CSL_STEAMWORKS
 			if (state_)
 			{
