@@ -11,6 +11,7 @@
 #include "engine/scripting/menu_file.hpp"
 #include "steam_identity.hpp"
 #include "steam_companion.hpp"
+#include "steam_transport.hpp"
 #include <charconv>
 #include <memory>
 
@@ -23,15 +24,22 @@
 #endif
 
 // Default Steam control plane with nonfatal offline fallback. It does not replace QoS sessions, XUIDs,
-// persistence or gameplay transport. Steam advertises a reachable host endpoint;
-// connectIP performs the existing QoS session query/native handshake. No relay
-// or Steam authentication is implied by lobby membership.
+// persistence. Steam Networking Messages carries unchanged QoS datagrams through
+// a loopback-only UDP bridge; connectIP retains the native query/handshake. The
+// offline XUID/profile contract remains separate from authenticated Steam peers.
 namespace steam_matchmaking
 {
 	namespace
 	{
-		utils::hook::detour select_playlist_hook, leave_match_hook;
+		utils::hook::detour select_playlist_hook, leave_match_hook, party_go_hook;
 		std::function<void()> find_match_action, cancel_match_action;
+		std::function<bool()> party_go_action;
+
+		unsigned int party_go_stub()
+		{
+			if (party_go_action && party_go_action()) return 0;
+			return party_go_hook.invoke<unsigned int>();
+		}
 
 		void find_match_stub()
 		{
@@ -70,7 +78,34 @@ namespace steam_matchmaking
 	namespace
 	{
 		constexpr auto product = "project-consolation";
-		constexpr auto protocol = "qos-pc-1.1-lobby-v1";
+		constexpr auto protocol = "qos-pc-1.1-lobby-v2-p2p";
+
+		// QoS 1.1 10309770 arms pregame + visible game-start time, cancels
+		// when minimum membership/editing gates fail, and 103252E0 sets the
+		// minimum lobby time on awake. Steam owns the roster here; never fake
+		// a native party structure to call those LIVE-dependent routines.
+		struct lobby_countdown
+		{
+			unsigned long long opened = 0, deadline = 0;
+			int pregame = -1, duration = -1, minimum_time = -1;
+			void reset() { *this = {}; }
+			bool advance(unsigned long long now, bool allowed, int pre, int game, int lobby_time)
+			{
+				if (!allowed) { deadline = 0; return false; }
+				if (pregame != pre || duration != game || minimum_time != lobby_time)
+				{
+					deadline = 0; pregame = pre; duration = game; minimum_time = lobby_time;
+				}
+				if (now < opened + static_cast<unsigned long long>(lobby_time) * 1000) return false;
+				if (!deadline) deadline = now + static_cast<unsigned long long>(pre + game) * 1000;
+				return now >= deadline;
+			}
+			int seconds(unsigned long long now) const
+			{
+				return deadline > now ? static_cast<int>((deadline - now + 999) / 1000) : 0;
+			}
+			bool visible(unsigned long long now) const { return deadline && seconds(now) <= duration; }
+		};
 
 		// QoS PC parser 102E1D60: map[32], gametype[16], weight at +48,
 		// 56-byte entries at playlist +1344, count at +8512, stride 8532.
@@ -200,7 +235,7 @@ namespace steam_matchmaking
 				&& (ip >> 16) != 0xA9FE;
 		}
 
-		bool parse_host_endpoint(const std::string& text, uint32& ip, uint16& port)
+		[[maybe_unused]] bool parse_host_endpoint(const std::string& text, uint32& ip, uint16& port)
 		{
 			std::string_view address;
 			unsigned int number = 0;
@@ -212,7 +247,7 @@ namespace steam_matchmaking
 			return valid_game_ip(ip);
 		}
 
-		uint32 local_game_ip()
+		[[maybe_unused]] uint32 local_game_ip()
 		{
 			// No external IP service or arbitrary first-adapter choice. VPNs and
 			// multihomed hosts must specify their reachable LAN address explicitly.
@@ -308,6 +343,14 @@ namespace steam_matchmaking
 					return;
 				}
 				invites_.Register(this, &service::invited);
+				if (SteamNetworkingMessages() && SteamNetworkingUtils())
+				{
+					// Force SDR rather than disclosing LAN/public IPs through ICE.
+					relay_enabled_ = SteamNetworkingUtils()->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable, 0);
+					SteamNetworkingUtils()->InitRelayNetworkAccess();
+					relay_requests_.Register(this, &service::relay_requested);
+					relay_failures_.Register(this, &service::relay_failed);
+				}
 				last_init_error_.clear();
 				kicked_.Register(this, &service::kicked);
 				game_created_.Register(this, &service::game_created);
@@ -327,6 +370,8 @@ namespace steam_matchmaking
 				if (active_ && !stopped_)
 				{
 					SteamAPI_RunCallbacks();
+					game::Dvar_SetFromStringByName("csl_browser_available", relay_enabled_ && SteamUser()->BLoggedOn() ? "1" : "0");
+					pump_transport();
 					check_sign_in();
 					if (finding_ && GetTickCount64() - find_started_ >= 20000)
 						finish_find("Steam search timed out. Check your connection and try Find Match again.");
@@ -349,12 +394,19 @@ namespace steam_matchmaking
 				console::info("Steam: app=%u user=%llu online=%d lobby=%llu pending=%d\n",
 					SteamUtils()->GetAppID(), SteamUser()->GetSteamID().ConvertToUint64(),
 					SteamUser()->BLoggedOn(), lobby_.ConvertToUint64(), pending_);
-				console::info("Steam lobby joins use direct LAN game connections; Steam relay is not implemented.\n");
+				console::info("Steam gameplay transport: %s.\n", relay_enabled_ ? "Steam Networking Messages / SDR" : "unavailable; direct System Link remains available");
+				transport_status();
 				presence_.print_status();
 				console::info("Steam Find Match: searching=%d waiting_host=%d playlist=%s\n", finding_, waiting_host_, find_name_.c_str());
 				if (lobby_.IsValid())
+				{
 					console::info("Steam lobby: %d/%d members.\n", SteamMatchmaking()->GetNumLobbyMembers(lobby_),
 						SteamMatchmaking()->GetLobbyMemberLimit(lobby_));
+					console::info("Steam lobby flow: state=%s minimum=%s timer=%s visible=%s autostart=%s\n",
+						SteamMatchmaking()->GetLobbyData(lobby_, "csl_host_state"), SteamMatchmaking()->GetLobbyData(lobby_, "csl_minplayers"),
+						SteamMatchmaking()->GetLobbyData(lobby_, "csl_timer"), SteamMatchmaking()->GetLobbyData(lobby_, "csl_timer_visible"),
+						SteamMatchmaking()->GetLobbyData(lobby_, "csl_autostart"));
+				}
 			}
 
 			void start_match()
@@ -366,6 +418,15 @@ namespace steam_matchmaking
 				if (votes[1] > votes[0]) host_entry_ = vote_entries_[1];
 				else host_entry_ = vote_entries_[0];
 				launch_find_host(true);
+			}
+
+			bool party_go()
+			{
+				// Keep original private/System Link behavior outside our playlist
+				// lobby. Within it, start_match rechecks host ownership and loading.
+				if (!active_ || !lobby_.IsValid() || !*SteamMatchmaking()->GetLobbyData(lobby_, "csl_vote_round")) return false;
+				start_match();
+				return true;
 			}
 
 			void set_name(const std::string& name)
@@ -432,23 +493,11 @@ namespace steam_matchmaking
 			void create(const bool public_lobby, const std::string& endpoint)
 			{
 				if (!ready() || lobby_.IsValid()) return;
+				if (!relay_enabled_ || !xlive::is_local_shim_loaded())
+				{ console::error("Steam hosting requires Steam relay support and Consolation's offline shim.\n"); return; }
 				host_ip_ = 0; host_port_ = 0;
-				const auto* configured = game::Dvar_FindVar("steam_hostAddress");
-				if (configured && static_cast<unsigned char>(configured->type) != game::DVAR_TYPE_STRING)
-				{ console::error("Steam: steam_hostAddress must be an IPv4:port string.\n"); return; }
-				const std::string address = !endpoint.empty() ? endpoint
-					: configured && configured->current.string ? configured->current.string : "";
-				if (!address.empty() && !parse_host_endpoint(address, host_ip_, host_port_))
-				{
-					console::error("Steam: specify a reachable IPv4:port, not loopback or a command string.\n");
-					return;
-				}
-				if (!host_ip_) host_ip_ = local_game_ip();
-				if (!host_ip_)
-				{
-					console::error("Steam: no unique LAN address. Set steam_hostAddress to your reachable LAN IPv4:port.\n");
-					return;
-				}
+				if (!endpoint.empty()) console::warn("Steam: legacy host address ignored; gameplay uses SDR.\n");
+				// No routable LAN address is required by the Steam transport.
 				const auto call = SteamMatchmaking()->CreateLobby(public_lobby ? k_ELobbyTypePublic : k_ELobbyTypeFriendsOnly, 18);
 				if (begin(call)) created_.Set(call, this, &service::created);
 			}
@@ -464,6 +513,29 @@ namespace steam_matchmaking
 				matchmaking->AddRequestLobbyListResultCountFilter(50);
 				const auto call = matchmaking->RequestLobbyList();
 				if (begin(call)) listed_.Set(call, this, &service::listed);
+			}
+
+			void browser_refresh()
+			{
+				if (pending_ || finding_ || resolving_find_host_)
+				{ console::warn("Server Browser: wait for the current Steam operation.\n"); return; }
+				browser_rows_.clear();
+				game::Dvar_SetFromStringByName("csl_browser_count", "0");
+				game::Dvar_SetFromStringByName("csl_browser_revision", std::to_string(++browser_revision_).c_str());
+				if (!ready()) return;
+				game::Dvar_SetFromStringByName("csl_browser_available", "1");
+				browser_pending_ = true;
+				list();
+				if (!pending_) browser_pending_ = false;
+			}
+
+			void browser_join(const uint64 revision, const unsigned int index)
+			{
+				if (revision != browser_revision_ || browser_pending_ || index >= browser_rows_.size())
+				{ console::warn("Server Browser: stale selection; refresh and select again.\n"); return; }
+				const auto target = browser_rows_[index];
+				if (!browser_eligible(target)) { console::warn("Server Browser: this host is no longer available.\n"); return; }
+				join(std::to_string(target.ConvertToUint64()));
 			}
 
 			void join(const std::string& text)
@@ -487,6 +559,7 @@ namespace steam_matchmaking
 
 			void leave()
 			{
+				close_transport();
 				cancel_find();
 				// Do not cancel an in-flight join/create: cancelling its call result
 				// would hide a successful join and leak untracked lobby membership.
@@ -506,6 +579,7 @@ namespace steam_matchmaking
 				playlist_lobby_ = false;
 				waiting_host_ = false;
 				host_launch_started_ = waiting_game_since_ = 0;
+				countdown_.reset();
 				host_resolve_at_ = 0; resolving_find_host_ = false;
 				// Respect an explicit leave while the same server is running.
 				suppress_auto_lobby_ = running_server();
@@ -523,6 +597,8 @@ namespace steam_matchmaking
 
 			void shutdown()
 			{
+				game::Dvar_SetFromStringByName("csl_browser_available", "0");
+				close_transport();
 				command::set_steam_identity(0);
 				presence_.shutdown();
 				stopped_ = true;
@@ -530,6 +606,7 @@ namespace steam_matchmaking
 				created_.Cancel(); listed_.Cancel(); joined_.Cancel();
 				if (active_)
 				{
+					relay_requests_.Unregister(); relay_failures_.Unregister();
 					// SDK 1.65 CCallback::Unregister calls the DLL unconditionally,
 					// even for an unregistered manual callback. steam.dmp captured
 					// __delayLoadHelper2 from this path after missing-DLL startup.
@@ -547,6 +624,9 @@ namespace steam_matchmaking
 			ULONGLONG next_init_attempt_ = 0;
 			std::string last_init_error_;
 			bool offline_warning_shown_ = false;
+			bool relay_enabled_ = false;
+			steam_transport::bridge transport_;
+			static constexpr int relay_channel = 17;
 			steam_companion::client presence_;
 			steam_identity::policy identity_;
 			std::string manual_name_;
@@ -564,6 +644,7 @@ namespace steam_matchmaking
 			bool waiting_host_ = false;
 			bool playlist_lobby_ = false;
 			uint64 vote_round_ = 0;
+			lobby_countdown countdown_;
 			std::array<int, 2> vote_entries_{-1, -1};
 			std::string observed_round_;
 			ULONGLONG last_auto_attempt_ = 0, host_launch_started_ = 0;
@@ -578,9 +659,93 @@ namespace steam_matchmaking
 			CCallResult<service, LobbyCreated_t> created_;
 			CCallResult<service, LobbyMatchList_t> listed_;
 			CCallResult<service, LobbyEnter_t> joined_;
+			bool browser_pending_ = false;
+			uint64 browser_revision_ = 0;
+			std::vector<CSteamID> browser_rows_;
 			CCallbackManual<service, GameLobbyJoinRequested_t> invites_;
 			CCallbackManual<service, LobbyKicked_t> kicked_;
 			CCallbackManual<service, LobbyGameCreated_t> game_created_;
+			CCallbackManual<service, SteamNetworkingMessagesSessionRequest_t> relay_requests_;
+			CCallbackManual<service, SteamNetworkingMessagesSessionFailed_t> relay_failures_;
+
+			std::vector<std::uint64_t> relay_members() const
+			{
+				std::vector<std::uint64_t> members;
+				if (!active_ || !lobby_.IsValid()) return members;
+				auto* mm = SteamMatchmaking();
+				const auto self = SteamUser()->GetSteamID();
+				for (int i = 0; i < std::min(mm->GetNumLobbyMembers(lobby_), 18); ++i)
+				{
+					const auto peer = mm->GetLobbyMemberByIndex(lobby_, i);
+					if (peer.IsValid() && peer.BIndividualAccount() && peer != self) members.push_back(peer.ConvertToUint64());
+				}
+				return members;
+			}
+
+			void close_transport()
+			{
+				if (active_ && relay_enabled_ && SteamNetworkingMessages()) for (const auto id : relay_members())
+				{ SteamNetworkingIdentity peer{}; peer.SetSteamID64(id); SteamNetworkingMessages()->CloseSessionWithUser(peer); }
+				transport_.shutdown();
+			}
+
+			void relay_requested(SteamNetworkingMessagesSessionRequest_t* request)
+			{
+				const auto members = relay_members();
+				const auto id = request->m_identityRemote.GetSteamID64();
+				if (relay_enabled_ && std::find(members.begin(), members.end(), id) != members.end())
+					SteamNetworkingMessages()->AcceptSessionWithUser(request->m_identityRemote);
+				else SteamNetworkingMessages()->CloseSessionWithUser(request->m_identityRemote);
+			}
+
+			void relay_failed(SteamNetworkingMessagesSessionFailed_t* result)
+			{
+				console::warn("Steam transport: peer %llu failed (%d): %s\n", result->m_info.m_identityRemote.GetSteamID64(),
+					result->m_info.m_eEndReason, result->m_info.m_szEndDebug);
+			}
+
+			void pump_transport()
+			{
+				if (!relay_enabled_ || !SteamUser()->BLoggedOn()) return;
+				using title_address = DWORD(WINAPI*)(void*);
+				const auto get_address = reinterpret_cast<title_address>(GetProcAddress(GetModuleHandleA("xlive.dll"), MAKEINTRESOURCEA(73)));
+				std::array<unsigned char, 36> address{}; uint16 network_port = 0;
+				if (get_address && get_address(address.data())) std::memcpy(&network_port, address.data() + 8, 2);
+				transport_.configure(lobby_.ConvertToUint64(), ntohs(network_port), relay_members());
+				auto* messages = SteamNetworkingMessages();
+				transport_.pump([messages](const std::uint64_t id, const std::span<const std::uint8_t> bytes) {
+					SteamNetworkingIdentity peer{}; peer.SetSteamID64(id);
+					return messages->SendMessageToUser(peer, bytes.data(), static_cast<uint32>(bytes.size()),
+						k_nSteamNetworkingSend_UnreliableNoNagle | k_nSteamNetworkingSend_AutoRestartBrokenSession, relay_channel) == k_EResultOK;
+				});
+				std::array<SteamNetworkingMessage_t*, 32> batch{};
+				for (int budget = 0; budget < 128; budget += 32)
+				{
+					const auto count = messages->ReceiveMessagesOnChannel(relay_channel, batch.data(), static_cast<int>(batch.size()));
+					for (int i = 0; i < count; ++i)
+					{
+						const auto* message = batch[i];
+						if (message->m_cbSize > 1 && message->m_cbSize <= 65531)
+							transport_.receive(message->m_identityPeer.GetSteamID64(), {static_cast<const std::uint8_t*>(message->m_pData), static_cast<std::size_t>(message->m_cbSize)});
+						batch[i]->Release();
+					}
+					if (count < static_cast<int>(batch.size())) break;
+				}
+			}
+
+		public:
+			void transport_status() const
+			{
+				console::info("Steam transport: sent=%llu received=%llu rejected=%llu failed=%llu\n", transport_.sent, transport_.received, transport_.rejected, transport_.failed);
+				if (!active_ || !relay_enabled_) return;
+				for (const auto id : relay_members())
+				{
+					SteamNetworkingIdentity peer{}; peer.SetSteamID64(id); SteamNetConnectionInfo_t info{};
+					const auto state = SteamNetworkingMessages()->GetSessionConnectionInfo(peer, &info, nullptr);
+					console::info("Steam transport: peer=%llu state=%d relayPOP=%u\n", id, state, info.m_idPOPRelay);
+				}
+			}
+		private:
 
 			void finish_find(const char* error)
 			{
@@ -656,17 +821,32 @@ namespace steam_matchmaking
 			bool eligible(CSteamID lobby)
 			{
 				auto* matchmaking = SteamMatchmaking();
-				uint32 ip = 0; uint16 port = 0; CSteamID server;
 				return lobby.IsValid() && lobby.IsLobby()
 					&& matchmaking->GetLobbyOwner(lobby) != SteamUser()->GetSteamID()
 					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_product"), product)
 					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_protocol"), protocol)
+					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_server_kind"), "listen")
 					&& (!std::strcmp(matchmaking->GetLobbyData(lobby, "csl_game_ready"), "1")
 						|| !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_host_state"), "starting")
 						|| !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_host_state"), "waiting"))
 					&& matches_rotation(find_rotation_, matchmaking->GetLobbyData(lobby, "csl_map"),
 						matchmaking->GetLobbyData(lobby, "csl_gametype"))
-					&& matchmaking->GetLobbyGameServer(lobby, &ip, &port, &server) && valid_game_ip(ip) && port;
+					&& relay_enabled_;
+			}
+
+			bool browser_eligible(CSteamID lobby) const
+			{
+				auto* mm = SteamMatchmaking();
+				return lobby.IsValid() && lobby.IsLobby() && mm->GetLobbyOwner(lobby) != SteamUser()->GetSteamID()
+					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_product"), product)
+					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_protocol"), protocol)
+					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_game_ready"), "1")
+					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_host_state"), "running")
+					&& (!std::strcmp(mm->GetLobbyData(lobby, "csl_server_kind"), "listen")
+						|| !std::strcmp(mm->GetLobbyData(lobby, "csl_server_kind"), "dedicated"))
+					&& safe_host_token(mm->GetLobbyData(lobby, "csl_map"), 32)
+					&& safe_host_token(mm->GetLobbyData(lobby, "csl_gametype"), 16)
+					&& mm->GetNumLobbyMembers(lobby) < mm->GetLobbyMemberLimit(lobby);
 			}
 
 			void next_candidate()
@@ -703,7 +883,7 @@ namespace steam_matchmaking
 				if (!pending_)
 				{
 					find_host_pending_ = auto_create_requested_ = false;
-					finish_find("Could not create the Steam host lobby. Check Steam and steam_hostAddress.");
+					finish_find("Could not create the Steam host lobby. Check your Steam connection.");
 				}
 			}
 
@@ -711,6 +891,37 @@ namespace steam_matchmaking
 			{
 				const auto* setting = game::Dvar_FindVar("sv_autostart");
 				return setting && setting->current.enabled;
+			}
+
+			int lobby_rule(const char* name) const
+			{
+				const auto* setting = game::Dvar_FindVar(name);
+				return setting && static_cast<unsigned char>(setting->type) == game::DVAR_TYPE_INT ? setting->current.integer : -1;
+			}
+
+			void update_countdown()
+			{
+				if (!waiting_host_ || !lobby_.IsValid() || pending_ || running_server()
+					|| SteamMatchmaking()->GetLobbyOwner(lobby_) != SteamUser()->GetSteamID()) return;
+				auto* mm = SteamMatchmaking();
+				const int minimum = lobby_rule("party_minplayers"), maximum = lobby_rule("party_maxplayers");
+				const int pre = lobby_rule("party_pregameStartTimerLength"), game = lobby_rule("party_gameStartTimerLength");
+				const int lobby_time = lobby_rule("party_minLobbyTime");
+				const auto* editing = game::Dvar_FindVar("party_editingsettings");
+				const bool valid = minimum >= 1 && maximum >= minimum && maximum <= 18
+					&& pre >= 0 && pre <= 99999 && game >= 0 && game <= 99999 && lobby_time >= 0 && lobby_time <= 2147483;
+				const auto now = GetTickCount64();
+				const bool allowed = valid && autostart_enabled() && mm->GetNumLobbyMembers(lobby_) >= minimum
+					&& (!editing || !editing->current.enabled);
+				const bool launch = countdown_.advance(now, allowed, pre, game, lobby_time);
+				if (valid) mm->SetLobbyMemberLimit(lobby_, maximum);
+				const bool published = mm->SetLobbyData(lobby_, "csl_minplayers", std::to_string(minimum).c_str())
+					&& mm->SetLobbyData(lobby_, "csl_autostart", autostart_enabled() ? "1" : "0")
+					&& mm->SetLobbyData(lobby_, "csl_timer", std::to_string(countdown_.seconds(now)).c_str())
+					&& mm->SetLobbyData(lobby_, "csl_timer_visible", countdown_.visible(now) ? "1" : "0");
+				// Never launch before clients can receive the timer state. Retry
+				// publication next frame rather than pretending it succeeded.
+				if (launch && published) start_match();
 			}
 
 			std::array<int, 2> vote_counts() const
@@ -772,8 +983,12 @@ namespace steam_matchmaking
 				}
 				const bool owner = mm->GetLobbyOwner(lobby_) == SteamUser()->GetSteamID();
 				const std::string state = mm->GetLobbyData(lobby_, "csl_host_state");
+				const bool timer = !std::strcmp(mm->GetLobbyData(lobby_, "csl_timer_visible"), "1");
 				menu_file::set_match_lobby_text("state", state == "closed" ? "Host left - leave this lobby and use Find Match again"
 					: state != "waiting" ? "Preparing match..."
+					: timer ? "Match starts in " + clean(mm->GetLobbyData(lobby_, "csl_timer")) + " seconds - vote now"
+					: !std::strcmp(mm->GetLobbyData(lobby_, "csl_autostart"), "1") ? "Vote - waiting for minimum players / lobby preparation (minimum "
+						+ clean(mm->GetLobbyData(lobby_, "csl_minplayers")) + ")"
 					: owner ? "Vote, then START MATCH when ready" : "Vote - waiting for the host to start");
 				for (int i = 0; i < 18; ++i)
 				{
@@ -791,14 +1006,6 @@ namespace steam_matchmaking
 
 			void launch_find_host(const bool manual = false)
 			{
-				if (!manual && !autostart_enabled())
-				{
-					if (!SteamMatchmaking()->SetLobbyData(lobby_, "csl_host_state", "waiting"))
-					{ leave(); find_match_error("Could not publish the waiting lobby."); return; }
-					finding_ = false; waiting_host_ = true;
-					console::info("Steam: lobby waiting for players. Use steam_status to check membership and steam_match_start to start.\n");
-					return;
-				}
 				std::vector<rotation_entry> current;
 				std::string name;
 				if (!selected_rotation(current, name) || name != find_name_
@@ -809,6 +1016,16 @@ namespace steam_matchmaking
 				{
 					leave(); find_match_error("The selected playlist changed or native host setup failed. Please retry Find Match."); return;
 				}
+				if (!manual)
+				{
+					if (!SteamMatchmaking()->SetLobbyData(lobby_, "csl_host_state", "waiting"))
+					{ leave(); find_match_error("Could not publish the waiting lobby."); return; }
+					finding_ = false; waiting_host_ = true;
+					countdown_.reset(); countdown_.opened = GetTickCount64();
+					update_countdown();
+					console::info("Steam: lobby waiting for players; automatic starts use the native minimum-player and countdown settings.\n");
+					return;
+				}
 				// Use QoS' working local session/gameplay transport, independent of
 				// which frontend menu initiated the Steam host. No System Link menu
 				// navigation or fake session/lobby state is required.
@@ -817,6 +1034,8 @@ namespace steam_matchmaking
 					|| !SteamMatchmaking()->SetLobbyData(lobby_, "csl_host_state", "starting"))
 				{ leave(); find_match_error("Could not publish match startup."); return; }
 				finding_ = false; find_host_pending_ = false; waiting_host_ = false;
+				countdown_.reset();
+				SteamMatchmaking()->SetLobbyData(lobby_, "csl_timer_visible", "0");
 				update_identity(); // capture the latest lobby persona before freezing
 				host_launch_started_ = GetTickCount64();
 				update_identity(true);
@@ -829,7 +1048,6 @@ namespace steam_matchmaking
 			{
 				// An explicit map/Start Match action also ends pre-game waiting.
 				if (waiting_host_ && running_server()) waiting_host_ = false;
-				if (waiting_host_ && autostart_enabled()) start_match();
 				if (host_resolve_at_ && finding_ && GetTickCount64() >= host_resolve_at_)
 				{
 					host_resolve_at_ = 0; resolving_find_host_ = true;
@@ -847,7 +1065,11 @@ namespace steam_matchmaking
 						|| !SteamMatchmaking()->SetLobbyData(lobby_, "csl_host_state", "waiting"))
 					{ leave(); find_match_error("Could not prepare the next lobby vote."); return; }
 					waiting_host_ = true; published_ready_ = false;
+					// Reapply the new round's playlist rules before reading its gates.
+					if (!apply_host_rules(host_entry_)) { leave(); find_match_error("Could not apply next-round rules."); return; }
+					countdown_.reset(); countdown_.opened = GetTickCount64();
 				}
+				update_countdown();
 				if (host_launch_started_ && !running && GetTickCount64() - host_launch_started_ >= 60000)
 				{
 					host_launch_started_ = 0; leave();
@@ -880,6 +1102,13 @@ namespace steam_matchmaking
 				return running && running->current.enabled;
 			}
 
+			const char* host_kind() const
+			{
+				const auto* dedicated = game::Dvar_FindVar("dedicated");
+				return dedicated && static_cast<unsigned char>(dedicated->type) == game::DVAR_TYPE_INT
+					&& dedicated->current.integer > 0 ? "dedicated" : "listen";
+			}
+
 			void publish_game()
 			{
 				if (!lobby_.IsValid() || !SteamUser()->BLoggedOn()
@@ -900,6 +1129,7 @@ namespace steam_matchmaking
 					|| !map->current.string || !mode->current.string) return;
 				if (!matchmaking->SetLobbyData(lobby_, "csl_map", map->current.string)
 					|| !matchmaking->SetLobbyData(lobby_, "csl_gametype", mode->current.string)
+					|| !matchmaking->SetLobbyData(lobby_, "csl_server_kind", host_kind())
 					|| !matchmaking->SetLobbyData(lobby_, "csl_host_state", "running")) return;
 				// GFWL SDK XNADDR is 36 bytes; wPortOnline is network-order at +8.
 				// Use the actual shim bind port, not Steam's server/query defaults.
@@ -910,14 +1140,13 @@ namespace steam_matchmaking
 				uint16 network_port = 0;
 				if (!get_address || !get_address(address.data())) return;
 				std::memcpy(&network_port, address.data() + 8, sizeof(network_port));
-				const auto port = host_port_ ? host_port_ : ntohs(network_port);
-				if (!valid_game_ip(host_ip_) || !port) return;
+				const auto port = ntohs(network_port);
+				if (!relay_enabled_ || !port) return;
 				if (published_ready_ && published_ip_ == host_ip_ && published_port_ == port) return;
-				if (!matchmaking->SetLobbyData(lobby_, "csl_game_ready", "1")) return;
-				matchmaking->SetLobbyGameServer(lobby_, host_ip_, port, k_steamIDNil);
+				if (!matchmaking->SetLobbyData(lobby_, "csl_game_port", std::to_string(port).c_str()) ||
+					!matchmaking->SetLobbyData(lobby_, "csl_game_ready", "1")) return;
 				published_ip_ = host_ip_; published_port_ = port; published_ready_ = true;
-				console::info("Steam: published running QoS host %u.%u.%u.%u:%u.\n",
-					host_ip_ >> 24, (host_ip_ >> 16) & 255, (host_ip_ >> 8) & 255, host_ip_ & 255, port);
+				console::info("Steam: published running QoS host via SDR (game port %u).\n", port);
 			}
 
 			void connect_game()
@@ -928,9 +1157,28 @@ namespace steam_matchmaking
 				if (std::strcmp(matchmaking->GetLobbyData(lobby_, "csl_product"), product)
 					|| std::strcmp(matchmaking->GetLobbyData(lobby_, "csl_protocol"), protocol)
 					|| std::strcmp(matchmaking->GetLobbyData(lobby_, "csl_game_ready"), "1")) return;
-				uint32 ip = 0; uint16 port = 0; CSteamID server;
-				if (!matchmaking->GetLobbyGameServer(lobby_, &ip, &port, &server)
-					|| !valid_game_ip(ip) || !port) return;
+				if (!relay_enabled_) return;
+				const std::string port_text = matchmaking->GetLobbyData(lobby_, "csl_game_port");
+				unsigned int remote_port = 0;
+				const auto parsed = std::from_chars(port_text.data(), port_text.data() + port_text.size(), remote_port);
+				if (parsed.ec != std::errc{} || parsed.ptr != port_text.data() + port_text.size() || !remote_port || remote_port > 65535) return;
+				const uint32 ip = INADDR_LOOPBACK;
+				SteamNetworkingIdentity remote{}; remote.SetSteamID(matchmaking->GetLobbyOwner(lobby_));
+				const auto connection = SteamNetworkingMessages()->GetSessionConnectionInfo(remote, nullptr, nullptr);
+				if (connection != k_ESteamNetworkingConnectionState_Connected)
+				{
+					// Establish the SDR route before starting QoS's five-second query.
+					// One-byte zero messages establish transport only, never enter QoS.
+					if (connection == k_ESteamNetworkingConnectionState_None || connection < 0)
+					{
+						const std::uint8_t hello = 0;
+						SteamNetworkingMessages()->SendMessageToUser(remote, &hello, 1,
+							k_nSteamNetworkingSend_Reliable | k_nSteamNetworkingSend_AutoRestartBrokenSession, relay_channel);
+					}
+					return;
+				}
+				const uint16 port = transport_.endpoint(matchmaking->GetLobbyOwner(lobby_).ConvertToUint64(), static_cast<uint16>(remote_port));
+				if (!port) return;
 				// A new round can reuse the same UDP endpoint. Do not mistake it
 				// for the connection already attempted in the previous round.
 				const std::string round = matchmaking->GetLobbyData(lobby_, "csl_vote_round");
@@ -941,7 +1189,7 @@ namespace steam_matchmaking
 				waiting_game_since_ = 0;
 				if (running_server() || !xlive::is_local_shim_loaded())
 				{
-					console::warn("Steam: stop your own match and deploy the LAN xlive shim before joining; then leave/rejoin the lobby.\n");
+					console::warn("Steam: stop your own match and deploy the offline xlive shim before joining; then leave/rejoin the lobby.\n");
 					return;
 				}
 				// Only numeric SDK fields become a command; never execute lobby text.
@@ -1045,6 +1293,7 @@ namespace steam_matchmaking
 				// Fail closed if the discovery namespace cannot be published.
 				if (!matchmaking->SetLobbyData(lobby_, "csl_product", product) ||
 					!matchmaking->SetLobbyData(lobby_, "csl_protocol", protocol) ||
+					!matchmaking->SetLobbyData(lobby_, "csl_server_kind", host_kind()) ||
 					!matchmaking->SetLobbyData(lobby_, "csl_game_ready", "0") ||
 					!matchmaking->SetLobbyData(lobby_, "name", "Project: Consolation"))
 				{
@@ -1071,7 +1320,8 @@ namespace steam_matchmaking
 						|| !matchmaking->SetLobbyData(lobby_, "csl_gametype", find_rotation_[host_entry_].gametype)
 						|| !matchmaking->SetLobbyData(lobby_, "csl_host_state", "starting"))
 					{ leave(); find_match_error("Could not publish the planned match."); return; }
-					matchmaking->SetLobbyGameServer(lobby_, host_ip_, host_port_ ? host_port_ : ntohs(network_port), k_steamIDNil);
+					if (!matchmaking->SetLobbyData(lobby_, "csl_game_port", std::to_string(ntohs(network_port)).c_str()))
+					{ leave(); find_match_error("Could not publish the Steam transport port."); return; }
 					// Let reservations become visible before electing a host. If two
 					// players search together, the lower visible owner wins; existing
 					// running matches always take precedence. This is a bounded lobby
@@ -1086,6 +1336,31 @@ namespace steam_matchmaking
 			void listed(LobbyMatchList_t* result, const bool failed)
 			{
 				pending_ = false;
+				if (browser_pending_)
+				{
+					browser_pending_ = false; browser_rows_.clear();
+					if (failed) { console::warn("Server Browser: Steam search failed.\n"); return; }
+					auto* mm = SteamMatchmaking();
+					const auto clean = [](const char* text) {
+						std::string result;
+						for (const auto* p = text; p && *p && result.size() < 48; ++p)
+							if (static_cast<unsigned char>(*p) >= 32 && static_cast<unsigned char>(*p) < 127 && *p != '|' && *p != '^') result += *p;
+						return result;
+					};
+					for (uint32 i = 0; i < result->m_nLobbiesMatching && i < 50; ++i)
+					{
+						const auto lobby = mm->GetLobbyByIndex(static_cast<int>(i));
+						if (!browser_eligible(lobby)) continue;
+						const auto row = clean(SteamFriends()->GetFriendPersonaName(mm->GetLobbyOwner(lobby)))
+							+ "|" + clean(mm->GetLobbyData(lobby, "csl_map")) + "|"
+							+ std::to_string(mm->GetNumLobbyMembers(lobby)) + "/" + std::to_string(mm->GetLobbyMemberLimit(lobby))
+							+ "|" + clean(mm->GetLobbyData(lobby, "csl_gametype"));
+						game::Dvar_SetFromStringByName(("csl_browser_row" + std::to_string(browser_rows_.size())).c_str(), row.c_str());
+						browser_rows_.push_back(lobby);
+					}
+					game::Dvar_SetFromStringByName("csl_browser_count", std::to_string(browser_rows_.size()).c_str());
+					return;
+				}
 				if (resolving_find_host_)
 				{
 					resolving_find_host_ = false;
@@ -1185,6 +1460,14 @@ namespace steam_matchmaking
 #ifdef CSL_STEAMWORKS
 			state_ = std::make_shared<service>();
 			const std::weak_ptr<service> weak = state_;
+			party_go_action = [weak]() {
+				if (const auto state = weak.lock())
+				{
+					std::lock_guard lock(state->mutex);
+					return state->party_go();
+				}
+				return false;
+			};
 			const auto enqueue = [weak](const std::function<void(service&)>& action)
 			{
 				scheduler::once([weak, action]()
@@ -1200,6 +1483,7 @@ namespace steam_matchmaking
 			command::add("steam_status", [enqueue]() { enqueue([](service& s) { s.status(); }); });
 			command::add("steam_presence_status", [enqueue]() { enqueue([](service& s) { s.presence_status(); }); });
 			command::add("steam_presence_retry", [enqueue]() { enqueue([](service& s) { s.presence_retry(); }); });
+			command::add("steam_transport_status", [enqueue]() { enqueue([](service& s) { s.transport_status(); }); });
 			command::add("name", [enqueue](const command::params& p) {
 				if (p.size() < 2)
 				{ const auto* name = game::Dvar_FindVar("name"); console::info("name: %s\n", name && name->current.string ? name->current.string : "Player"); return; }
@@ -1228,6 +1512,16 @@ namespace steam_matchmaking
 				enqueue([is_public, endpoint](service& s) { s.create(is_public, endpoint); });
 			});
 			command::add("steam_lobby_list", [enqueue]() { enqueue([](service& s) { s.list(); }); });
+			command::add("steam_browser_refresh", [enqueue]() { enqueue([](service& s) { s.browser_refresh(); }); });
+			command::add("steam_browser_join", [enqueue](const command::params& p) {
+				uint64 revision = 0; unsigned int index = 0;
+				if (p.size() != 3) { console::info("Usage: steam_browser_join <revision> <row>\n"); return; }
+				const std::string_view r(p[1]), i(p[2]);
+				const auto a = std::from_chars(r.data(), r.data() + r.size(), revision);
+				const auto b = std::from_chars(i.data(), i.data() + i.size(), index);
+				if (a.ec != std::errc{} || a.ptr != r.data() + r.size() || b.ec != std::errc{} || b.ptr != i.data() + i.size()) return;
+				enqueue([revision, index](service& s) { s.browser_join(revision, index); });
+			});
 			command::add("steam_lobby_join", [enqueue](const command::params& p)
 			{
 				if (p.size() != 2) { console::info("Usage: steam_lobby_join <decimal lobby SteamID>\n"); return; }
@@ -1251,11 +1545,11 @@ namespace steam_matchmaking
 				if (!game::Dvar_FindVar("steam_presenceStatus"))
 					dvars::Dvar_RegisterBool("steam_presenceStatus", 1, "Append lobby/map status to the Project Consolation Companion activity title.", game::dvar_flags::saved);
 				if (!game::Dvar_FindVar("sv_autostart"))
-					dvars::Dvar_RegisterBool("sv_autostart", 0, "Automatically start a Find Match host instead of waiting in its Steam lobby.", game::dvar_flags::saved);
+					dvars::Dvar_RegisterBool("sv_autostart", 0, "Start automatically after native minimum-player, lobby-time and countdown requirements.", game::dvar_flags::saved);
 				if (!game::Dvar_FindVar("steam_autoLobby"))
 					dvars::Dvar_RegisterBool("steam_autoLobby", 1, "Automatically advertise hosted matches through Steam.", game::dvar_flags::saved);
 				if (!game::Dvar_FindVar("steam_hostAddress"))
-					dvars::Dvar_RegisterString("steam_hostAddress", "", "Reachable IPv4:port override for automatic Steam hosting (empty selects the unique LAN address).", game::dvar_flags::saved);
+					dvars::Dvar_RegisterString("steam_hostAddress", "", "Legacy LAN address preference; Steam SDR gameplay does not use this setting.", game::dvar_flags::saved);
 			}, scheduler::main);
 			enqueue([](service& s) { s.initialize(); });
 #else
@@ -1268,9 +1562,24 @@ namespace steam_matchmaking
 				console::warn("Steam online services unavailable in this build. To access online services, you must be signed into Steam and use a Steam-enabled client. Offline play remains available.\n");
 			}, scheduler::main);
 			for (const auto* name : { "steam_init", "steam_status", "steam_lobby_create", "steam_lobby_list",
-				"steam_lobby_join", "steam_lobby_leave", "steam_lobby_invite", "steam_find_match", "steam_match_cancel", "steam_match_start", "steam_match_vote", "steam_presence_status", "steam_presence_retry" })
+					"steam_lobby_join", "steam_lobby_leave", "steam_lobby_invite", "steam_find_match", "steam_match_cancel", "steam_match_start", "steam_match_vote", "steam_presence_status", "steam_presence_retry", "steam_transport_status", "steam_browser_refresh", "steam_browser_join" })
 				command::add(name, []() { console::info("Steam support not compiled; regenerate with --steamworks-sdk=<sdk root>.\n"); });
 #endif
+			// QoS PC 1.1 registers xpartygo -> 103102C0 (no args, caller
+			// observes EAX). StartServer 102E08C0 queues map, not xpartygo.
+			// Guarded compatibility hook: retain the original command outside
+			// Steam playlist lobbies; remove when a native party bridge replaces it.
+			const auto party_go = game::game_offset(0x103102C0);
+			const auto party_go_global = static_cast<unsigned int>(game::game_offset(0x115D91D0));
+			constexpr unsigned char party_go_tail[] = {0x80, 0x78, 0x10, 0x00, 0x75, 0x26};
+			if (*reinterpret_cast<const unsigned char*>(party_go) == 0xA1
+				&& !std::memcmp(reinterpret_cast<const void*>(party_go + 1), &party_go_global, sizeof(party_go_global))
+				&& !std::memcmp(reinterpret_cast<const void*>(party_go + 5), party_go_tail, sizeof(party_go_tail)))
+			{
+				try { party_go_hook.create(party_go, party_go_stub); }
+				catch (const std::exception& error) { console::error("Steam xpartygo routing failed: %s\n", error.what()); }
+			}
+			else console::error("Steam xpartygo: unsupported native command bytes; original behavior retained.\n");
 			// QoS 1.1: the Scaleform playlist confirmation executes selectplaylist,
 			// whose native tail enqueues xstartparty/LIVE search. Redirect only that
 			// boundary; leave runplaylistrules, System Link and LAN sessions native.
@@ -1301,6 +1610,7 @@ namespace steam_matchmaking
 
 		void pre_destroy() override
 		{
+			party_go_hook.clear(); party_go_action = {};
 			select_playlist_hook.clear(); leave_match_hook.clear();
 			find_match_action = {}; cancel_match_action = {};
 #ifdef CSL_STEAMWORKS

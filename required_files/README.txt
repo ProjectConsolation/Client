@@ -1,6 +1,30 @@
 Use the included "Launch Consolation.bat" to start multiplayer.
 
 Copy the complete nightly archive into the game directory, preserving folders.
+Launch Consolation.bat checks the latest published GitHub client package before
+starting. It downloads/caches the complete archive, verifies GitHub's SHA-256
+digest and the package manifest, and compares installed file hashes.
+Choose Yes to download verified files with backups under consolation-update-backups;
+choose No to launch unchanged and check again next time. Network failures also
+allow launch.
+The scan includes DLLs and new/changed fastfiles (.ff) in the same release.
+Playlists are embedded rawfiles in patch_consolation.ff; no loose playlists.info
+is required or downloaded.
+All downloads finish before files are replaced and the launcher waits for the
+update to finish before starting the game. Client DLLs and assets stay matched.
+Debug builds are detected from d3d9.dll's version-resource debug flag. Available
+updates print "[updater] update available, but skipped due to debug build"
+without prompting or modifying installed files. The launcher proceeds normally.
+An already-installed offline shim is updated in the root only if it matches
+the old bundled optional/offline/xlive.dll and contains the shim marker; retail
+GFWL is never replaced implicitly. Profiles and user identity files are untouched.
+Launching the EXE directly bypasses this check. Older releases without an update
+manifest cannot be installed automatically. Protected game directories need write
+permission; failures warn and preserve startup rather than silently elevating.
+The bundled steam_api.dll is the Steamworks SDK's x86 redistributable and also
+belongs beside JB_LiveEngine_s.exe. Packaging uses it when the build directory
+does not contain a runtime copy. This does not enable Steam in an SDK-disabled
+client build: the client must still be compiled with the Steamworks SDK.
 companion64.dll belongs beside JB_LiveEngine_s.exe. It runs inside native
 64-bit Steam, not the x86 game, and supplies the Project Consolation activity
 title. Keep licenses\companion\ with redistributed copies; matching source,

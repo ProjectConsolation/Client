@@ -132,37 +132,45 @@ Protocol-layout declarations are attributed to the
 - `steam_status`: show actual App ID, Steam user, online state and current lobby.
 - `steam_find_match`: same search as confirming a playlist in **Find Match**.
   Search public Steam hosts whose current/planned map/mode is an entry in the
-  selected native playlist, then join a compatible lobby and query its LAN
+  selected native playlist, then join a compatible lobby and query its Steam
   endpoint. If none exists, reserve a public lobby, select an entry with QoS'
   native weighted rotation and wait for the host to start (or start automatically
-  when `sv_autostart` is `1`). Native rules are applied when starting.
+  when `sv_autostart` is `1`). Native playlist rules are applied before waiting.
 - `steam_match_start`: start the selected match from your waiting Find Match
   lobby. Host-only; pending Steam operations must complete first. The higher
   voted option wins; ties retain the native weighted first option.
+- `xpartygo`: in a Steam playlist lobby, the host can manually start the winning
+  map/mode, like `steam_match_start`. Non-hosts cannot launch it. Outside Steam
+  playlist lobbies, the original private-match/System Link command is retained.
 - `steam_match_vote <1|2>`: vote for one of the two map/mode options in the
   current Steam match lobby. One changeable vote per current member; ballots
   from departed members or previous rounds are not counted.
 - `steam_match_cancel`: cancel Find Match without stopping a manually hosted
   lobby. Leaving the native match-search screen also cancels the search.
-- `steam_lobby_create [friends|public] [LAN IPv4:port]`: create an 18-member
-  lobby, friends-only by default. Public lobbies appear in searches. With a
-  unique local IPv4 address the host address is selected automatically; on
-  VPN/multi-adapter PCs specify the reachable LAN address explicitly. The
-  running System Link match is advertised with its actual shim bind port.
-- `steam_lobby_list`: search worldwide for available Consolation protocol-v1
+- `steam_lobby_create [friends|public]`: create an 18-member
+  lobby, friends-only by default. Public lobbies appear in searches. No LAN
+  address or port forwarding is required by the Steam transport. The native
+  match publishes its actual shim bind port for datagram routing.
+- `steam_lobby_list`: search worldwide for available Consolation protocol-v2
   lobbies, excluding unrelated games sharing a development App ID.
 - `steam_lobby_join <decimal lobby SteamID>`: join and check protocol metadata;
   incompatible lobbies are immediately left. Wait for the host to start a
-  match, then query its advertised endpoint through `connectIP` and enter the
+  match, establish the Steam connection, query its local bridge and enter the
   native QoS connection handshake. A failed query does not retry forever;
   fix connectivity, leave the lobby and rejoin to retry.
 - `steam_lobby_leave`: leave the current lobby. Wait for pending create/join/list
   completion first so an asynchronous join cannot create untracked membership.
 - `steam_lobby_invite`: open Steam's invite overlay for the current lobby.
+- `steam_transport_status`: print packet counters and each peer's connection
+  state/relay POP. Connected is state `3`; a nonzero relay POP confirms relay
+  routing, not completion of the native game handshake.
 
-This is **automated Steam discovery/hosting with direct LAN gameplay**, not
-Internet relay matchmaking. Both peers need the matching local `xlive.dll`
-shim and reachable host UDP port (normally 1000). No System Link navigation or
+Gameplay datagrams now use **Steam Networking Messages / SDR**, via loopback-only
+UDP bridges. Both peers need matching Steam-enabled clients and the offline
+`xlive.dll` shim. Public host IPs and router forwarding are no longer part of
+the Steam join path. Cross-network gameplay still requires a two-PC runtime
+playtest; local transport tests alone cannot establish that it works in-game.
+No System Link navigation or
 lobby commands are needed for discovery: use **Find Match** to join or create a
 lobby. With the default `sv_autostart 0`, the host uses `steam_match_start` when
 ready; `steam_status` shows the lobby member count. This is Steam lobby membership,
@@ -186,14 +194,16 @@ both players enter the map.
 
 `steam_autoLobby` defaults to `1` and advertises manually started native hosts;
 set it to `0` to disable that implicit advertisement. Explicit Find Match still
-creates a host when necessary. `steam_hostAddress` defaults to an empty string
-(select the unique local IPv4 address). On VPN/multi-adapter PCs set it to the
-reachable LAN endpoint, for example `seta steam_hostAddress "192.168.1.20:1000"`.
+creates a host when necessary. `steam_hostAddress` is a legacy LAN setting and
+is no longer used to route Steam gameplay or override the actual bind port.
 Find Match lobbies persist when the match stops: members return to the voting
 screen, retaining the lobby ID. The host prepares another pair of playlist
 map/mode options. With `sv_autostart 0`, Start Match launches the winning option;
-`sv_autostart 1` launches without waiting for votes. Gameplay still uses the native
-LAN transport, but its System Link return page no longer owns Steam lobby routing.
+`sv_autostart 1` waits for the playlist's minimum players, minimum lobby time,
+pregame delay and visible countdown; voting stays open until launch. Dropping
+below minimum players, editing settings or disabling autostart cancels the
+countdown. Gameplay still uses the native
+datagram serialization, but its System Link return page no longer owns Steam lobby routing.
 Host migration after the host leaves is not implemented; remaining members must
 leave and find/create another lobby. Diagnostic/manual-map auto-advertisements,
 which have no playlist rotation, are still left when the match stops.
@@ -201,8 +211,14 @@ Explicitly leaving a lobby
 during a running match suppresses recreation until that match ends.
 
 `sv_autostart` is a saved boolean preference, default `0`. Set
-`seta sv_autostart 1` to launch a newly elected Find Match host automatically;
-setting it while your lobby is waiting also starts that match. Use
+`seta sv_autostart 1` to enable automatic starts, including subsequent rounds.
+The host reads QoS' `party_minplayers`, `party_maxplayers`,
+`party_minLobbyTime`, `party_pregameStartTimerLength` and
+`party_gameStartTimerLength`, rather than imposing a new fixed countdown.
+The Steam lobby screen receives the host's timer; Steam members, not a synthetic
+native party roster, provide its player count. Native team assignment and the
+gameplay handshake remain separate; the original LIVE party/team-readiness
+state machine is not restored by this adapter. Use
 `seta sv_autostart 0` to wait for a manual `steam_match_start`. It does not gate
 explicit System Link Start Match actions or `map`/`devmap` commands.
 
@@ -211,14 +227,17 @@ It will not silently leave an existing Steam lobby or stop your own match.
 Old hosts without map/mode metadata are not eligible; rebuild both peers.
 
 Lobby operations and callbacks run on the main pipeline. XUIDs/profiles stay
-unchanged. There is no Steam gameplay authentication, NAT traversal or relay.
+unchanged. Steam authenticates transport peer identities, and the bridge admits
+only current lobby members. Native QoS client/userinfo authorization (including
+the reserved clan tag) is still separate and not yet bound to those identities.
 Accepted overlay invites follow the same validated lobby/game handoff without
-silently leaving an existing lobby. Only validated numeric SDK IP/port fields
+silently leaving an existing lobby. Only locally allocated bridge IP/port fields
 are passed to `connectIP`, never command text from lobby metadata. Test on two
 Steam accounts with matching App IDs; validate failure/offline behavior separately.
 
 References: [Steamworks API](https://partner.steamgames.com/doc/sdk/api),
-[matchmaking and lobbies](https://partner.steamgames.com/doc/features/multiplayer/matchmaking).
+[matchmaking and lobbies](https://partner.steamgames.com/doc/features/multiplayer/matchmaking),
+[Steam Networking Messages](https://partner.steamgames.com/doc/api/ISteamNetworkingMessages).
 
 ## Scaleform frontend recovery
 

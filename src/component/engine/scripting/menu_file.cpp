@@ -988,6 +988,7 @@ namespace menu_file
 		bool steam_match_lobby_active = false;
 		std::unordered_map<std::string, std::string> steam_match_lobby_text;
 		bool local_loadout_active = false;
+		bool browser_from_online = false;
 		std::string pending_scaleform_screen;
 		std::string return_frontend_page;
 		bool scanned = false;
@@ -1791,6 +1792,12 @@ namespace menu_file
 			{
 				if (args.size() != 2) { console::info("usage: cslMenuRoute <options|host|join|online|private|loadout|stats|map|mode|rules|main|browserback|leave|discord>\n"); return; }
 				const auto route = lower(args.get(1));
+				if (route == "browserlocal")
+				{
+					browser_from_online = false;
+					game::Dvar_SetFromStringByName("csl_browser_online", "0");
+					return;
+				}
 				if (route == "discord")
 				{
 					open_discord();
@@ -1806,12 +1813,12 @@ namespace menu_file
 							utils::hook::invoke<void>(game::game_offset(0x102CE070), context, browser);
 						// Leave the browser's native screen too; otherwise update_frontend
 						// immediately reopens its replacement on the next frame.
-						pending_scaleform_screen = "mpmainmenu";
-						return_frontend_page = "csl_systemlink";
+						pending_scaleform_screen = browser_from_online ? "mpxblivemain" : "mpmainmenu";
+						return_frontend_page = browser_from_online ? "" : "csl_systemlink";
 						frontend_return_requested = true;
 						frontend_transition = false;
 						restore_scaleform(true);
-						command::execute("sf_open mpmainmenu\n");
+						command::execute("sf_open " + pending_scaleform_screen + "\n");
 						return;
 					}
 					if (auto* menu = find(name); menu && register_native_menu(context, menu))
@@ -1819,7 +1826,15 @@ namespace menu_file
 					return;
 				}
 				std::string script;
-				if (route == "options") script = "sf_open cmoptions\n";
+				if (route == "browseronline")
+				{
+					browser_from_online = true;
+					game::Dvar_SetFromStringByName("csl_browser_online", "1");
+					// Keep the online party intact; only switch to the existing join
+					// screen. Steam browse/join does not invoke native LIVE search.
+					script = "sf_open mpsysjoin\n";
+				}
+				else if (route == "options") script = "sf_open cmoptions\n";
 				else if (route == "loadout")
 				{
 					auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
@@ -1851,10 +1866,14 @@ namespace menu_file
 				else if (route == "stats") script = "sf_open mpaccompleads\n";
 				else if (route == "rules") script = "sf_open mpsysoptions\n";
 				else if (route == "host" || route == "join")
+				{
+					browser_from_online = false;
+					game::Dvar_SetFromStringByName("csl_browser_online", "0");
 					// QoS menuData mpsyslink onClickExec setup, followed by the
 					// native sf_open command (1040DE30), not a guessed GFx ABI.
 					script = "nosplitscreen; xsignin; systemlink 1; splitscreen 0; xblive_rankedmatch 0; onlinegame 0; exec default_systemlink.cfg; set ui_mptype 1; sf_open "
 						+ std::string(route == "host" ? "mpsyssetup\n" : "mpsysjoin\n");
+				}
 				else if (route == "online")
 					script = "nosplitscreen; set xsigninscreen mpxbplaylistselect; xsigninlive; systemlink 0; splitscreen 0; onlinegame 1; exec default_xboxlive.cfg; party_maxplayers 12; xblive_privatematch 0; xblive_rankedmatch 0; party_timerVisible 0; xstartprivateparty; sf_open mpxbplaylistselect\n";
 				else if (route == "private")
