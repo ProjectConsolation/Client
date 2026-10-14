@@ -1,0 +1,31 @@
+// BO1-style paged friend selection, expressed in QoS-compatible native items.
+// Live Steam IDs remain backend-owned; friend names never enter menu commands.
+menuDef
+{
+    name "csl_steam_friends"
+    rect 0 0 640 480
+    fullScreen 1
+    visible 1
+    focusColor 1 0.70 0.25 1
+    onEsc { exec "steam_friends_close"; }
+    itemDef { name "panel" rect 0 0 640 480 style 1 backcolor 0.035 0.045 0.055 0.97 visible 1 decoration }
+    itemDef { name "banner" rect 0 45 640 42 style 1 backcolor 0.85 0.36 0.04 0.9 visible 1 decoration }
+    itemDef { name "title" rect 30 54 580 30 text "FRIENDS / STEAM" font 1 textscale 0.45 forecolor 1 1 1 1 visible 1 decoration }
+    itemDef { name "status" rect 30 98 580 25 text "Loading Steam friends..." font 1 textscale 0.27 forecolor 0.9 0.9 0.9 1 visible 1 decoration }
+    itemDef { name "friend0" rect 30 133 580 27 text "" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 }
+    itemDef { name "friend1" rect 30 162 580 27 text "" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 }
+    itemDef { name "friend2" rect 30 191 580 27 text "" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 }
+    itemDef { name "friend3" rect 30 220 580 27 text "" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 }
+    itemDef { name "friend4" rect 30 249 580 27 text "" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 }
+    itemDef { name "friend5" rect 30 278 580 27 text "" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 }
+    itemDef { name "friend6" rect 30 307 580 27 text "" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 }
+    itemDef { name "friend7" rect 30 336 580 27 text "" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 }
+    itemDef { name "previous" rect 30 371 90 25 text "PREVIOUS" font 1 textscale 0.26 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "steam_friends_page prev"; } }
+    itemDef { name "page" rect 160 371 170 25 text "PAGE 1 / 1" font 1 textscale 0.26 forecolor 0.95 0.75 0.3 1 visible 1 decoration }
+    itemDef { name "next" rect 355 371 75 25 text "NEXT" font 1 textscale 0.26 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "steam_friends_page next"; } }
+    itemDef { name "refresh" rect 490 371 120 25 text "REFRESH" font 1 textscale 0.26 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "steam_friends_refresh"; } }
+    itemDef { name "selected" rect 30 405 580 24 text "SELECT A FRIEND" font 1 textscale 0.27 forecolor 0.95 0.75 0.3 1 visible 1 decoration }
+    itemDef { name "invite" rect 30 440 150 28 text "INVITE TO LOBBY" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "steam_friend_invite"; } }
+    itemDef { name "join" rect 240 440 140 28 text "JOIN LOBBY" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "steam_friend_join"; } }
+    itemDef { name "back" rect 490 440 120 28 text "BACK" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "steam_friends_close"; } }
+}

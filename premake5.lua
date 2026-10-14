@@ -2,7 +2,7 @@ gitVersioningCommand = "git describe --tags --dirty --always"
 gitCurrentBranchCommand = "git symbolic-ref -q --short HEAD"
 
 -- Product/release identity is independent of historical and nightly Git tags.
-local productVersion = "0.1.0"
+local productVersion = "0.1.1-net_test"
 
 -- Quote the given string input as a C string
 function cstrquote(value)

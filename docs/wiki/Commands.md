@@ -1,5 +1,69 @@
 # Commands
 
+## In-game Steam friends panel
+
+The Friends/Party Invite entry and Steam match lobby's Invite Friends button
+open a QoS-styled native friends panel. This adapts the sorted SteamID-based
+selection/paging approach from KisakBlack's `live_friends_pc.cpp` and
+`ui_friends.cpp`, not BO1 binary layouts or Xbox dashboard assets.
+
+- `steam_friends` (also native `xshowfriendslist`): open the frontend/lobby panel.
+- `steam_friends_close`: Back, preserving the owning menu and Steam lobby.
+- `steam_friends_refresh`: refresh names/status; open panels also refresh once a second.
+- `steam_friends_page <prev|next>`: page through eight friends at a time, online first.
+- `steam_friend_select <SteamID>`: select a friend from the current snapshot.
+- `steam_friend_invite`: invite the selected current friend to your existing lobby.
+- `steam_friend_join`: join the selected friend's advertised lobby through the existing
+  product/protocol/security checks. Leave your own lobby/match first; this does not
+  silently abandon it. App ID 480 alone is never treated as product compatibility.
+- `steam_lobby_invite`: now opens this panel; `steam_overlay_invite` retains Steam's
+  overlay invitation picker as an explicit fallback.
+
+Install `consolation/menu/ui_mp/steam_friends.menu` with the rebuilt client. The
+panel currently opens in frontends/lobbies, not during gameplay/map loading.
+Use keyboard, mouse, or the existing native-menu controller navigation. Offline
+Steam shows a sign-in message; empty/removed friends cannot produce valid actions.
+Friends use app-scoped `csl_lobby` presence so Companion title customization does
+not become a dependency of friend joining. Names are display-only, not commands.
+The stock Scaleform Party Invite and Invite Friends buttons explicitly execute
+`steam_friends`. Install matching loose movies and `patch_consolation.ff`; a new
+DLL alone does not supply a missing friends-menu asset. Stock party/match lists
+consume the display-only `csl_roster_active`, `csl_roster_count` and
+`csl_roster_name0` through `csl_roster_name17` values. Signed-in users appear as
+the local member before queueing; Steam membership supplies names after joining.
+Steam row indices never invoke native LIVE kick/gamercard actions.
+
+Two-account acceptance: open Party Invite, page/select a friend, invite them,
+then leave your own lobby and use Join Lobby. Verify native map entry, not just
+Steam membership. Rename/remove a selected friend and refresh; selection must
+remain on the same ID or clear, never move to another person. Back/Escape must
+restore the prior menu and controller focus without leaving the lobby. Test
+Steam signed out, no friends, unrelated Spacewar lobbies and both input methods.
+
+## Network security diagnostics
+
+- `networkSecurityStatus`: reports installation of the bounded native Huffman,
+  fragment-capacity and member-join hooks, plus decode/join rejection counts.
+  Expect `huffman=1 fragments=1 join=1`. `netchanIncomplete` includes ordinary
+  intermediate fragments and is not an attack count.
+- `securityGuardSelfTest`: existing malformed-join/directive smoke tests. A pass
+  does not certify valid joins, memory safety of the entire engine or absence of RCE.
+- `offlineNetStatus`: now also reports `steam_guard=1` once the hardened Steam
+  ingress policy activates. The `rejected` count includes discarded raw UDP.
+
+Both `d3d9.dll` and `xlive.dll` must be rebuilt and deployed together. Steam
+lobbies use `qos-pc-1.1-lobby-v3-auth`; older relay clients are incompatible.
+Authenticated Steam member metadata binds each member's native XNADDR/XUID;
+bindings cannot change during the lobby and duplicate identities are rejected.
+The native join's claimed XUID must match its authenticated inbound route.
+This preserves local profile XUIDs rather than replacing them with Steam IDs.
+
+While Steam ingress is active, native reception accepts only registered loopback
+bridge endpoints and their bound identities. Direct LAN UDP is intentionally
+blocked, including after leaving/signing out of Steam. Restart with Steam closed
+for the separate offline/LAN mode; that plaintext LAN mode is not authenticated.
+See [the two-PC acceptance guide](../../required_files/PLAYTEST_STEAM_PLAYLISTS.txt).
+
 ## Local QoS playlists
 
 The adapted `playlists.info` preserves the dumped QoS stock playlists 1–9,
@@ -153,6 +217,13 @@ Protocol-layout declarations are attributed to the
   match publishes its actual shim bind port for datagram routing.
 - `steam_lobby_list`: search worldwide for available Consolation protocol-v2
   lobbies, excluding unrelated games sharing a development App ID.
+- `steam_browser_refresh`: populate the shared System Link Join Game / online
+  Server Browser with compatible **running** Steam hosts, independent of the
+  selected playlist. Full lobbies are shown but cannot be joined. Waiting
+  pregame lobbies remain Find Match results, not active-server rows.
+- `steam_browser_join <revision> <row>`: join a zero-based row from the current
+  browser snapshot. The UI passes its revision so stale refresh results cannot
+  silently join a different host. Rechecks compatibility and capacity.
 - `steam_lobby_join <decimal lobby SteamID>`: join and check protocol metadata;
   incompatible lobbies are immediately left. Wait for the host to start a
   match, establish the Steam connection, query its local bridge and enter the
@@ -160,7 +231,8 @@ Protocol-layout declarations are attributed to the
   fix connectivity, leave the lobby and rejoin to retry.
 - `steam_lobby_leave`: leave the current lobby. Wait for pending create/join/list
   completion first so an asynchronous join cannot create untracked membership.
-- `steam_lobby_invite`: open Steam's invite overlay for the current lobby.
+- `steam_lobby_invite`: open the native Steam friends panel for the current lobby.
+  `steam_overlay_invite` opens the Steam overlay picker instead.
 - `steam_transport_status`: print packet counters and each peer's connection
   state/relay POP. Connected is state `3`; a nonzero relay POP confirms relay
   routing, not completion of the native game handshake.
@@ -191,6 +263,26 @@ host. This is best-effort lobby coordination, not an authoritative distributed
 matchmaker; simultaneous starts require a two-account runtime test.
 Finding a host does not prove the subsequent QoS handshake succeeded; verify
 both players enter the map.
+
+The online party lobby has **Server Browser** immediately below **Find Match**.
+It uses the existing System Link join screen and controls; Back returns to
+the online party lobby without destroying that party. The System Link entry
+uses the same active Steam-host listing when Steam relay support is available;
+otherwise the original native browser remains in place. Steam discovery is
+not a replacement LAN discovery provider for unsigned-in offline peers.
+The browser's occupancy currently represents Steam lobby members, not a
+separately queried native connected-player count. F5 refreshes the list.
+
+Hosts advertise `csl_server_kind=listen` or `dedicated`. Find Match accepts only
+explicit listen hosts; the browser accepts either kind. Unknown/old unclassified
+advertisements are rejected. This is a separation boundary, **not** a completed
+headless dedicated-server directory: a future server provider must publish real
+availability, player counts and a supported connection endpoint. No fabricated
+dedicated listings are added.
+
+`cslMenuRoute browseronline` opens the shared browser from online play;
+`browserlocal` marks a System Link entry without switching screens; `browserback`
+returns to its owning menu. These are frontend integration routes.
 
 `steam_autoLobby` defaults to `1` and advertises manually started native hosts;
 set it to `0` to disable that implicit advertisement. Explicit Find Match still
@@ -501,7 +593,7 @@ that a mode has passed in-game testing.
 | `commandDump [filename]` | Prints all registered command names to the console and can optionally write them to a text file under the `consolation` folder. | `commandDump` `commandDump commands` |
 | `listassetpool <poolnumber> [filter]` | Lists assets from the selected asset pool and can optionally filter the output by text. | `listassetpool 0` `listassetpool 13 weapon` |
 | `origin [0|1]` | Debug builds only. Toggles a twice-per-second origin and velocity status line in the internal game console; an explicit value enables or disables it. | `origin` `origin 1` `origin 0` |
-| `cslMenuRoute <options\|host\|join\|online\|private\|loadout\|stats\|map\|mode\|rules\|main\|browserback\|leave\|discord>` | Frontend routing: `map`/`mode` open custom pickers, `loadout`/`stats` retain native screens, `browserback` returns to LOCAL PLAY, and `leave` performs native party cleanup before returning to the appropriate hub. `discord` opens the community invite. Does not emulate online services. | `cslMenuRoute options` |
+| `cslMenuRoute <options\|host\|join\|online\|private\|loadout\|stats\|map\|mode\|rules\|main\|browseronline\|browserlocal\|browserback\|leave\|discord>` | Frontend routing: `browseronline` opens the shared join screen; `browserback` returns to the online party lobby when entered there, otherwise LOCAL PLAY. `map`/`mode` open custom pickers, `loadout`/`stats` retain native screens, and `leave` performs native party cleanup. `discord` opens the community invite. | `cslMenuRoute browseronline` |
 | `openmenu <name>` | Opens a parsed disk menu when available, otherwise uses native asset lookup. | `openmenu csl_main` |
 | `reloadMenus` | Rescans disk definitions. Refuses to replace menus still in the native open stack. | `reloadMenus` |
 | `bind <key> "<command>"` | Uses native key binding with the stock-action whitelist removed. Command case, quoting, key-up handling and config persistence remain native. | `bind F5 "noclip"` |
@@ -619,7 +711,11 @@ Custom frontend pages close when the client begins connecting/loading and stay c
 
 Native decorations do not take button focus. PNG materials use private copies of the engine's 2D pipeline. `reloadMenus` rescans definitions only after they are closed. The parser, crop/fade timing, menu layout, Escape behavior, LIVE sign-in, host/guest permissions, return transitions, and display scaling require verification with the rebuilt client. Never treat a successful screen transition alone as proof of a valid party or match.
 
-The local server browser is `csl_serverbrowser`, backed by QoS's native feeder `2`. Its five columns are server, map, players, mode and ping; refresh and join retain native discovery/connection behavior. Enter, double-click and Join Server request the selected server. Back and Escape return through `cslMenuRoute browserback` to the custom LOCAL PLAY hub, after the native browser screen has been left. Expanded disk definitions support `columns`, `doubleClick` and `selectborder` without macro preprocessing. The browser's native listbox layout and runtime navigation require a rebuilt DLL, not just updated menu files.
+The optional legacy disk browser `csl_serverbrowser` uses native feeder `2` and
+the custom LOCAL PLAY return route. The current Scaleform `mpsysjoin` browser
+retains its original four-column layout and consumes the Steam browser snapshot
+when available; see the Steam section above. Its online entry has its own return
+route. Do not confuse legacy native discovery with the new Steam provider.
 
 Loadouts opened from the System Link host (including its settings tab) go directly to QoS's native `mpcustomloadout` class editor using local sign-in, rather than the LIVE-gated `mploadout` shop wrapper. Online and private-online lobbies retain the original LIVE route. This does not introduce separate loadout storage or unlock equipment; native profile ownership still applies. Returning to the frontend restores the originating custom lobby. This routing change requires a rebuilt DLL and in-game validation.
 

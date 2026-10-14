@@ -987,6 +987,8 @@ namespace menu_file
 		bool return_systemlink_after_bootstrap = false;
 		bool steam_match_lobby_active = false;
 		std::unordered_map<std::string, std::string> steam_match_lobby_text;
+		bool steam_friends_active = false;
+		std::unordered_map<std::string, std::string> steam_friends_text, steam_friends_actions;
 		bool local_loadout_active = false;
 		bool browser_from_online = false;
 		std::string pending_scaleform_screen;
@@ -1278,6 +1280,7 @@ namespace menu_file
 			if (connection_state >= 3) frontend_match_active = true;
 			if (frontend_match_active)
 			{
+				steam_friends_active = false;
 				return_systemlink_after_bootstrap = false;
 				std::array<game::menuDef_t*, 16> open{};
 				std::copy_n(reinterpret_cast<game::menuDef_t**>(context + 2108), count, open.begin());
@@ -1298,6 +1301,17 @@ namespace menu_file
 				frontend_return_requested = false;
 				restore_scaleform();
 				return;
+			}
+			// A friends panel is a native fullscreen page above its owning lobby.
+			// Do not reopen the lobby or resume GFx while that panel owns input.
+			if (steam_friends_active)
+			{
+				const auto* friends = find("csl_steam_friends");
+				bool present = false;
+				for (int i = 0; i < count; ++i) present |= reinterpret_cast<game::menuDef_t**>(context + 2108)[i] == friends;
+				if (present) return;
+				steam_friends_active = false;
+				restore_scaleform(true);
 			}
 			// Leaving Steam membership must remove the old lobby from the native
 			// stack, not merely paint a main-menu page on top of its controls.
@@ -1790,7 +1804,7 @@ namespace menu_file
 			});
 			command::add("cslMenuRoute", [](const command::params& args)
 			{
-				if (args.size() != 2) { console::info("usage: cslMenuRoute <options|host|join|online|private|loadout|stats|map|mode|rules|main|browserback|leave|discord>\n"); return; }
+				if (args.size() != 2) { console::info("usage: cslMenuRoute <options|host|join|online|private|loadout|stats|map|mode|rules|main|browseronline|browserlocal|browserback|leave|discord>\n"); return; }
 				const auto route = lower(args.get(1));
 				if (route == "browserlocal")
 				{
@@ -1941,6 +1955,8 @@ namespace menu_file
 				loaded_overlays.clear();
 				loaded_menus.clear();
 				loaded_menu_sources.clear();
+				steam_friends_active = false;
+				steam_friends_text.clear(); steam_friends_actions.clear();
 				png_backgrounds.clear();
 				preview_lists.clear();
 				frontend_was_away = false;
@@ -2040,6 +2056,54 @@ namespace menu_file
 				if (auto* field = menu->items[i]; field && field->window.name && item == field->window.name)
 				{
 					field->text = stored.c_str();
+					for (auto& rect : field->textRect) rect.w = 0;
+				}
+	}
+
+	bool show_friends(const bool active)
+	{
+		auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
+		auto* menu = find("csl_steam_friends");
+		if (!active)
+		{
+			if (steam_friends_active && menu) utils::hook::invoke<void>(game::game_offset(0x102CE070), context, menu);
+			steam_friends_active = false;
+			restore_scaleform(true);
+			return true;
+		}
+		const auto client = *reinterpret_cast<int*>(context);
+		const auto count = *reinterpret_cast<int*>(context + 2172);
+		if (!menu || client < 0 || client > 3 || count < 0 || count >= 16
+			|| reinterpret_cast<const int*>(game::game_offset(0x111F45F8))[client] >= 3) return false;
+		if (steam_friends_active) return true;
+		if (!register_native_menu(context, menu)) return false;
+		utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, menu->window.name);
+		steam_friends_active = true;
+		if (auto* dvar = game::Dvar_FindVar("sf_enable"))
+		{
+			if (!scaleform_suppressed) previous_scaleform_enabled = dvar->current.enabled;
+			scaleform_suppressed = true;
+			set_scaleform_enabled(dvar, false);
+		}
+		*game::keyCatchers |= 0x10;
+		return true;
+	}
+	bool friends_visible() { return steam_friends_active; }
+	void set_friends_item(const std::string& item, const std::string& text, const std::string& action)
+	{
+		auto& stored = steam_friends_text[item]; stored = text;
+		auto& script = steam_friends_actions[item]; script = action;
+		if (auto* menu = find("csl_steam_friends"))
+			for (int i = 0; i < menu->itemCount; ++i)
+				if (auto* field = menu->items[i]; field && field->window.name && item == field->window.name)
+				{
+					field->text = stored.c_str();
+					if (item.starts_with("friend"))
+					{
+						field->action = script.empty() ? nullptr : script.c_str();
+						for (auto& flags : field->window.dynamicFlags)
+							if (text.empty()) flags &= ~4; else flags |= 4; // Native WINDOW_VISIBLE.
+					}
 					for (auto& rect : field->textRect) rect.w = 0;
 				}
 	}

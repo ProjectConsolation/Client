@@ -3,6 +3,11 @@ EXPORTS
     ConsolationXLiveShim @6000
     ConsolationOfflineNetStatus @6001
     ConsolationOfflineTransportVersion @6002
+    ConsolationSteamIngressVersion @6003
+    ConsolationSteamIngressConfigure @6004
+    ConsolationSteamIngressAuthorize @6005
+    ConsolationSteamIngressRevoke @6006
+    ConsolationSteamValidateJoin @6007
     xlive_XWSAStartup @1 NONAME
     xlive_XWSACleanup @2 NONAME
     xlive_XSocketCreate @3 NONAME

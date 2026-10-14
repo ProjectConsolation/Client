@@ -4,6 +4,7 @@
 #include <functional>
 #include <span>
 #include <vector>
+#include "../../src_xlive/steam_ingress.hpp"
 
 namespace steam_transport
 {
@@ -17,6 +18,9 @@ namespace steam_transport
         struct route { std::uint64_t peer{}; std::uint16_t remote_port{}, bound_port{}; SOCKET socket = INVALID_SOCKET; std::vector<local_route> locals; ULONGLONG used{}; };
         std::vector<route> routes_;
         std::vector<std::uint64_t> members_;
+        std::vector<steam_ingress::identity> identities_;
+        std::vector<steam_ingress::identity> pinned_;
+        std::uint64_t self_ = 0, host_ = 0;
         std::uint64_t lobby_ = 0;
         std::uint16_t game_port_ = 1000;
         bool winsock_ = false;
@@ -27,7 +31,9 @@ namespace steam_transport
         bridge() = default;
         bridge(const bridge&) = delete;
         bridge& operator=(const bridge&) = delete;
-        void configure(std::uint64_t lobby, std::uint16_t game_port, std::vector<std::uint64_t> members);
+        bool configure(std::uint64_t lobby, std::uint16_t game_port, std::vector<std::uint64_t> members,
+                       std::uint64_t self, std::uint64_t host, std::vector<steam_ingress::identity> identities);
+        static bool secure_ingress(std::uint64_t lobby);
         std::uint16_t endpoint(std::uint64_t peer, std::uint16_t port);
         void pump(const std::function<bool(std::uint64_t, std::span<const std::uint8_t>)>& send);
         void receive(std::uint64_t peer, std::span<const std::uint8_t> bytes);

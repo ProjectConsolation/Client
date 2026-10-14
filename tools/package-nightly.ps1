@@ -37,6 +37,7 @@ if (Test-Path -LiteralPath $companionPath -PathType Leaf) {
 }
 $stockMenuFiles = @(
     'consolation/menu/ui_mp/steam_lobby.menu',
+    'consolation/menu/ui_mp/steam_friends.menu',
     'consolation/scaleform/MpMainMenu.gfx',
     'consolation/scaleform/CmOptions.gfx',
     'consolation/scaleform/cmoptionsgraphics.gfx',
@@ -87,7 +88,7 @@ $stagingParent = Join-Path $RepositoryRoot 'build/nightly-packages'
 $staging = Join-Path $stagingParent ([guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 foreach ($file in Get-ChildItem -LiteralPath $requiredDirectory -Recurse -File) {
-    if ($file.Name -in @('AGENTS.md', 'AGENTS.override.md', 'xlive.dll', 'steam_api.dll', 'playlists.info') -or
+    if ($file.Name -in @('AGENTS.md', 'AGENTS.override.md', 'xlive.dll', 'steam_api.dll', 'playlists.info', 'xlive_patch.asi') -or
             $file.Extension -in @('.lnk', '.sum', '.pdb', '.lib', '.exp')) { continue }
     $relative = [System.IO.Path]::GetRelativePath($requiredDirectory, $file.FullName)
     $destination = Join-Path $staging $relative
@@ -124,6 +125,7 @@ try {
         if ($required -notin $names) { throw "Nightly ZIP is missing $required" }
     }
     if ('xlive.dll' -in $names) { throw 'Offline replacement must not be installed from the ZIP root' }
+    if ('xlive_patch.asi' -in $names) { throw 'Legacy ASI is incompatible with the bundled offline shim' }
     if ($names | Where-Object { $_ -match '(^|/)playlists\.info$' }) { throw 'Playlists must be embedded in patch_consolation.ff, not loose files' }
     # Verify the packaged menu bytes, not just their filenames. The shared PC
     # library must travel with the screens whose class definitions it supplies.

@@ -7,6 +7,7 @@
 #include "camera_validation.hpp"
 #include "traversal_camera_policy.hpp"
 #include "ui_directive_abi.hpp"
+#include "network_security.hpp"
 #include "killcam_hud.hpp"
 #include "headset_presence.hpp"
 #include "component/utils/resources.hpp"
@@ -19,6 +20,7 @@
 #include <utils/flags.hpp>
 #include <utils/string.hpp>
 #include <array>
+#include <atomic>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -1192,7 +1194,6 @@ namespace patches
 		constexpr std::size_t k_huffman_max_decoded_bytes = 0x20000;
 		constexpr std::size_t k_huffman_max_compressed_bytes = k_huffman_max_decoded_bytes;
 		constexpr std::size_t k_ui_replace_directive_max_len = 0x100;
-		constexpr std::size_t k_party_member_join_max_message_bytes = 0x4000;
 		const char* cg_draw_fps_modes[] =
 		{
 			"Off",
@@ -1676,6 +1677,54 @@ namespace patches
 		}
 
 		using cl_parse_server_message_huffman_t = unsigned int(__cdecl*)(int, std::uint32_t*);
+		utils::hook::detour bounded_huffman_hook, bounded_netchan_hook;
+		std::atomic<std::uint64_t> rejected_huffman{0}, incomplete_netchan{0}, rejected_joins{0};
+		int __cdecl bounded_huffman(const std::uint8_t* input, std::uint8_t* output, int size)
+		{
+			// Both call sites and their actual fixed output arrays verified in QoS
+			// 1.1: 1030D9F1 client (128 KiB), 102F12B2 server (2048 bytes).
+			std::size_t capacity = 0;
+			if (output == reinterpret_cast<std::uint8_t*>(game::game_offset(0x12B98F98))) capacity = 0x20000;
+			if (output == reinterpret_cast<std::uint8_t*>(game::game_offset(0x12BB92A8))) capacity = 2048;
+			int decoded = -1;
+			if (capacity && input && size >= 0 && size <= 0x20000)
+			{
+				const auto root = *reinterpret_cast<const network_security::huffman_node**>(game::game_offset(0x10806860));
+				decoded = network_security::decompress(root, {input, static_cast<std::size_t>(size)}, {output, capacity});
+			}
+			if (decoded >= 0) return decoded;
+			++rejected_huffman;
+			// Native callers store this return into unsigned cursize. Zero makes
+			// their bounded reads fail; never return -1 or expose partial output.
+			return 0;
+		}
+		__declspec(naked) void bounded_huffman_entry()
+		{
+			// Original ABI: input EAX, output [esp+4], size [esp+8], cdecl.
+			__asm {
+				push dword ptr[esp + 8]
+				push dword ptr[esp + 8]
+				push eax
+				call bounded_huffman
+				add esp, 12
+				ret
+			}
+		}
+		int __cdecl bounded_netchan(std::uint32_t* channel, std::uint32_t* msg)
+		{
+			const auto original = reinterpret_cast<int(__cdecl*)(std::uint32_t*, std::uint32_t*)>(bounded_netchan_hook.get_original());
+			// QoS 103F2F13 compares fragmentLength with maxsize, then writes a
+			// four-byte sequence followed by that payload at 103F2F52/103F2F63.
+			// Only fragmented messages need this reservation. Native owns ordering.
+			const auto result = network_security::fragment_guard(original, channel, msg);
+			if (!result) ++incomplete_netchan; // Includes normal intermediate fragments.
+			return result;
+		}
+		template<std::size_t N> void require_security_bytes(std::uintptr_t address, const std::array<std::uint8_t, N>& expected)
+		{
+			if (std::memcmp(reinterpret_cast<const void*>(game::game_offset(address)), expected.data(), N))
+				throw std::runtime_error("Unsupported QoS network code: security hooks cannot be installed safely.");
+		}
 		utils::hook::detour cl_parse_server_message_huffman_hook;
 		unsigned int __cdecl CL_ParseServerMessage_huffman_guard(int a1, std::uint32_t* a2)
 		{
@@ -1683,7 +1732,7 @@ namespace patches
 
 			if (!a2)
 			{
-				return original(a1, a2);
+				return 0;
 			}
 
 			if (a2[5] < a2[7])
@@ -1743,30 +1792,24 @@ namespace patches
 			}
 		}
 
-		using party_atomic_host_handle_member_join_t = int(__cdecl*)(char, std::uint32_t*, int, __int64, int, std::uint32_t*);
+		using party_atomic_host_handle_member_join_t = network_security::member_join;
 		utils::hook::detour party_atomic_host_handle_member_join_hook;
-		int __cdecl PartyAtomicHost_HandleMemberJoin_guard(char a1, std::uint32_t* a2, int a3, __int64 a4, int a5, std::uint32_t* a6)
+		int __cdecl PartyAtomicHost_HandleMemberJoin_guard(std::uint32_t* a2, int a3, __int64 a4, int a5, std::uint32_t* a6)
 		{
 			const party_atomic_host_handle_member_join_t original = reinterpret_cast<party_atomic_host_handle_member_join_t>(party_atomic_host_handle_member_join_hook.get_original());
-			if (!a2 || !a6)
+			// QoS 10308903 reads the claimed XUID as the first eight unread
+			// bytes. 103234B3 resolves the type-4 netadr IP through ordinal 60.
+			if (!a2 || !network_security::message_valid(a6, 0x20000) || a6[5] - a6[7] < 8 || a6[5] - a6[7] > 0x4000)
+			{ ++rejected_joins; return 0; }
+			const auto validate = reinterpret_cast<BOOL(WINAPI*)(std::uint64_t, std::uint64_t)>(GetProcAddress(
+				GetModuleHandleA("xlive.dll"), "ConsolationSteamValidateJoin"));
+			if (validate)
 			{
-				return original(a1, a2, a3, a4, a5, a6);
+				std::uint64_t claimed = 0;
+				std::memcpy(&claimed, reinterpret_cast<const void*>(a6[2] + a6[7]), sizeof(claimed));
+				if (!validate(static_cast<std::uint64_t>(a4), claimed)) { ++rejected_joins; return 0; }
 			}
-
-			if (a6[5] < a6[7])
-			{
-				game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin: rejected malformed message cursor\n");
-				return 0;
-			}
-
-			const auto unread_bytes = static_cast<std::size_t>(a6[5] - a6[7]);
-			if (unread_bytes > k_party_member_join_max_message_bytes)
-			{
-				game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin: rejected oversized message (%zu bytes)\n", unread_bytes);
-				return 0;
-			}
-
-			return original(a1, a2, a3, a4, a5, a6);
+			return network_security::join_guard(original, a2, a3, a4, a5, a6);
 		}
 
 		bool PartyAtomicHost_HandleMemberJoin_self_test()
@@ -1777,7 +1820,7 @@ namespace patches
 			packet_cursor[5] = 0;
 			packet_cursor[7] = 1;
 
-			const auto result = PartyAtomicHost_HandleMemberJoin_guard(0, &join_state[0], 0, 0, 0, &packet_cursor[0]);
+			const auto result = PartyAtomicHost_HandleMemberJoin_guard(&join_state[0], 0, 0, 0, &packet_cursor[0]);
 			if (result != 0)
 			{
 				game::Com_Printf(0, "PartyAtomicHost_HandleMemberJoin self-test failed\n");
@@ -1822,6 +1865,13 @@ namespace patches
 
 		void register_security_guard_self_test()
 		{
+			command::add("networkSecurityStatus", [](const command::params&)
+			{
+				game::Com_Printf(0, "Network security: huffman=%d fragments=%d join=%d huffmanRejected=%llu joinRejected=%llu netchanIncomplete=%llu\n",
+					bounded_huffman_hook.get_original() != nullptr, bounded_netchan_hook.get_original() != nullptr,
+					party_atomic_host_handle_member_join_hook.get_original() != nullptr,
+					rejected_huffman.load(), rejected_joins.load(), incomplete_netchan.load());
+			});
 			command::add("securityGuardSelfTest", [](const command::params&)
 			{
 				const auto party_ok = PartyAtomicHost_HandleMemberJoin_self_test();
@@ -2426,6 +2476,11 @@ namespace patches
 #endif
 			}, scheduler::main);
 
+			require_security_bytes(0x103EED80, std::array<std::uint8_t, 12>{0x53,0x8b,0x5c,0x24,0x0c,0x03,0xdb,0x55,0x8b,0x6c,0x24,0x0c});
+			require_security_bytes(0x103F2C80, std::array<std::uint8_t, 14>{0x83,0xec,0x08,0x53,0x8b,0x5c,0x24,0x14,0x55,0x8b,0x6c,0x24,0x14,0x56});
+			require_security_bytes(0x103087B0, std::array<std::uint8_t, 12>{0x55,0x8b,0xec,0x83,0xe4,0xf8,0x81,0xec,0x64,0x04,0x00,0x00});
+			bounded_huffman_hook.create(game::game_offset(0x103EED80), bounded_huffman_entry);
+			bounded_netchan_hook.create(game::game_offset(0x103F2C80), bounded_netchan);
 			cl_parse_server_message_huffman_hook.create(game::game_offset(0x1030D960), CL_ParseServerMessage_huffman_guard);
 			ui_replace_directive_hook.create(game::game_offset(0x102BB870), UI_ReplaceDirective_entry);
 			party_atomic_host_handle_member_join_hook.create(game::game_offset(0x103087B0), PartyAtomicHost_HandleMemberJoin_guard);

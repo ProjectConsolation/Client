@@ -176,7 +176,10 @@ function Get-ConsolationPackagePlan([string]$Root, [string]$ArchivePath, [string
             $total += $file.size
             if ($total -gt 1073741824) { throw 'Unpacked release exceeds limit' }
             # Never overwrite profiles, user configs, identities or system files.
-            $rootFiles = @('d3d9.dll','steam_api.dll','companion64.dll','binkw32.dll','xlive_patch.asi',
+            # Ignore this obsolete entry in older manifests before the allowlist
+            # check; it must never be an approved installable required file.
+            if ($name -eq 'xlive_patch.asi') { continue }
+            $rootFiles = @('d3d9.dll','steam_api.dll','companion64.dll','binkw32.dll',
                 'JB_Launcher_s.exe','Launch Consolation.bat','Check Consolation Updates.ps1',
                 'README.txt','README_XLIVE.txt','PLAYTEST_STEAM_PLAYLISTS.txt',
                 'Repair Consolation Shortcut.ps1','consolelogo.png','icon.ico','jb.bmp','jblogo.bmp')

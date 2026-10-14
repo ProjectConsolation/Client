@@ -36,4 +36,7 @@ namespace menu_file
 	// Main-pipeline Steam control-plane state, not a fabricated native party.
 	void set_match_lobby(bool active);
 	void set_match_lobby_text(const std::string& item, const std::string& text);
+	bool show_friends(bool active);
+	bool friends_visible();
+	void set_friends_item(const std::string& item, const std::string& text, const std::string& action = "");
 }

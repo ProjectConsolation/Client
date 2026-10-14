@@ -24,6 +24,8 @@
 #include <string>
 #include <vector>
 #include "offline_transport.hpp"
+#include "steam_ingress.hpp"
+#include "udp_receive_policy.hpp"
 #include "offline_identity.hpp"
 
 namespace
@@ -120,6 +122,7 @@ namespace
 	static_assert(offsetof(xnaddr, ethernet_address) == 10);
 	static_assert(offsetof(xnaddr, online_id) == 16);
 	std::mutex offline_peer_mutex;
+	steam_ingress::policy steam_ingress_policy;
 	std::vector<SOCKET> offline_game_sockets;
 	std::vector<SOCKET> offline_discovery_sockets;
 	offline_transport::peer_table offline_peers;
@@ -1048,6 +1051,37 @@ extern "C" BOOL WINAPI ConsolationXLiveShim()
 }
 
 extern "C" DWORD WINAPI ConsolationOfflineTransportVersion() { return 1; }
+extern "C" DWORD WINAPI ConsolationSteamIngressVersion() { return 1; }
+extern "C" BOOL WINAPI ConsolationSteamIngressConfigure(std::uint64_t lobby)
+{
+	std::lock_guard lock(offline_peer_mutex);
+	steam_ingress_policy.configure(lobby);
+	return TRUE;
+}
+extern "C" BOOL WINAPI ConsolationSteamIngressAuthorize(std::uint64_t steam, WORD port, const void* native)
+{
+	if (!native) return FALSE;
+	offline_transport::address value{};
+	memcpy(value.data(), native, value.size());
+	std::lock_guard lock(offline_peer_mutex);
+	return steam_ingress_policy.authorize(steam, port, value);
+}
+extern "C" void WINAPI ConsolationSteamIngressRevoke(WORD port)
+{
+	std::lock_guard lock(offline_peer_mutex);
+	steam_ingress_policy.revoke(port);
+}
+extern "C" BOOL WINAPI ConsolationSteamValidateJoin(std::uint64_t native_address, std::uint64_t claimed_xuid)
+{
+	std::lock_guard lock(offline_peer_mutex);
+	if (!steam_ingress_policy.enabled) return TRUE;
+	if (static_cast<DWORD>(native_address) != 4) return FALSE;
+	const auto network_ip = static_cast<DWORD>(native_address >> 32);
+	const auto ip = ntohl(network_ip);
+	if (ip <= offline_virtual_base || ip > offline_virtual_base + offline_transport::peer_table::capacity) return FALSE;
+	const auto peer = offline_peers.get(ip - offline_virtual_base);
+	return peer && steam_ingress_policy.matches_join(ntohl(peer->route.ip), ntohs(peer->route.port), peer->advertised, claimed_xuid);
+}
 
 // Client-owned diagnostic ABI, not a GFWL export. No session keys are logged.
 extern "C" DWORD WINAPI ConsolationOfflineNetStatus(char* output, DWORD capacity)
@@ -1059,6 +1093,7 @@ extern "C" DWORD WINAPI ConsolationOfflineNetStatus(char* output, DWORD capacity
 		<< std::dec << " pid=" << GetCurrentProcessId() << " port=" << offline_bound_port.load()
 		<< " peers=" << offline_peers.size() << " sent=" << offline_sent.load()
 		<< " received=" << offline_received.load() << " rejected=" << offline_rejected.load()
+		<< " steam_guard=" << steam_ingress_policy.enabled
 		<< " storage=" << storage_root().string();
 	const auto value = text.str();
 	if (value.size() >= capacity) return ERROR_INSUFFICIENT_BUFFER;
@@ -1148,20 +1183,37 @@ extern "C"
 		int source_size = sizeof(source);
 		const auto size = recvfrom(socket_handle, reinterpret_cast<char*>(bytes.data()), static_cast<int>(bytes.size()),
 			flags, reinterpret_cast<sockaddr*>(&source), &source_size);
-		if (size == SOCKET_ERROR) return size;
+		if (size == SOCKET_ERROR)
+		{
+			const int receive_error = WSAGetLastError();
+			int socket_type = 0, option_size = sizeof(socket_type);
+			// A closed bridge endpoint is a normal UDP disconnect, not an
+			// invalid game socket. Query its actual type; never mask TCP resets.
+			if (receive_error == WSAECONNRESET)
+				getsockopt(socket_handle, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&socket_type), &option_size);
+			WSASetLastError(udp_receive_policy::normalize(receive_error, socket_type));
+			return SOCKET_ERROR;
+		}
 		std::span<const std::uint8_t> payload(bytes.data(), static_cast<std::size_t>(size));
 		offline_transport::address sender{};
 		offline_transport::session_id session{};
-		if (payload.size() >= offline_transport::magic.size()
-			&& std::equal(offline_transport::magic.begin(), offline_transport::magic.end(), payload.begin()))
+		const bool has_magic = payload.size() >= offline_transport::magic.size()
+			&& std::equal(offline_transport::magic.begin(), offline_transport::magic.end(), payload.begin());
+		const bool wrapped = offline_transport::decode(payload, sender, session, payload);
+		if (has_magic && !wrapped) { ++offline_rejected; WSASetLastError(WSAEWOULDBLOCK); return SOCKET_ERROR; }
 		{
-			if (!offline_transport::decode(payload, sender, session, payload))
-			{
-				++offline_rejected;
-				WSASetLastError(WSAEWOULDBLOCK);
-				return SOCKET_ERROR;
-			}
 			std::lock_guard lock(offline_peer_mutex);
+			// All native ingress is checked BEFORE peer learning or native parsing.
+			// Raw packets, LAN sources and stale/unregistered loopback routes fail closed.
+			if (!steam_ingress_policy.accepts(ntohl(source.sin_addr.s_addr), ntohs(source.sin_port), wrapped ? &sender : nullptr))
+			{ ++offline_rejected; WSASetLastError(WSAEWOULDBLOCK); return SOCKET_ERROR; }
+		}
+		if (payload.size() > static_cast<std::size_t>(len)) { WSASetLastError(WSAEMSGSIZE); return SOCKET_ERROR; }
+		if (wrapped)
+		{
+			std::lock_guard lock(offline_peer_mutex);
+			if (!steam_ingress_policy.accepts(ntohl(source.sin_addr.s_addr), ntohs(source.sin_port), &sender))
+			{ ++offline_rejected; WSASetLastError(WSAEWOULDBLOCK); return SOCKET_ERROR; }
 			const bool discovery = std::find(offline_discovery_sockets.begin(), offline_discovery_sockets.end(), socket_handle)
 				!= offline_discovery_sockets.end();
 			WORD game_port = source.sin_port;
@@ -1172,7 +1224,6 @@ extern "C"
 			source.sin_addr.s_addr = htonl(offline_virtual_base + handle);
 			++offline_received;
 		}
-		if (payload.size() > static_cast<std::size_t>(len)) { WSASetLastError(WSAEMSGSIZE); return SOCKET_ERROR; }
 		if (from)
 		{
 			if (*fromlen < static_cast<int>(sizeof(source))) { WSASetLastError(WSAEFAULT); return SOCKET_ERROR; }

@@ -12,6 +12,7 @@
 #include "steam_identity.hpp"
 #include "steam_companion.hpp"
 #include "steam_transport.hpp"
+#include "steam_friends.hpp"
 #include <charconv>
 #include <memory>
 
@@ -32,6 +33,9 @@ namespace steam_matchmaking
 	namespace
 	{
 		utils::hook::detour select_playlist_hook, leave_match_hook, party_go_hook;
+		utils::hook::detour friends_menu_hook;
+		std::function<void()> friends_menu_action;
+		void friends_menu_stub() { if (friends_menu_action) friends_menu_action(); }
 		std::function<void()> find_match_action, cancel_match_action;
 		std::function<bool()> party_go_action;
 
@@ -78,7 +82,9 @@ namespace steam_matchmaking
 	namespace
 	{
 		constexpr auto product = "project-consolation";
-		constexpr auto protocol = "qos-pc-1.1-lobby-v2-p2p";
+		constexpr auto protocol = "qos-pc-1.1-lobby-v3-auth";
+		bool find_match_server_kind(std::string_view kind) { return kind == "listen"; }
+		bool browser_server_kind(std::string_view kind) { return kind == "listen" || kind == "dedicated"; }
 
 		// QoS 1.1 10309770 arms pregame + visible game-start time, cancels
 		// when minimum membership/editing gates fail, and 103252E0 sets the
@@ -346,7 +352,8 @@ namespace steam_matchmaking
 				if (SteamNetworkingMessages() && SteamNetworkingUtils())
 				{
 					// Force SDR rather than disclosing LAN/public IPs through ICE.
-					relay_enabled_ = SteamNetworkingUtils()->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable, 0);
+					relay_enabled_ = steam_transport::bridge::secure_ingress(0) && SteamNetworkingUtils()->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable, 0);
+					if (!relay_enabled_) console::warn("Steam gameplay disabled: deploy the matching security-hardened xlive.dll and d3d9.dll.\n");
 					SteamNetworkingUtils()->InitRelayNetworkAccess();
 					relay_requests_.Register(this, &service::relay_requested);
 					relay_failures_.Register(this, &service::relay_failed);
@@ -378,6 +385,13 @@ namespace steam_matchmaking
 					if (GetTickCount64() - last_game_poll_ >= 1000)
 					{
 						last_game_poll_ = GetTickCount64();
+						publish_roster();
+						const std::string presence_lobby = SteamUser()->BLoggedOn() && lobby_.IsValid() ? std::to_string(lobby_.ConvertToUint64()) : "";
+						if (presence_lobby != friends_presence_lobby_)
+						{
+							if (SteamFriends()->SetRichPresence("csl_lobby", presence_lobby.empty() ? nullptr : presence_lobby.c_str())) friends_presence_lobby_ = presence_lobby;
+						}
+						friends_refresh();
 						maintain_auto_lobby();
 						publish_game();
 						connect_game();
@@ -502,13 +516,13 @@ namespace steam_matchmaking
 				if (begin(call)) created_.Set(call, this, &service::created);
 			}
 
-			void list()
+			void list(const bool browser = false)
 			{
 				if (!ready()) return;
 				auto* matchmaking = SteamMatchmaking();
 				matchmaking->AddRequestLobbyListStringFilter("csl_product", product, k_ELobbyComparisonEqual);
 				matchmaking->AddRequestLobbyListStringFilter("csl_protocol", protocol, k_ELobbyComparisonEqual);
-				matchmaking->AddRequestLobbyListFilterSlotsAvailable(1);
+				if (!browser) matchmaking->AddRequestLobbyListFilterSlotsAvailable(1);
 				matchmaking->AddRequestLobbyListDistanceFilter(k_ELobbyDistanceFilterWorldwide);
 				matchmaking->AddRequestLobbyListResultCountFilter(50);
 				const auto call = matchmaking->RequestLobbyList();
@@ -525,7 +539,7 @@ namespace steam_matchmaking
 				if (!ready()) return;
 				game::Dvar_SetFromStringByName("csl_browser_available", "1");
 				browser_pending_ = true;
-				list();
+				list(true);
 				if (!pending_) browser_pending_ = false;
 			}
 
@@ -535,6 +549,8 @@ namespace steam_matchmaking
 				{ console::warn("Server Browser: stale selection; refresh and select again.\n"); return; }
 				const auto target = browser_rows_[index];
 				if (!browser_eligible(target)) { console::warn("Server Browser: this host is no longer available.\n"); return; }
+				if (SteamMatchmaking()->GetNumLobbyMembers(target) >= SteamMatchmaking()->GetLobbyMemberLimit(target))
+				{ console::warn("Server Browser: this lobby is full.\n"); return; }
 				join(std::to_string(target.ConvertToUint64()));
 			}
 
@@ -559,6 +575,8 @@ namespace steam_matchmaking
 
 			void leave()
 			{
+				if (active_) SteamFriends()->SetRichPresence("csl_lobby", nullptr);
+				friends_presence_lobby_.clear();
 				close_transport();
 				cancel_find();
 				// Do not cancel an in-flight join/create: cancelling its call result
@@ -589,6 +607,109 @@ namespace steam_matchmaking
 				observed_round_.clear();
 			}
 
+			void friends_open()
+			{
+				if (!menu_file::show_friends(true)) { console::warn("Friends: open from a frontend/lobby, not during map loading or gameplay.\n"); return; }
+				friends_snapshot_.page = 0;
+				friends_notice_.clear();
+				if (active_ && SteamUser()->BLoggedOn())
+					for (int i = 0; i < std::clamp(SteamFriends()->GetFriendCount(k_EFriendFlagImmediate), 0, 256); ++i)
+						SteamFriends()->RequestFriendRichPresence(SteamFriends()->GetFriendByIndex(i, k_EFriendFlagImmediate));
+				friends_refresh();
+			}
+			CSteamID friend_lobby(const CSteamID id) const
+			{
+				// Companion may change the displayed game identity. Use our explicit
+				// app-scoped lobby presence first; it is only a join candidate, never
+				// proof of product compatibility or authenticated native membership.
+				const auto* text = SteamFriends()->GetFriendRichPresence(id, "csl_lobby");
+				const auto length = text ? strnlen(text, 21) : 0;
+				if (length && length <= 20)
+				{
+					uint64 value = 0;
+					const auto parsed = std::from_chars(text, text + length, value);
+					const CSteamID lobby(value);
+					if (parsed.ec == std::errc{} && parsed.ptr == text + length && lobby.IsValid() && lobby.IsLobby()) return lobby;
+				}
+				FriendGameInfo_t game{};
+				return SteamFriends()->GetFriendGamePlayed(id, &game) && game.m_gameID.AppID() == SteamUtils()->GetAppID()
+					&& game.m_steamIDLobby.IsLobby() ? game.m_steamIDLobby : CSteamID{};
+			}
+			void friends_refresh()
+			{
+				if (!menu_file::friends_visible()) return;
+				std::vector<steam_friends::entry> entries;
+				if (active_ && SteamUser()->BLoggedOn())
+				{
+					auto* api = SteamFriends();
+					const auto count = std::clamp(api->GetFriendCount(k_EFriendFlagImmediate), 0, 256);
+					for (int i = 0; i < count; ++i)
+					{
+						const auto id = api->GetFriendByIndex(i, k_EFriendFlagImmediate);
+						if (!id.IsValid() || !id.BIndividualAccount() || api->GetFriendRelationship(id) != k_EFriendRelationshipFriend) continue;
+						steam_friends::entry entry; entry.id = id.ConvertToUint64();
+						entry.name = steam_friends::label(api->GetFriendPersonaName(id));
+						const auto state = api->GetFriendPersonaState(id);
+						entry.online = state != k_EPersonaStateOffline;
+						entry.status = !entry.online ? "Offline" : state == k_EPersonaStateBusy ? "Busy" :
+							state == k_EPersonaStateAway || state == k_EPersonaStateSnooze ? "Away" : "Online";
+						const auto lobby = friend_lobby(id);
+						if (lobby.IsValid()) { entry.lobby = lobby.ConvertToUint64(); entry.status += " / In a lobby"; }
+						entries.push_back(std::move(entry));
+					}
+				}
+				friends_snapshot_.update(std::move(entries));
+				menu_file::set_friends_item("status", !active_ || !SteamUser()->BLoggedOn() ? "Sign into Steam to view friends." :
+					GetTickCount64() < friends_notice_until_ ? friends_notice_ :
+					friends_snapshot_.entries.empty() ? "No Steam friends found." : std::to_string(friends_snapshot_.entries.size()) + " Steam friends - select a friend below");
+				menu_file::set_friends_item("page", "PAGE " + std::to_string(friends_snapshot_.page + 1) + " / " + std::to_string(friends_snapshot_.pages()));
+				for (std::size_t row = 0; row < steam_friends::snapshot::page_size; ++row)
+				{
+					const auto index = friends_snapshot_.page * steam_friends::snapshot::page_size + row;
+					const auto* entry = index < friends_snapshot_.entries.size() ? &friends_snapshot_.entries[index] : nullptr;
+					menu_file::set_friends_item("friend" + std::to_string(row), entry ?
+						std::string(entry->id == friends_snapshot_.selected ? "> " : "  ") + entry->name + "   -   " + entry->status : "",
+						entry ? "exec \"steam_friend_select " + std::to_string(entry->id) + "\";" : "");
+				}
+				const auto* selected = friends_snapshot_.get(friends_snapshot_.selected);
+				menu_file::set_friends_item("selected", selected ? "SELECTED: " + selected->name : "SELECT A FRIEND");
+			}
+			void friends_select(const uint64 id)
+			{
+				if (!menu_file::friends_visible() || !friends_snapshot_.get(id)) return;
+				friends_snapshot_.selected = id;
+				friends_refresh();
+			}
+			void friends_page(const bool next)
+			{
+				if (next && friends_snapshot_.page + 1 < friends_snapshot_.pages()) ++friends_snapshot_.page;
+				else if (!next && friends_snapshot_.page) --friends_snapshot_.page;
+				friends_refresh();
+			}
+			void friends_action(const bool invite_friend)
+			{
+				if (!menu_file::friends_visible()) return;
+				const CSteamID friend_id(friends_snapshot_.selected);
+				const auto notice = [this](const char* text) { friends_notice_ = text; friends_notice_until_ = GetTickCount64() + 5000; menu_file::set_friends_item("status", text); };
+				if (!active_ || !SteamUser()->BLoggedOn()) { notice("Sign into Steam first."); return; }
+				if (!friend_id.IsValid() || SteamFriends()->GetFriendRelationship(friend_id) != k_EFriendRelationshipFriend)
+				{ notice("Select a current Steam friend first."); return; }
+				if (invite_friend)
+				{
+					if (!lobby_.IsValid() || pending_) { notice("Join or create a Steam lobby before inviting friends."); return; }
+					notice(SteamMatchmaking()->InviteUserToLobby(lobby_, friend_id) ? "Steam invitation sent." : "Steam could not send the invitation.");
+					return;
+				}
+				if (lobby_.IsValid() || running_server() || pending_)
+				{ notice("Leave your current lobby/match before joining a friend."); return; }
+				const auto target = friend_lobby(friend_id);
+				if (!target.IsValid())
+				{ notice("This friend has no joinable Steam lobby."); return; }
+				// App ID 480 is not product proof; shared join()/joined() validate
+				// product, protocol and security before any native connection.
+				menu_file::show_friends(false);
+				join(std::to_string(target.ConvertToUint64()));
+			}
 			void invite()
 			{
 				if (active_ && lobby_.IsValid()) SteamFriends()->ActivateGameOverlayInviteDialog(lobby_);
@@ -606,6 +727,7 @@ namespace steam_matchmaking
 				created_.Cancel(); listed_.Cancel(); joined_.Cancel();
 				if (active_)
 				{
+					SteamFriends()->SetRichPresence("csl_lobby", nullptr);
 					relay_requests_.Unregister(); relay_failures_.Unregister();
 					// SDK 1.65 CCallback::Unregister calls the DLL unconditionally,
 					// even for an unregistered manual callback. steam.dmp captured
@@ -626,6 +748,10 @@ namespace steam_matchmaking
 			bool offline_warning_shown_ = false;
 			bool relay_enabled_ = false;
 			steam_transport::bridge transport_;
+			steam_friends::snapshot friends_snapshot_;
+			std::string friends_presence_lobby_, friends_notice_;
+			ULONGLONG friends_notice_until_ = 0;
+			std::string published_native_identity_;
 			static constexpr int relay_channel = 17;
 			steam_companion::client presence_;
 			steam_identity::policy identity_;
@@ -687,13 +813,16 @@ namespace steam_matchmaking
 				if (active_ && relay_enabled_ && SteamNetworkingMessages()) for (const auto id : relay_members())
 				{ SteamNetworkingIdentity peer{}; peer.SetSteamID64(id); SteamNetworkingMessages()->CloseSessionWithUser(peer); }
 				transport_.shutdown();
+				published_native_identity_.clear();
 			}
 
 			void relay_requested(SteamNetworkingMessagesSessionRequest_t* request)
 			{
 				const auto members = relay_members();
 				const auto id = request->m_identityRemote.GetSteamID64();
-				if (relay_enabled_ && std::find(members.begin(), members.end(), id) != members.end())
+				const auto self = SteamUser()->GetSteamID();
+				const auto host = lobby_.IsValid() ? SteamMatchmaking()->GetLobbyOwner(lobby_) : CSteamID{};
+				if (relay_enabled_ && (host == self || host.ConvertToUint64() == id) && std::find(members.begin(), members.end(), id) != members.end())
 					SteamNetworkingMessages()->AcceptSessionWithUser(request->m_identityRemote);
 				else SteamNetworkingMessages()->CloseSessionWithUser(request->m_identityRemote);
 			}
@@ -710,8 +839,41 @@ namespace steam_matchmaking
 				using title_address = DWORD(WINAPI*)(void*);
 				const auto get_address = reinterpret_cast<title_address>(GetProcAddress(GetModuleHandleA("xlive.dll"), MAKEINTRESOURCEA(73)));
 				std::array<unsigned char, 36> address{}; uint16 network_port = 0;
-				if (get_address && get_address(address.data())) std::memcpy(&network_port, address.data() + 8, 2);
-				transport_.configure(lobby_.ConvertToUint64(), ntohs(network_port), relay_members());
+				const bool address_ready = get_address && get_address(address.data());
+				if (address_ready) std::memcpy(&network_port, address.data() + 8, 2);
+				std::vector<steam_ingress::identity> identities;
+				auto* mm = SteamMatchmaking();
+				const auto self = SteamUser()->GetSteamID();
+				if (lobby_.IsValid() && address_ready)
+				{
+					// SDK member data belongs to the authenticated account, unlike
+					// owner-editable lobby data or a claim inside an incoming packet.
+					constexpr char hex[] = "0123456789abcdef";
+					std::string encoded;
+					for (const auto byte : address) { encoded += hex[byte >> 4]; encoded += hex[byte & 15]; }
+					if (encoded != published_native_identity_)
+					{ mm->SetLobbyMemberData(lobby_, "csl_native_identity", encoded.c_str()); published_native_identity_ = encoded; }
+					identities.push_back({self.ConvertToUint64(), address});
+					for (const auto peer : relay_members())
+					{
+						const auto* member_value = mm->GetLobbyMemberData(lobby_, CSteamID(peer), "csl_native_identity");
+						if (!member_value || strnlen(member_value, 73) != 72) continue;
+						const std::string value(member_value, 72);
+						if (value.size() != 72) continue;
+						steam_ingress::identity id{peer, {}};
+						bool valid = true;
+						for (std::size_t i = 0; i < id.native.size(); ++i)
+						{
+							unsigned byte = 0;
+							const auto parsed = std::from_chars(value.data() + i * 2, value.data() + i * 2 + 2, byte, 16);
+							if (parsed.ec != std::errc{} || parsed.ptr != value.data() + i * 2 + 2) { valid = false; break; }
+							id.native[i] = static_cast<std::uint8_t>(byte);
+						}
+						if (valid && std::any_of(id.native.begin() + 10, id.native.end(), [](auto b) { return b != 0; })) identities.push_back(id);
+					}
+				}
+				if (!transport_.configure(lobby_.ConvertToUint64(), ntohs(network_port), relay_members(),
+					self.ConvertToUint64(), lobby_.IsValid() ? mm->GetLobbyOwner(lobby_).ConvertToUint64() : 0, std::move(identities))) return;
 				auto* messages = SteamNetworkingMessages();
 				transport_.pump([messages](const std::uint64_t id, const std::span<const std::uint8_t> bytes) {
 					SteamNetworkingIdentity peer{}; peer.SetSteamID64(id);
@@ -825,7 +987,7 @@ namespace steam_matchmaking
 					&& matchmaking->GetLobbyOwner(lobby) != SteamUser()->GetSteamID()
 					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_product"), product)
 					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_protocol"), protocol)
-					&& !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_server_kind"), "listen")
+					&& find_match_server_kind(matchmaking->GetLobbyData(lobby, "csl_server_kind"))
 					&& (!std::strcmp(matchmaking->GetLobbyData(lobby, "csl_game_ready"), "1")
 						|| !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_host_state"), "starting")
 						|| !std::strcmp(matchmaking->GetLobbyData(lobby, "csl_host_state"), "waiting"))
@@ -837,16 +999,15 @@ namespace steam_matchmaking
 			bool browser_eligible(CSteamID lobby) const
 			{
 				auto* mm = SteamMatchmaking();
+				const std::string map = mm->GetLobbyData(lobby, "csl_map"), mode = mm->GetLobbyData(lobby, "csl_gametype");
 				return lobby.IsValid() && lobby.IsLobby() && mm->GetLobbyOwner(lobby) != SteamUser()->GetSteamID()
 					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_product"), product)
 					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_protocol"), protocol)
 					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_game_ready"), "1")
 					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_host_state"), "running")
-					&& (!std::strcmp(mm->GetLobbyData(lobby, "csl_server_kind"), "listen")
-						|| !std::strcmp(mm->GetLobbyData(lobby, "csl_server_kind"), "dedicated"))
-					&& safe_host_token(mm->GetLobbyData(lobby, "csl_map"), 32)
-					&& safe_host_token(mm->GetLobbyData(lobby, "csl_gametype"), 16)
-					&& mm->GetNumLobbyMembers(lobby) < mm->GetLobbyMemberLimit(lobby);
+					&& browser_server_kind(mm->GetLobbyData(lobby, "csl_server_kind"))
+					&& map.size() < 32 && mode.size() < 16
+					&& safe_host_token(map.c_str(), map.size() + 1) && safe_host_token(mode.c_str(), mode.size() + 1);
 			}
 
 			void next_candidate()
@@ -961,6 +1122,30 @@ namespace steam_matchmaking
 					&& mm->SetLobbyData(lobby_, "csl_vote_round", std::to_string(++vote_round_).c_str());
 			}
 
+			void publish_roster()
+			{
+				const bool online = active_ && SteamUser()->BLoggedOn();
+				auto* mm = SteamMatchmaking();
+				const int count = online ? lobby_.IsValid() ? std::clamp(mm->GetNumLobbyMembers(lobby_), 0, 18) : 1 : 0;
+				// Presentation-only adapter: never fabricate a native party or use
+				// these row indices for LIVE kick/gamercard commands.
+				for (int i = 0; i < 18; ++i)
+				{
+					std::string name;
+					if (i < count)
+					{
+						const auto member = lobby_.IsValid() ? mm->GetLobbyMemberByIndex(lobby_, i) : SteamUser()->GetSteamID();
+						const auto* display = lobby_.IsValid() ? mm->GetLobbyMemberData(lobby_, member, "csl_display_name") : nullptr;
+						const auto* persona = member == SteamUser()->GetSteamID() ? SteamFriends()->GetPersonaName() : SteamFriends()->GetFriendPersonaName(member);
+						name = steam_friends::label(display && *display ? display : persona);
+						if (lobby_.IsValid() && member == mm->GetLobbyOwner(lobby_)) name += " (HOST)";
+					}
+					game::Dvar_SetFromStringByName(("csl_roster_name" + std::to_string(i)).c_str(), name.c_str());
+					menu_file::set_match_lobby_text("member" + std::to_string(i), name);
+				}
+				game::Dvar_SetFromStringByName("csl_roster_count", std::to_string(count).c_str());
+				game::Dvar_SetFromStringByName("csl_roster_active", online ? "1" : "0");
+			}
 			void update_lobby_screen()
 			{
 				if (!lobby_.IsValid()) { menu_file::set_match_lobby(false); return; }
@@ -997,7 +1182,7 @@ namespace steam_matchmaking
 					{
 						const auto member = mm->GetLobbyMemberByIndex(lobby_, i);
 						const auto* display = mm->GetLobbyMemberData(lobby_, member, "csl_display_name");
-						name = clean(*display ? display : SteamFriends()->GetFriendPersonaName(member));
+						name = steam_friends::label(display && *display ? display : SteamFriends()->GetFriendPersonaName(member));
 						if (member == mm->GetLobbyOwner(lobby_)) name += " (HOST)";
 					}
 					menu_file::set_match_lobby_text("member" + std::to_string(i), name);
@@ -1228,7 +1413,7 @@ namespace steam_matchmaking
 			{
 				command::set_steam_identity(SteamUser()->BLoggedOn() ? SteamUser()->GetSteamID().ConvertToUint64() : 0);
 				if (SteamUser()->BLoggedOn()) offline_warning_shown_ = false;
-				else warn_sign_in();
+				else { close_transport(); warn_sign_in(); }
 			}
 
 			void invited(GameLobbyJoinRequested_t* result)
@@ -1242,6 +1427,7 @@ namespace steam_matchmaking
 			{
 				if (result->m_ulSteamIDLobby == lobby_.ConvertToUint64())
 				{
+					close_transport();
 					lobby_ = CSteamID();
 					menu_file::set_match_lobby(false);
 					waiting_host_ = false;
@@ -1263,6 +1449,7 @@ namespace steam_matchmaking
 					return false;
 				}
 				if (pending_) { console::warn("Steam: lobby operation already pending.\n"); return false; }
+				if (!relay_enabled_) { console::warn("Steam gameplay unavailable: matching security-hardened xlive.dll and SDR support are required.\n"); return false; }
 				return true;
 			}
 
@@ -1344,7 +1531,8 @@ namespace steam_matchmaking
 					const auto clean = [](const char* text) {
 						std::string result;
 						for (const auto* p = text; p && *p && result.size() < 48; ++p)
-							if (static_cast<unsigned char>(*p) >= 32 && static_cast<unsigned char>(*p) < 127 && *p != '|' && *p != '^') result += *p;
+							if (static_cast<unsigned char>(*p) >= 32 && static_cast<unsigned char>(*p) < 127
+								&& !std::strchr("|^<>&\"\\", *p)) result += *p;
 						return result;
 					};
 					for (uint32 i = 0; i < result->m_nLobbiesMatching && i < 50; ++i)
@@ -1484,6 +1672,23 @@ namespace steam_matchmaking
 			command::add("steam_presence_status", [enqueue]() { enqueue([](service& s) { s.presence_status(); }); });
 			command::add("steam_presence_retry", [enqueue]() { enqueue([](service& s) { s.presence_retry(); }); });
 			command::add("steam_transport_status", [enqueue]() { enqueue([](service& s) { s.transport_status(); }); });
+			friends_menu_action = [enqueue]() { enqueue([](service& s) { s.friends_open(); }); };
+			command::add("steam_friends", []() { if (friends_menu_action) friends_menu_action(); });
+			command::add("steam_friends_refresh", [enqueue]() { enqueue([](service& s) { s.friends_refresh(); }); });
+			command::add("steam_friends_page", [enqueue](const command::params& p) {
+				if (p.size() != 2 || (std::strcmp(p[1], "next") && std::strcmp(p[1], "prev"))) return;
+				const bool next = !std::strcmp(p[1], "next");
+				enqueue([next](service& s) { s.friends_page(next); });
+			});
+			command::add("steam_friend_select", [enqueue](const command::params& p) {
+				if (p.size() != 2) return;
+				uint64 id = 0; const std::string_view value(p[1]);
+				const auto parsed = std::from_chars(value.data(), value.data() + value.size(), id);
+				if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) return;
+				enqueue([id](service& s) { s.friends_select(id); });
+			});
+			command::add("steam_friend_invite", [enqueue]() { enqueue([](service& s) { s.friends_action(true); }); });
+			command::add("steam_friend_join", [enqueue]() { enqueue([](service& s) { s.friends_action(false); }); });
 			command::add("name", [enqueue](const command::params& p) {
 				if (p.size() < 2)
 				{ const auto* name = game::Dvar_FindVar("name"); console::info("name: %s\n", name && name->current.string ? name->current.string : "Player"); return; }
@@ -1529,7 +1734,8 @@ namespace steam_matchmaking
 				enqueue([id](service& s) { s.join(id); });
 			});
 			command::add("steam_lobby_leave", [enqueue]() { enqueue([](service& s) { s.leave(); }); });
-			command::add("steam_lobby_invite", [enqueue]() { enqueue([](service& s) { s.invite(); }); });
+			command::add("steam_lobby_invite", []() { if (friends_menu_action) friends_menu_action(); });
+			command::add("steam_overlay_invite", [enqueue]() { enqueue([](service& s) { s.invite(); }); });
 			scheduler::schedule([weak]()
 			{
 				const auto state = weak.lock();
@@ -1553,6 +1759,10 @@ namespace steam_matchmaking
 			}, scheduler::main);
 			enqueue([](service& s) { s.initialize(); });
 #else
+			friends_menu_action = []() {
+				menu_file::set_friends_item("status", "Steam support is unavailable in this build.");
+				menu_file::show_friends(true);
+			};
 			find_match_action = []() {
 				scheduler::once([]() { find_match_error("Steam support is unavailable in this build. Offline and System Link play remain available."); }, scheduler::main);
 			};
@@ -1562,9 +1772,24 @@ namespace steam_matchmaking
 				console::warn("Steam online services unavailable in this build. To access online services, you must be signed into Steam and use a Steam-enabled client. Offline play remains available.\n");
 			}, scheduler::main);
 			for (const auto* name : { "steam_init", "steam_status", "steam_lobby_create", "steam_lobby_list",
-					"steam_lobby_join", "steam_lobby_leave", "steam_lobby_invite", "steam_find_match", "steam_match_cancel", "steam_match_start", "steam_match_vote", "steam_presence_status", "steam_presence_retry", "steam_transport_status", "steam_browser_refresh", "steam_browser_join" })
+					"steam_lobby_join", "steam_lobby_leave", "steam_lobby_invite", "steam_find_match", "steam_match_cancel", "steam_match_start", "steam_match_vote", "steam_presence_status", "steam_presence_retry", "steam_transport_status", "steam_browser_refresh", "steam_browser_join", "steam_friends_refresh", "steam_friends_page", "steam_friend_select", "steam_friend_invite", "steam_friend_join", "steam_overlay_invite" })
 				command::add(name, []() { console::info("Steam support not compiled; regenerate with --steamworks-sdk=<sdk root>.\n"); });
 #endif
+			command::add("steam_friends_close", []() { menu_file::show_friends(false); });
+			command::add("xshowfriendslist", []() { if (friends_menu_action) friends_menu_action(); });
+#ifndef CSL_STEAMWORKS
+			command::add("steam_friends", []() { if (friends_menu_action) friends_menu_action(); });
+#endif
+			// QoS xshowfriendslist (103105E0): push 0; call XShowFriendsUI;
+			// test EAX. Replace that command callback, not GFWL's system UI ABI.
+			const auto friends_entry = game::game_offset(0x103105E0);
+			const unsigned char friends_prefix[] = {0x6a,0x00,0xe8};
+			const unsigned char friends_tail[] = {0x85,0xc0};
+			if (!std::memcmp(reinterpret_cast<const void*>(friends_entry), friends_prefix, sizeof(friends_prefix))
+				&& !std::memcmp(reinterpret_cast<const void*>(friends_entry + 7), friends_tail, sizeof(friends_tail))
+				&& friends_entry + 7 + *reinterpret_cast<const std::int32_t*>(friends_entry + 3) == game::game_offset(0x10150ADA))
+				friends_menu_hook.create(friends_entry, friends_menu_stub);
+			else console::warn("Friends: unsupported native callback; use steam_friends.\n");
 			// QoS PC 1.1 registers xpartygo -> 103102C0 (no args, caller
 			// observes EAX). StartServer 102E08C0 queues map, not xpartygo.
 			// Guarded compatibility hook: retain the original command outside
@@ -1610,6 +1835,7 @@ namespace steam_matchmaking
 
 		void pre_destroy() override
 		{
+			friends_menu_hook.clear(); friends_menu_action = {};
 			party_go_hook.clear(); party_go_action = {};
 			select_playlist_hook.clear(); leave_match_hook.clear();
 			find_match_action = {}; cancel_match_action = {};

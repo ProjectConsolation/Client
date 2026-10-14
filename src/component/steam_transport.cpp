@@ -15,6 +15,13 @@ namespace steam_transport
         constexpr std::array<std::uint8_t, 8> magic{'C','S','L','P','2','P','0','1'};
         constexpr std::size_t header = 24, max_payload = 65507;
         constexpr std::size_t max_routes = 72; // 18 members, at most four routes each.
+        using configure_fn = BOOL(WINAPI*)(std::uint64_t);
+        using authorize_fn = BOOL(WINAPI*)(std::uint64_t, WORD, const void*);
+        using revoke_fn = void(WINAPI*)(WORD);
+        template<class T> T shim(const char* name)
+        { return reinterpret_cast<T>(GetProcAddress(GetModuleHandleA("xlive.dll"), name)); }
+        void revoke(WORD port)
+        { if (const auto fn = shim<revoke_fn>("ConsolationSteamIngressRevoke")) fn(port); }
     }
     std::vector<std::uint8_t> encode(const datagram& packet)
     {
@@ -45,7 +52,9 @@ namespace steam_transport
     }
     bridge::route* bridge::find(const std::uint64_t peer, const std::uint16_t remote_port)
     {
-        if (!lobby_ || !remote_port || std::find(members_.begin(), members_.end(), peer) == members_.end()) return nullptr;
+        if (!lobby_ || !remote_port || (self_ != host_ && peer != host_) || std::find(members_.begin(), members_.end(), peer) == members_.end()) return nullptr;
+        const auto identity = std::find_if(identities_.begin(), identities_.end(), [peer](const auto& id) { return id.steam == peer; });
+        if (identity == identities_.end()) return nullptr;
         auto found = std::find_if(routes_.begin(), routes_.end(), [&](const route& r) { return r.peer == peer && r.remote_port == remote_port; });
         if (found != routes_.end()) { found->used = GetTickCount64(); return &*found; }
         if (routes_.size() >= max_routes) return nullptr;
@@ -64,21 +73,55 @@ namespace steam_transport
         if (bind(socket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) ||
             ioctlsocket(socket, FIONBIO, &nonblocking) || getsockname(socket, reinterpret_cast<sockaddr*>(&address), &size))
         { closesocket(socket); return nullptr; }
+        const auto authorize = shim<authorize_fn>("ConsolationSteamIngressAuthorize");
+        if (!authorize || !authorize(peer, ntohs(address.sin_port), identity->native.data()))
+        { closesocket(socket); return nullptr; }
         routes_.push_back({peer, remote_port, ntohs(address.sin_port), socket, {}, GetTickCount64()});
         return &routes_.back();
     }
-    void bridge::configure(const std::uint64_t lobby, const std::uint16_t game_port, std::vector<std::uint64_t> members)
+    bool bridge::secure_ingress(const std::uint64_t lobby)
+    {
+        const auto version = shim<DWORD(WINAPI*)()>("ConsolationSteamIngressVersion");
+        const auto configure = shim<configure_fn>("ConsolationSteamIngressConfigure");
+        return version && version() == 1 && configure &&
+            shim<authorize_fn>("ConsolationSteamIngressAuthorize") && shim<revoke_fn>("ConsolationSteamIngressRevoke") &&
+            shim<BOOL(WINAPI*)(std::uint64_t, std::uint64_t)>("ConsolationSteamValidateJoin") && configure(lobby);
+    }
+    bool bridge::configure(const std::uint64_t lobby, const std::uint16_t game_port, std::vector<std::uint64_t> members,
+                           const std::uint64_t self, const std::uint64_t host, std::vector<steam_ingress::identity> identities)
     {
         if (lobby != lobby_) shutdown();
+        if (!secure_ingress(lobby)) { shutdown(); return false; }
         lobby_ = lobby; game_port_ = game_port ? game_port : 1000;
+        self_ = self; host_ = host;
         if (members.size() > 18) members.resize(18);
         members_ = std::move(members);
+        // Metadata is read by SteamID, not a claimed packet identity. Bind once,
+        // reject later edits and collisions (including with the local host).
+        identities_.clear();
+        if (identities.size() > 18) identities.resize(18);
+        for (const auto& id : identities)
+        {
+            const auto prior = std::find_if(pinned_.begin(), pinned_.end(), [&](const auto& p) { return p.steam == id.steam; });
+            if (!id.steam || (prior != pinned_.end() && !steam_ingress::same(prior->native, id.native))) continue;
+            if (std::any_of(identities.begin(), identities.end(), [&](const auto& p) {
+                return p.steam != id.steam && (steam_ingress::same(p.native, id.native) || steam_ingress::same_xuid(p.native, id.native));
+            })) continue;
+            if (std::any_of(pinned_.begin(), pinned_.end(), [&](const auto& p) {
+                return p.steam != id.steam && (steam_ingress::same(p.native, id.native) || steam_ingress::same_xuid(p.native, id.native));
+            })) continue;
+            if (prior == pinned_.end()) { if (pinned_.size() >= 18) continue; pinned_.push_back(id); }
+            identities_.push_back(id);
+        }
         for (auto it = routes_.begin(); it != routes_.end();)
         {
-            if (std::find(members_.begin(), members_.end(), it->peer) == members_.end() || GetTickCount64() - it->used > 60000)
-            { closesocket(it->socket); it = routes_.erase(it); }
+            if ((self_ != host_ && it->peer != host_) ||
+                std::none_of(identities_.begin(), identities_.end(), [&](const auto& id) { return id.steam == it->peer; }) ||
+                std::find(members_.begin(), members_.end(), it->peer) == members_.end() || GetTickCount64() - it->used > 60000)
+            { revoke(it->bound_port); closesocket(it->socket); it = routes_.erase(it); }
             else ++it;
         }
+        return true;
     }
     std::uint16_t bridge::endpoint(const std::uint64_t peer, const std::uint16_t port)
     {
@@ -120,7 +163,13 @@ namespace steam_transport
     {
         datagram packet{};
         if (!decode(bytes, packet) || packet.lobby != lobby_ ||
+            (self_ != host_ && peer != host_) ||
             std::find(members_.begin(), members_.end(), peer) == members_.end()) { ++rejected; return; }
+        offline_transport::address native{}; offline_transport::session_id session{};
+        std::span<const std::uint8_t> payload;
+        const auto identity = std::find_if(identities_.begin(), identities_.end(), [peer](const auto& id) { return id.steam == peer; });
+        if (identity == identities_.end() || !offline_transport::decode(packet.payload, native, session, payload)
+            || !steam_ingress::same(native, identity->native)) { ++rejected; return; }
         const auto now = GetTickCount64();
         // A peer may reach the game's socket or an ephemeral query socket that
         // actually sent to that peer recently. Never expose arbitrary localhost ports.
@@ -140,8 +189,10 @@ namespace steam_transport
     }
     void bridge::shutdown()
     {
-        for (const auto& route : routes_) closesocket(route.socket);
-        routes_.clear(); members_.clear(); lobby_ = 0;
+        for (const auto& route : routes_) { revoke(route.bound_port); closesocket(route.socket); }
+        routes_.clear(); members_.clear(); identities_.clear(); pinned_.clear(); lobby_ = 0;
+        // Never fall back to LAN ingress on teardown of an active Steam match.
+        secure_ingress(0);
         if (winsock_) WSACleanup();
         winsock_ = false;
     }
