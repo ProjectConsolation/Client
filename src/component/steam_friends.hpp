@@ -35,6 +35,12 @@ namespace steam_friends
         std::vector<entry> entries;
         std::uint64_t selected = 0;
         std::size_t page = 0;
+        std::size_t first_visible = 0;
+        void scroll_to(const std::size_t first)
+        {
+            first_visible = std::min(first, entries.size() > page_size ? entries.size() - page_size : 0);
+            page = first_visible / page_size;
+        }
         void update(std::vector<entry> incoming)
         {
             if (incoming.size() > 256) incoming.resize(256);
@@ -46,6 +52,7 @@ namespace steam_friends
             entries = std::move(incoming);
             if (!get(selected)) selected = 0;
             page = std::min(page, pages() - 1);
+            scroll_to(first_visible);
         }
         std::size_t pages() const { return std::max(std::size_t{1}, (entries.size() + page_size - 1) / page_size); }
         const entry* get(std::uint64_t id) const

@@ -9,6 +9,9 @@
 ## In-game Steam friends panel
 
 - `csl_clantag [open|apply|cancel]`: opens the four-character clan-tag input. Apply uses the same validation and profile persistence as `clanName`; Cancel/Escape discards edits. Available through **Clan Tag** in online, match, private-match and System Link setup menus. The reserved `CSL` tag remains restricted to the authorized Steam ID.
+  The frontend Clan Tag button uses a Scaleform modal with OK/Cancel and
+  Enter/Escape. `prepare` and `apply_scaleform` are internal UI bridge actions;
+  the latter still runs the normal clan-tag validator, never a raw console command.
 - **Start Game** appears first in the Steam match lobby only for its waiting host. It uses `steam_match_start`, which rechecks host ownership before starting; guests cannot launch a match.
 
 The Friends/Party Invite entry and Steam match lobby's Invite Friends button
@@ -233,6 +236,18 @@ Protocol-layout declarations are attributed to the
 - `steam_browser_join <revision> <row>`: join a zero-based row from the current
   browser snapshot. The UI passes its revision so stale refresh results cannot
   silently join a different host. Rechecks compatibility and capacity.
+- `steam_browser_filter`: toggle **Show non-dedicated servers** and refresh the
+  browser snapshot. `ui_browserShowNonDedicated 1` (default) includes player-hosted
+  games; `0` shows dedicated servers only. F6 also toggles this in the browser.
+  This filter does not change Find Match eligibility.
+
+The frontend **Party Invite** and **Invite Friends** buttons open the Scaleform
+friends overlay. Select a row, then Invite or Join. Scroll with the mouse wheel,
+draggable scrollbar or arrow keys; Page Up/Down scroll eight rows. Enter selects,
+F5 refreshes, and Escape returns to the owning menu. `steam_friends_scroll <first>`
+sets the first visible row (0–256, clamped to the current list). The internal
+`steam_friends scaleform` bridge uses the same validated Steam friend snapshot
+as the console/native fallback; displayed names are plain text, not commands.
 - `steam_lobby_join <decimal lobby SteamID>`: join and check protocol metadata;
   incompatible lobbies are immediately left. Wait for the host to start a
   match, establish the Steam connection, query its local bridge and enter the

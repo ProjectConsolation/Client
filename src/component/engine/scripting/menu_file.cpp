@@ -1829,6 +1829,14 @@ namespace menu_file
 			command::add("csl_clantag", [](const command::params& args)
 			{
 				const std::string action = args.size() == 1 ? "open" : lower(args.get(1));
+				if (action == "apply_scaleform")
+				{
+					const auto* input = game::Dvar_FindVar("ui_clanTagInput");
+					const bool accepted = input && static_cast<unsigned char>(input->type) == game::DVAR_TYPE_STRING
+						&& input->current.string && command::set_clan_name(input->current.string);
+					game::Dvar_SetFromStringByName("ui_clanTagAccepted", accepted ? "1" : "0");
+					return;
+				}
 				if (action == "cancel") { show_clan_tag(false); return; }
 				if (action == "apply")
 				{
@@ -1838,12 +1846,14 @@ namespace menu_file
 						&& input->current.string && command::set_clan_name(input->current.string)) show_clan_tag(false);
 					return;
 				}
-				if (action != "open") { console::info("usage: csl_clantag [open|apply|cancel]\n"); return; }
+				if (action != "open" && action != "prepare") { console::info("usage: csl_clantag [open|apply|cancel]\n"); return; }
 				const auto* clan = game::Dvar_FindVar("clanName");
 				if (!clan || static_cast<unsigned char>(clan->type) != game::DVAR_TYPE_STRING) return;
 				if (!game::Dvar_FindVar("ui_clanTagInput"))
 					dvars::Dvar_RegisterString("ui_clanTagInput", "", "Uncommitted clan-tag editor input", 0);
 				game::Dvar_SetString("ui_clanTagInput", clan->current.string ? clan->current.string : "");
+				game::Dvar_SetFromStringByName("ui_clanTagAccepted", "0");
+				if (action == "prepare") return;
 				if (!show_clan_tag(true)) console::warn("Clan-tag menu unavailable; check the required menu files.\n");
 			});
 			command::add("cslMenuRoute", [](const command::params& args)
@@ -2135,9 +2145,17 @@ namespace menu_file
 		if (active && steam_friends_active) show_friends(false);
 		return show_social_dialog(active, "csl_clantag", clan_tag_active);
 	}
-	bool friends_visible() { return steam_friends_active; }
+	bool friends_visible()
+	{
+		const auto* scaleform = game::Dvar_FindVar("csl_friends_scaleform");
+		const bool overlay = scaleform && (static_cast<unsigned char>(scaleform->type) == game::DVAR_TYPE_STRING
+			? scaleform->current.string && !std::strcmp(scaleform->current.string, "1") : scaleform->current.enabled);
+		return steam_friends_active || overlay;
+	}
 	void set_friends_item(const std::string& item, const std::string& text, const std::string& action)
 	{
+		// Plain text only; Scaleform never evaluates names or presence as script.
+		game::Dvar_SetFromStringByName(("csl_friends_" + item).c_str(), text.c_str());
 		auto& stored = steam_friends_text[item]; stored = text;
 		auto& script = steam_friends_actions[item]; script = action;
 		if (auto* menu = find("csl_steam_friends"))
