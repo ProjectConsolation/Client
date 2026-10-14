@@ -8,6 +8,9 @@
 
 ## In-game Steam friends panel
 
+- `csl_clantag [open|apply|cancel]`: opens the four-character clan-tag input. Apply uses the same validation and profile persistence as `clanName`; Cancel/Escape discards edits. Available through **Clan Tag** in online, match, private-match and System Link setup menus. The reserved `CSL` tag remains restricted to the authorized Steam ID.
+- **Start Game** appears first in the Steam match lobby only for its waiting host. It uses `steam_match_start`, which rechecks host ownership before starting; guests cannot launch a match.
+
 The Friends/Party Invite entry and Steam match lobby's Invite Friends button
 open a QoS-styled native friends panel. This adapts the sorted SteamID-based
 selection/paging approach from KisakBlack's `live_friends_pc.cpp` and

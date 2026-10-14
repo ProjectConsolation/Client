@@ -1053,6 +1053,12 @@ namespace command
 		game::Cbuf_AddText(0, command.data());
 	}
 
+	bool set_clan_name(const std::string& tag)
+	{
+		if (!game::Dvar_FindVar("clanName")) return false;
+		return update_clan_name_state(normalize_clan_name(tag));
+	}
+
 	void set_steam_identity(const std::uint64_t steam_id)
 	{
 		signed_in_steam_id.store(steam_id);

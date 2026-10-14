@@ -28,4 +28,6 @@ namespace command
 	void execute(std::string command);
 	// Main-pipeline identity supplied only by the initialized Steam SDK.
 	void set_steam_identity(std::uint64_t steam_id);
+	// Shared menu/console path: normalize, enforce reserved tags, persist profile.
+	bool set_clan_name(const std::string& tag);
 }

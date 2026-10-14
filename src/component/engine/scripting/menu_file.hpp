@@ -38,5 +38,6 @@ namespace menu_file
 	void set_match_lobby_text(const std::string& item, const std::string& text);
 	bool show_friends(bool active);
 	bool friends_visible();
+	bool show_clan_tag(bool active);
 	void set_friends_item(const std::string& item, const std::string& text, const std::string& action = "");
 }

@@ -29,3 +29,24 @@ menuDef
     itemDef { name "join" rect 240 440 140 28 text "JOIN LOBBY" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "steam_friend_join"; } }
     itemDef { name "back" rect 490 440 120 28 text "BACK" font 1 textscale 0.29 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "steam_friends_close"; } }
 }
+
+// Clan tags use the native text field and the same validated profile path as
+// the console. Editing is staged: Escape/Cancel never changes clanName.
+menuDef
+{
+    name "csl_clantag"
+    rect 0 0 640 480
+    fullScreen 1
+    visible 1
+    focusColor 1 0.70 0.25 1
+    onOpen { setFocus "tag"; }
+    onEsc { exec "csl_clantag cancel"; }
+    itemDef { name "panel" rect 0 0 640 480 style 1 backcolor 0.035 0.045 0.055 0.97 visible 1 decoration }
+    itemDef { name "banner" rect 0 115 640 42 style 1 backcolor 0.85 0.36 0.04 0.9 visible 1 decoration }
+    itemDef { name "title" rect 110 124 420 30 text "CLAN TAG" font 1 textscale 0.45 forecolor 1 1 1 1 visible 1 decoration }
+    itemDef { name "help" rect 110 180 420 28 text "Up to 4 characters. Leave blank to remove your tag." font 1 textscale 0.27 forecolor 0.9 0.9 0.9 1 visible 1 decoration }
+    itemDef { name "tag" rect 110 228 420 38 text "TAG: " font 1 textscale 0.38 forecolor 1 1 1 1 style 1 backcolor 0.18 0.20 0.22 1 type ITEM_TYPE_EDITFIELD dvar "ui_clanTagInput" maxChars 4 maxPaintChars 4 visible 1 }
+    itemDef { name "apply" rect 110 305 190 30 text "APPLY" font 1 textscale 0.32 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "csl_clantag apply"; } }
+    itemDef { name "cancel" rect 340 305 190 30 text "CANCEL" font 1 textscale 0.32 forecolor 1 1 1 1 type ITEM_TYPE_BUTTON visible 1 action { exec "csl_clantag cancel"; } }
+    itemDef { name "reserved" rect 110 360 420 28 text "CSL is reserved for the authorized Steam account." font 1 textscale 0.25 forecolor 0.95 0.75 0.3 1 visible 1 decoration }
+}

@@ -1175,6 +1175,7 @@ namespace steam_matchmaking
 				}
 				const bool owner = mm->GetLobbyOwner(lobby_) == SteamUser()->GetSteamID();
 				game::Dvar_SetFromStringByName("csl_lobby_owner", owner ? "1" : "0");
+				game::Dvar_SetFromStringByName("csl_lobby_can_start", owner && waiting_host_ && !pending_ && !running_server() ? "1" : "0");
 				const std::string state = mm->GetLobbyData(lobby_, "csl_host_state");
 				const bool timer = !std::strcmp(mm->GetLobbyData(lobby_, "csl_timer_visible"), "1");
 				menu_file::set_match_lobby_text("state", state == "closed" ? "Host left - leave this lobby and use Find Match again"

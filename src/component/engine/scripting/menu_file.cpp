@@ -10,6 +10,7 @@
 #include "../renderer/menu_image.hpp"
 
 #include "game/game.hpp"
+#include "game/dvars.hpp"
 
 #include <utils/memory.hpp>
 #include <utils/hook.hpp>
@@ -988,6 +989,7 @@ namespace menu_file
 		bool steam_match_lobby_active = false;
 		bool steam_lobby_return_pending = false;
 		bool steam_friends_active = false;
+		bool clan_tag_active = false;
 		std::unordered_map<std::string, std::string> steam_friends_text, steam_friends_actions;
 		bool local_loadout_active = false;
 		bool browser_from_online = false;
@@ -1277,6 +1279,7 @@ namespace menu_file
 			if (frontend_match_active)
 			{
 				steam_friends_active = false;
+				clan_tag_active = false;
 				return_systemlink_after_bootstrap = false;
 				std::array<game::menuDef_t*, 16> open{};
 				std::copy_n(reinterpret_cast<game::menuDef_t**>(context + 2108), count, open.begin());
@@ -1300,13 +1303,14 @@ namespace menu_file
 			}
 			// A friends panel is a native fullscreen page above its owning lobby.
 			// Do not reopen the lobby or resume GFx while that panel owns input.
-			if (steam_friends_active)
+			if (steam_friends_active || clan_tag_active)
 			{
-				const auto* friends = find("csl_steam_friends");
+				const auto* friends = find(clan_tag_active ? "csl_clantag" : "csl_steam_friends");
 				bool present = false;
 				for (int i = 0; i < count; ++i) present |= reinterpret_cast<game::menuDef_t**>(context + 2108)[i] == friends;
 				if (present) return;
 				steam_friends_active = false;
+				clan_tag_active = false;
 				restore_scaleform(true);
 			}
 			// Leaving Steam membership must remove the old lobby from the native
@@ -1822,6 +1826,26 @@ namespace menu_file
 				frontend_screen_stub("mpmainmenu");
 				console::info("sf_restart: native frontend state restored; opening main menu\n");
 			});
+			command::add("csl_clantag", [](const command::params& args)
+			{
+				const std::string action = args.size() == 1 ? "open" : lower(args.get(1));
+				if (action == "cancel") { show_clan_tag(false); return; }
+				if (action == "apply")
+				{
+					if (!clan_tag_active) return;
+					const auto* input = game::Dvar_FindVar("ui_clanTagInput");
+					if (input && static_cast<unsigned char>(input->type) == game::DVAR_TYPE_STRING
+						&& input->current.string && command::set_clan_name(input->current.string)) show_clan_tag(false);
+					return;
+				}
+				if (action != "open") { console::info("usage: csl_clantag [open|apply|cancel]\n"); return; }
+				const auto* clan = game::Dvar_FindVar("clanName");
+				if (!clan || static_cast<unsigned char>(clan->type) != game::DVAR_TYPE_STRING) return;
+				if (!game::Dvar_FindVar("ui_clanTagInput"))
+					dvars::Dvar_RegisterString("ui_clanTagInput", "", "Uncommitted clan-tag editor input", 0);
+				game::Dvar_SetString("ui_clanTagInput", clan->current.string ? clan->current.string : "");
+				if (!show_clan_tag(true)) console::warn("Clan-tag menu unavailable; check the required menu files.\n");
+			});
 			command::add("cslMenuRoute", [](const command::params& args)
 			{
 				if (args.size() != 2) { console::info("usage: cslMenuRoute <options|host|join|online|private|loadout|stats|map|mode|rules|main|browseronline|browserlocal|browserback|leave|discord>\n"); return; }
@@ -1977,6 +2001,7 @@ namespace menu_file
 				loaded_menu_sources.clear();
 				steam_friends_active = false;
 				steam_friends_text.clear(); steam_friends_actions.clear();
+				clan_tag_active = false;
 				png_backgrounds.clear();
 				preview_lists.clear();
 				frontend_was_away = false;
@@ -2071,14 +2096,15 @@ namespace menu_file
 		game::Dvar_SetFromStringByName(("csl_lobby_" + item).c_str(), text.c_str());
 	}
 
-	bool show_friends(const bool active)
+	static bool show_social_dialog(const bool active, const char* name, bool& dialog_active)
 	{
 		auto* context = reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38));
-		auto* menu = find("csl_steam_friends");
+		auto* menu = find(name);
 		if (!active)
 		{
-			if (steam_friends_active && menu) utils::hook::invoke<void>(game::game_offset(0x102CE070), context, menu);
-			steam_friends_active = false;
+			if (!dialog_active) return true; // Do not resume GFx beneath another dialog.
+			if (dialog_active && menu) utils::hook::invoke<void>(game::game_offset(0x102CE070), context, menu);
+			dialog_active = false;
 			restore_scaleform(true);
 			return true;
 		}
@@ -2086,10 +2112,10 @@ namespace menu_file
 		const auto count = *reinterpret_cast<int*>(context + 2172);
 		if (!menu || client < 0 || client > 3 || count < 0 || count >= 16
 			|| reinterpret_cast<const int*>(game::game_offset(0x111F45F8))[client] >= 3) return false;
-		if (steam_friends_active) return true;
+		if (dialog_active) return true;
 		if (!register_native_menu(context, menu)) return false;
-		utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, menu->window.name);
-		steam_friends_active = true;
+		if (!utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, menu->window.name)) return false;
+		dialog_active = true;
 		if (auto* dvar = game::Dvar_FindVar("sf_enable"))
 		{
 			if (!scaleform_suppressed) previous_scaleform_enabled = dvar->current.enabled;
@@ -2098,6 +2124,16 @@ namespace menu_file
 		}
 		*game::keyCatchers |= 0x10;
 		return true;
+	}
+	bool show_friends(const bool active)
+	{
+		if (active && clan_tag_active) show_clan_tag(false);
+		return show_social_dialog(active, "csl_steam_friends", steam_friends_active);
+	}
+	bool show_clan_tag(const bool active)
+	{
+		if (active && steam_friends_active) show_friends(false);
+		return show_social_dialog(active, "csl_clantag", clan_tag_active);
 	}
 	bool friends_visible() { return steam_friends_active; }
 	void set_friends_item(const std::string& item, const std::string& text, const std::string& action)
