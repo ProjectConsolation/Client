@@ -1146,6 +1146,12 @@ namespace steam_matchmaking
 				}
 				game::Dvar_SetFromStringByName("csl_roster_count", std::to_string(count).c_str());
 				game::Dvar_SetFromStringByName("csl_roster_active", online ? "1" : "0");
+				// Matchmaking membership is not a private/invite party. Until a
+				// separate private-party transport is implemented, that screen has
+				// only the local user; never promote matched strangers into it.
+				game::Dvar_SetFromStringByName("csl_party_count", online ? "1" : "0");
+				game::Dvar_SetFromStringByName("csl_party_name0", online
+					? steam_friends::label(SteamFriends()->GetPersonaName()).c_str() : "");
 			}
 			void update_lobby_screen()
 			{
@@ -1246,8 +1252,16 @@ namespace steam_matchmaking
 				if (auto_lobby_ && running) { auto_match_started_ = true; host_launch_started_ = 0; }
 				if (auto_lobby_ && !running && auto_match_started_ && !pending_)
 				{
-					if (!playlist_lobby_) { leave(); return; }
 					auto_match_started_ = false;
+					if (!playlist_lobby_)
+					{
+						// A System Link/manual host's published Steam lobby is a real
+						// control-plane session too. End gameplay, not membership.
+						SteamMatchmaking()->SetLobbyData(lobby_, "csl_game_ready", "0");
+						SteamMatchmaking()->SetLobbyData(lobby_, "csl_host_state", "waiting");
+						published_ready_ = false;
+						return;
+					}
 					if (!SteamMatchmaking()->SetLobbyData(lobby_, "csl_game_ready", "0") || !prepare_votes(true)
 						|| !SteamMatchmaking()->SetLobbyData(lobby_, "csl_host_state", "waiting"))
 					{ leave(); find_match_error("Could not prepare the next lobby vote."); return; }
@@ -1368,7 +1382,7 @@ namespace steam_matchmaking
 				if (!port) return;
 				// A new round can reuse the same UDP endpoint. Do not mistake it
 				// for the connection already attempted in the previous round.
-				const std::string round = matchmaking->GetLobbyData(lobby_, "csl_vote_round");
+				const std::string round = matchmaking->GetLobbyData(lobby_, "csl_game_epoch");
 				if (round != observed_round_)
 				{ observed_round_ = round; attempted_ip_ = 0; attempted_port_ = 0; }
 				if (attempted_ip_ == ip && attempted_port_ == port) return;

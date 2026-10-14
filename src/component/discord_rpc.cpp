@@ -61,16 +61,39 @@ namespace discord_rpc
 			// Uploaded Discord asset keys, not local IWI filenames. The retail
 			// PC maps use <mapname>_preview; DLC/custom artwork is not uploaded
 			// yet, so do not send nonexistent keys for those maps.
-			static constexpr std::array maps{
-				"mp_barge", "mp_constructionsite", "mp_docks", "mp_ecohotel",
-				"mp_embassy", "mp_facility", "mp_italia", "mp_miamiconcourse",
-				"mp_rooftop", "mp_sauna", "mp_sciencecenter", "mp_siena"
+			// Public application asset list verified 2026-10-14. Four retail
+			// map IDs differ from their uploaded artwork names; do not guess keys.
+			static constexpr std::pair<const char*, const char*> maps[]{
+				{"mp_barge","mp_barge_preview"}, {"mp_constructionsite","mp_constructionsite_preview"},
+				{"mp_docks","mp_docks_preview"}, {"mp_ecohotel","mp_ecohotel_preview"},
+				{"mp_embassy","mp_embassy_preview"}, {"mp_facility","mp_chemicalplant_preview"},
+				{"mp_italia","mp_italia_preview"}, {"mp_miamiconcourse","mp_concourse_preview"},
+				{"mp_rooftop","mp_rooftops_preview"}, {"mp_sauna","mp_spa_preview"},
+				{"mp_sciencecenter","mp_sciencecenter_preview"}, {"mp_siena","mp_siena_preview"},
+				{"mp_bags","mp_bags_preview"}, {"mp_dam","mp_dam_preview"},
+				{"mp_canals","mp_canals_preview"}, {"mp_cistern","mp_cistern_preview"}
 			};
-			for (const auto* stock : maps)
-				if (map.size() == std::strlen(stock)
-					&& !_strnicmp(map.data(), stock, map.size()))
-					return std::string(stock) + "_preview";
+			for (const auto& [stock, artwork] : maps)
+				if (map.size() == std::strlen(stock) && !_strnicmp(map.data(), stock, map.size())) return artwork;
 			return fallback;
+		}
+		static std::string active_map()
+		{
+			// QoS CG_ParseServerInfo 1028BD50 fills this BSP name for local and
+			// remote clients. mapname is a server dvar and may be stale on guests.
+			const auto* bsp = reinterpret_cast<const char*>(game::game_offset(0x113F60D8));
+			const auto* end = static_cast<const char*>(std::memchr(bsp, 0, 64));
+			if (end)
+			{
+				const std::string_view path(bsp, end - bsp);
+				if (path.starts_with("maps/mp/") && path.ends_with(".d3dbsp"))
+				{
+					const auto name = path.substr(8, path.size() - 15);
+					if (!name.empty() && name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") == name.npos)
+						return std::string(name);
+				}
+			}
+			return text_dvar("mapname");
 		}
 		static void player_counts(snapshot& value)
 		{
@@ -399,7 +422,7 @@ namespace discord_rpc
 					// mapname is the active server map; ui_mapname can be a stale
 					// frontend selection. Resolve/translate only on the main thread,
 					// then copy strings into the worker snapshot.
-					const auto map_id = text_dvar("mapname");
+					const auto map_id = active_map();
 					const auto map = display_name(map_id, true);
 					const auto fallback = value.image;
 					value.image = map_image(map_id, fallback);

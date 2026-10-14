@@ -24,72 +24,24 @@ namespace exception
 			return static_cast<MINIDUMP_TYPE>(type);
 		}
 
-		std::string get_temp_filename()
-		{
-			char filename[MAX_PATH] = {0};
-			char pathname[MAX_PATH] = {0};
-
-			GetTempPathA(sizeof(pathname), pathname);
-			GetTempFileNameA(pathname, "Consolation -", 0, filename);
-			return filename;
-		}
-
-		HANDLE write_dump_to_temp_file(const LPEXCEPTION_POINTERS exceptioninfo)
-		{
-			MINIDUMP_EXCEPTION_INFORMATION minidump_exception_info = {GetCurrentThreadId(), exceptioninfo, FALSE};
-
-			auto* const file_handle = CreateFileA(get_temp_filename().data(), GENERIC_WRITE | GENERIC_READ,
-			                                      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
-			                                      FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE,
-			                                      nullptr);
-
-			if (!MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file_handle, get_minidump_type(),
-			                       &minidump_exception_info,
-			                       nullptr,
-			                       nullptr))
-			{
-				MessageBoxA(nullptr, "There was an error creating the minidump! Hit OK to close the program.",
-				            "Minidump Error", MB_OK | MB_ICONERROR);
-				TerminateProcess(GetCurrentProcess(), 123);
-			}
-
-			return file_handle;
-		}
-
-		std::string read_file(HANDLE file_handle)
-		{
-			FlushFileBuffers(file_handle);
-			SetFilePointer(file_handle, 0, nullptr, FILE_BEGIN);
-
-			std::string buffer{};
-
-			DWORD bytes_read = 0;
-			char temp_bytes[0x2000];
-
-			do
-			{
-				if (!ReadFile(file_handle, temp_bytes, sizeof(temp_bytes), &bytes_read, nullptr))
-				{
-					return {};
-				}
-
-				buffer.append(temp_bytes, bytes_read);
-			}
-			while (bytes_read == sizeof(temp_bytes));
-
-			return buffer;
-		}
 	}
 
-	std::string create_minidump(const LPEXCEPTION_POINTERS exceptioninfo)
+	bool write_minidump_file(const LPEXCEPTION_POINTERS exceptioninfo, const char* filename)
 	{
-		auto* const file_handle = write_dump_to_temp_file(exceptioninfo);
+		// Write directly to disk: wtaf.dmp caught bad_alloc when the x86 exit
+		// reporter tried to append a complete multi-gigabyte dump to a string.
+		const auto file_handle = CreateFileA(filename, GENERIC_WRITE | GENERIC_READ,
+			FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (file_handle == INVALID_HANDLE_VALUE) return false;
 
 		const auto _ = gsl::finally([file_handle]()
 		{
 			CloseHandle(file_handle);
 		});
 
-		return read_file(file_handle);
+		MINIDUMP_EXCEPTION_INFORMATION info = {GetCurrentThreadId(), exceptioninfo, FALSE};
+		const bool written = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file_handle,
+			get_minidump_type(), exceptioninfo ? &info : nullptr, nullptr, nullptr) != FALSE;
+		return written && FlushFileBuffers(file_handle) != FALSE;
 	}
 }

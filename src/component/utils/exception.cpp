@@ -71,8 +71,9 @@ namespace exception
             const auto timestamp = utils::string::get_timestamp();
             const std::string crash_name = utils::string::va("minidumps/consolation-%s-%s.dmp",
                 kind, timestamp.data());
-            const auto dump = create_minidump(exceptioninfo);
-            if (utils::io::write_file(crash_name, dump, false))
+            std::error_code directory_error;
+            std::filesystem::create_directories("minidumps", directory_error);
+            if (!directory_error && write_minidump_file(exceptioninfo, crash_name.c_str()))
             {
                 return crash_name;
             }
@@ -83,7 +84,7 @@ namespace exception
             {
                 const std::string fallback_name = utils::string::va(
                     "%sProject-Consolation-%s-%s.dmp", temp_path, kind, timestamp.data());
-                if (utils::io::write_file(fallback_name, dump, false))
+                if (write_minidump_file(exceptioninfo, fallback_name.c_str()))
                 {
                     return fallback_name;
                 }

@@ -2,5 +2,5 @@
 
 namespace exception
 {
-	std::string create_minidump(LPEXCEPTION_POINTERS exceptioninfo);
+	bool write_minidump_file(LPEXCEPTION_POINTERS exceptioninfo, const char* filename);
 }

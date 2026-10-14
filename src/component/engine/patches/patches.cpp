@@ -45,6 +45,28 @@ namespace patches
 		game::dvar_s* pm_adsStopsSprint{};
 		game::dvar_s* cg_vm_fov{};
 		game::dvar_s* r_blur_extra{};
+		game::dvar_s* cl_drawping{};
+		std::uintptr_t packet_last_error_original{};
+		int packet_last_error_stub()
+		{
+			const int error = utils::hook::invoke<int>(packet_last_error_original);
+			// Only QoS's UDP packet receiver (102447E0), not global Winsock or
+			// TCP. KisakCOD Sys_GetPacket also treats ICMP reset as no packet.
+			return error == WSAECONNRESET ? WSAEWOULDBLOCK : error;
+		}
+		void apply_scoreboard_ping()
+		{
+			if (!cl_drawping) return;
+			// QoS 102A6580 draws the numeric column from score_t +8 when Text
+			// is enabled, and its bars when Graph is enabled. No synthetic ping.
+			for (const auto* name : {"cg_scoreboardPingText", "cg_scoreboardPingGraph"})
+				if (auto* dvar = game::Dvar_FindVar(name); dvar && dvar->type == game::DVAR_TYPE_BOOL)
+				{
+					const bool value = std::strcmp(name, "cg_scoreboardPingText") == 0
+						? cl_drawping->current.enabled : !cl_drawping->current.enabled;
+					if (dvar->current.enabled != value) game::Dvar_SetFromStringByName(name, value ? "1" : "0");
+				}
+		}
 		utils::hook::detour viewmodel_projection_hook;
 		std::uintptr_t viewmodel_projection_original{};
 		void apply_viewmodel_projection(unsigned char* source)
@@ -2384,6 +2406,15 @@ namespace patches
 	public:
 		void post_load() override
 		{
+			const auto packet_error_call = game::game_offset(0x1024482D);
+			constexpr unsigned char packet_error_tail[] = {0x3d, 0x33, 0x27, 0x00, 0x00, 0x74, 0x1f};
+			if (*reinterpret_cast<const unsigned char*>(packet_error_call) == 0xe8
+				&& !std::memcmp(reinterpret_cast<const void*>(packet_error_call + 5), packet_error_tail, sizeof(packet_error_tail)))
+			{
+				packet_last_error_original = packet_error_call + 5 + *reinterpret_cast<const std::int32_t*>(packet_error_call + 1);
+				utils::hook::call(packet_error_call, packet_last_error_stub);
+			}
+			else console::error("UDP reset handling: unsupported native receiver; patch not installed.\n");
 			const auto projection = game::game_offset(0x103868F0);
 			constexpr unsigned char projection_bytes[] = {0x56, 0x57, 0x8d, 0x90, 0x00, 0x02, 0x00, 0x00};
 			if (!std::memcmp(reinterpret_cast<const void*>(projection), projection_bytes, sizeof(projection_bytes)))
@@ -2463,6 +2494,9 @@ namespace patches
 
 			scheduler::once([this]
 			{
+				cl_drawping = dvars::Dvar_RegisterBool("cl_drawping", 1,
+					"Show numeric scoreboard ping (1) or stock connection bars (0).", game::dvar_flags::saved);
+				scheduler::loop(apply_scoreboard_ping, scheduler::main);
 				cg_vm_fov = dvars::Dvar_RegisterFloat("cg_vm_fov", "Viewmodel FOV; 0 = stock, ADS retains native zoom.",
 					0.0f, 0.0f, 160.0f, game::dvar_flags::saved);
 				r_blur_extra = dvars::Dvar_RegisterBool("r_blur_extra", 0,
@@ -2600,7 +2634,7 @@ namespace patches
 		void pre_destroy() override
 		{
 			viewmodel_projection_hook.clear();
-			cg_vm_fov = r_blur_extra = nullptr;
+			cg_vm_fov = r_blur_extra = cl_drawping = nullptr;
 			if (timer_period_active_)
 			{
 				timeEndPeriod(1);
