@@ -1,5 +1,24 @@
 # Commands
 
+## Steam leaderboards
+
+- `steam_leaderboards_status`: print the Steam leaderboard queue and last result.
+  Requires a Steam-enabled client build and the local LIVE shim.
+
+The native QoS leaderboard UI reads global, friends and around-player rankings
+from Steam. The five native views (10–14) use namespaced
+`consolation_qos_v1_view_<id>` boards. Public-match completion queues the local
+player's real cumulative stats using QoS's playerStatsTable mapping. Remote
+players cannot submit another account's score through this client.
+
+Uploads obey Steam's ten-per-ten-minutes limit; queued uploads may take longer
+when several matches end close together. Errors and timeouts are reported rather
+than returning fabricated successful writes. Stats/progression saves remain
+separate from leaderboard uploads. Leaderboards are scoped to the active Steam
+App ID; development App ID 480 rankings do not transfer automatically to a future
+Project Consolation App ID. These are client-submitted playtest rankings, not
+server-verified or tamper-proof scores.
+
 ## Viewmodel field of view and motion blur
 
 - `cg_vm_fov <degrees>`: saved viewmodel-only FOV, `0` (default) retains stock behavior. Use `65`–`100` to adjust weapon framing without changing world FOV. Native ADS zoom is retained; valid nonzero range is 1–160 degrees.
@@ -9,13 +28,15 @@
 ## In-game Steam friends panel
 
 - `csl_clantag [open|apply|cancel]`: opens the four-character clan-tag input. Apply uses the same validation and profile persistence as `clanName`; Cancel/Escape discards edits. Available through **Clan Tag** in online, match, private-match and System Link setup menus. The reserved `CSL` tag remains restricted to the authorized Steam ID.
-  The frontend Clan Tag button uses a Scaleform modal with OK/Cancel and
-  Enter/Escape. `prepare` and `apply_scaleform` are internal UI bridge actions;
+  The frontend Clan Tag screen reuses the authored QoS video-options layout.
+  Select the Clan Tag row to type; Enter accepts the draft and Escape cancels
+  typing. OK saves, Cancel returns without saving. `prepare` and `apply_scaleform` are internal UI bridge actions;
   the latter still runs the normal clan-tag validator, never a raw console command.
 - **Start Game** appears first in the Steam match lobby only for its waiting host. It uses `steam_match_start`, which rechecks host ownership before starting; guests cannot launch a match.
 
 The Friends/Party Invite entry and Steam match lobby's Invite Friends button
-open a QoS-styled native friends panel. This adapts the sorted SteamID-based
+open a Scaleform screen using the authored QoS video-options controls and fonts.
+The console command retains a native fallback. This adapts the sorted SteamID-based
 selection/paging approach from KisakBlack's `live_friends_pc.cpp` and
 `ui_friends.cpp`, not BO1 binary layouts or Xbox dashboard assets.
 
@@ -236,14 +257,16 @@ Protocol-layout declarations are attributed to the
 - `steam_browser_join <revision> <row>`: join a zero-based row from the current
   browser snapshot. The UI passes its revision so stale refresh results cannot
   silently join a different host. Rechecks compatibility and capacity.
-- `steam_browser_filter`: toggle **Show non-dedicated servers** and refresh the
+- `steam_browser_filter`: toggle **Dedicated Only** and refresh the
   browser snapshot. `ui_browserShowNonDedicated 1` (default) includes player-hosted
   games; `0` shows dedicated servers only. F6 also toggles this in the browser.
+  The dedicated-only query is filtered by Steam before the result limit and
+  checked again locally. Changes during an outstanding query queue a refresh.
   This filter does not change Find Match eligibility.
 
 The frontend **Party Invite** and **Invite Friends** buttons open the Scaleform
-friends overlay. Select a row, then Invite or Join. Scroll with the mouse wheel,
-draggable scrollbar or arrow keys; Page Up/Down scroll eight rows. Enter selects,
+friends screen. Select a row, then Invite or Join. Scroll with the mouse wheel
+or arrow keys; Page Up/Down scroll eight rows. Enter selects,
 F5 refreshes, and Escape returns to the owning menu. `steam_friends_scroll <first>`
 sets the first visible row (0–256, clamped to the current list). The internal
 `steam_friends scaleform` bridge uses the same validated Steam friend snapshot

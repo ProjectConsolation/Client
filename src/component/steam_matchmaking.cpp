@@ -32,6 +32,15 @@ namespace steam_matchmaking
 {
 	namespace
 	{
+		bool browser_show_listen()
+		{
+			const auto* setting = game::Dvar_FindVar("ui_browserShowNonDedicated");
+			if (!setting) return true;
+			if (static_cast<unsigned char>(setting->type) == game::DVAR_TYPE_STRING)
+				return setting->current.string && (!std::strcmp(setting->current.string, "1") || !_stricmp(setting->current.string, "true"));
+			if (static_cast<unsigned char>(setting->type) == game::DVAR_TYPE_BOOL) return setting->current.enabled;
+			return setting->current.integer != 0;
+		}
 		utils::hook::detour select_playlist_hook, leave_match_hook, party_go_hook;
 		utils::hook::detour friends_menu_hook;
 		std::function<void()> friends_menu_action;
@@ -377,6 +386,11 @@ namespace steam_matchmaking
 				if (active_ && !stopped_)
 				{
 					SteamAPI_RunCallbacks();
+					if (browser_refresh_queued_ && !pending_ && !finding_ && !resolving_find_host_)
+					{
+						browser_refresh_queued_ = false;
+						browser_refresh();
+					}
 					game::Dvar_SetFromStringByName("csl_browser_available", relay_enabled_ && SteamUser()->BLoggedOn() ? "1" : "0");
 					pump_transport();
 					check_sign_in();
@@ -524,6 +538,8 @@ namespace steam_matchmaking
 				auto* matchmaking = SteamMatchmaking();
 				matchmaking->AddRequestLobbyListStringFilter("csl_product", product, k_ELobbyComparisonEqual);
 				matchmaking->AddRequestLobbyListStringFilter("csl_protocol", protocol, k_ELobbyComparisonEqual);
+				if (browser && !browser_show_listen())
+					matchmaking->AddRequestLobbyListStringFilter("csl_server_kind", "dedicated", k_ELobbyComparisonEqual);
 				if (!browser) matchmaking->AddRequestLobbyListFilterSlotsAvailable(1);
 				matchmaking->AddRequestLobbyListDistanceFilter(k_ELobbyDistanceFilterWorldwide);
 				matchmaking->AddRequestLobbyListResultCountFilter(50);
@@ -547,9 +563,8 @@ namespace steam_matchmaking
 
 			void browser_filter()
 			{
-				if (pending_ || finding_ || resolving_find_host_) return;
-				const auto* filter = game::Dvar_FindVar("ui_browserShowNonDedicated");
-				game::Dvar_SetFromStringByName("ui_browserShowNonDedicated", filter && filter->current.enabled ? "0" : "1");
+				game::Dvar_SetFromStringByName("ui_browserShowNonDedicated", browser_show_listen() ? "0" : "1");
+				if (pending_ || finding_ || resolving_find_host_) { browser_refresh_queued_ = true; return; }
 				browser_refresh(); // retires the old row-to-lobby mapping/revision
 			}
 
@@ -812,6 +827,7 @@ namespace steam_matchmaking
 			CCallResult<service, LobbyMatchList_t> listed_;
 			CCallResult<service, LobbyEnter_t> joined_;
 			bool browser_pending_ = false;
+			bool browser_refresh_queued_ = false;
 			uint64 browser_revision_ = 0;
 			std::vector<CSteamID> browser_rows_;
 			CCallbackManual<service, GameLobbyJoinRequested_t> invites_;
@@ -1032,7 +1048,7 @@ namespace steam_matchmaking
 					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_game_ready"), "1")
 					&& !std::strcmp(mm->GetLobbyData(lobby, "csl_host_state"), "running")
 					&& browser_server_kind(mm->GetLobbyData(lobby, "csl_server_kind"))
-					&& (!game::Dvar_FindVar("ui_browserShowNonDedicated") || game::Dvar_FindVar("ui_browserShowNonDedicated")->current.enabled
+					&& (browser_show_listen()
 						|| !std::strcmp(mm->GetLobbyData(lobby, "csl_server_kind"), "dedicated"))
 					&& map.size() < 32 && mode.size() < 16
 					&& safe_host_token(map.c_str(), map.size() + 1) && safe_host_token(mode.c_str(), mode.size() + 1);
