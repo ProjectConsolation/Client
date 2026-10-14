@@ -487,6 +487,7 @@ namespace steam_matchmaking
 
 			void cancel_find(const bool include_waiting = true)
 			{
+				if (!include_waiting && lobby_.IsValid() && playlist_lobby_) return;
 				if (!finding_ && (!include_waiting || !waiting_host_)) return;
 				finding_ = false;
 				waiting_host_ = false;
@@ -1167,6 +1168,7 @@ namespace steam_matchmaking
 						+ " / " + clean(mm->GetLobbyData(lobby_, ("csl_vote_mode" + suffix).c_str())) + "  (" + std::to_string(counts[i]) + " votes)");
 				}
 				const bool owner = mm->GetLobbyOwner(lobby_) == SteamUser()->GetSteamID();
+				game::Dvar_SetFromStringByName("csl_lobby_owner", owner ? "1" : "0");
 				const std::string state = mm->GetLobbyData(lobby_, "csl_host_state");
 				const bool timer = !std::strcmp(mm->GetLobbyData(lobby_, "csl_timer_visible"), "1");
 				menu_file::set_match_lobby_text("state", state == "closed" ? "Host left - leave this lobby and use Find Match again"
@@ -1627,6 +1629,9 @@ namespace steam_matchmaking
 					console::error("Steam: incompatible lobby; left without connecting to gameplay.\n");
 					return;
 				}
+				// Guests need the same retained-lobby classification as the creator.
+				playlist_lobby_ = *SteamMatchmaking()->GetLobbyData(lobby_, "csl_vote_round") != 0;
+				update_lobby_screen();
 				status();
 				finding_ = false; candidates_.clear();
 				connect_game();

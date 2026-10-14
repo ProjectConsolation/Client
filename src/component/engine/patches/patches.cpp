@@ -43,6 +43,63 @@ namespace patches
 	namespace
 	{
 		game::dvar_s* pm_adsStopsSprint{};
+		game::dvar_s* cg_vm_fov{};
+		game::dvar_s* r_blur_extra{};
+		utils::hook::detour viewmodel_projection_hook;
+		std::uintptr_t viewmodel_projection_original{};
+		void apply_viewmodel_projection(unsigned char* source)
+		{
+			// QoS 103868F0 matches KisakCOD R_DeriveProjectionMatrix: copy the
+			// view projection (+F60) to matrix[8] (+200), then depth hack (+1280).
+			// Only flags=2 uses this derived projection for first-person models.
+			if (!source || !cg_vm_fov || *reinterpret_cast<int*>(source + 0x1280) != 2) return;
+			camera_validation::viewmodel_projection(std::span<float, 16>(reinterpret_cast<float*>(source + 0x200), 16),
+				cg_vm_fov->current.value, *reinterpret_cast<const float*>(game::game_offset(0x12A4CEF8)));
+		}
+		__declspec(naked) void viewmodel_projection_stub()
+		{
+			__asm
+			{
+				call viewmodel_projection_original
+				pushfd
+				pushad
+				sub esp, 128
+				movdqu [esp], xmm0
+				movdqu [esp+16], xmm1
+				movdqu [esp+32], xmm2
+				movdqu [esp+48], xmm3
+				movdqu [esp+64], xmm4
+				movdqu [esp+80], xmm5
+				movdqu [esp+96], xmm6
+				movdqu [esp+112], xmm7
+				push eax
+				call apply_viewmodel_projection
+				add esp, 4
+				movdqu xmm0, [esp]
+				movdqu xmm1, [esp+16]
+				movdqu xmm2, [esp+32]
+				movdqu xmm3, [esp+48]
+				movdqu xmm4, [esp+64]
+				movdqu xmm5, [esp+80]
+				movdqu xmm6, [esp+96]
+				movdqu xmm7, [esp+112]
+				add esp, 128
+				popad
+				popfd
+				ret
+			}
+		}
+		std::uintptr_t __cdecl motion_blur_stub(void* view)
+		{
+			// QoS 1037CBBE calls the same pass for normal, falling, and cover-dash
+			// motion blur; fall/dash bypass r_motionblur_enable (1037C9F0).
+			if (r_blur_extra && !r_blur_extra->current.enabled)
+			{
+				*reinterpret_cast<unsigned char*>(game::game_offset(0x11A76233)) = 0;
+				return 0;
+			}
+			return utils::hook::invoke<std::uintptr_t>(game::game_offset(0x10378FF0), view);
+		}
 		// QoS PM_UpdateAimDownSightFlag at 1021D2AF shifts by 11.
 		// The old BUTTON_ADS declaration (0x200) actually requests crouch.
 		constexpr unsigned int qos_ads_button = 0x800u;
@@ -2327,6 +2384,19 @@ namespace patches
 	public:
 		void post_load() override
 		{
+			const auto projection = game::game_offset(0x103868F0);
+			constexpr unsigned char projection_bytes[] = {0x56, 0x57, 0x8d, 0x90, 0x00, 0x02, 0x00, 0x00};
+			if (!std::memcmp(reinterpret_cast<const void*>(projection), projection_bytes, sizeof(projection_bytes)))
+			{
+				viewmodel_projection_hook.create(projection, viewmodel_projection_stub);
+				viewmodel_projection_original = reinterpret_cast<std::uintptr_t>(viewmodel_projection_hook.get_original());
+			}
+			else console::error("cg_vm_fov: unsupported projection code; native behavior retained.\n");
+			const auto motion_call = game::game_offset(0x1037CBBE);
+			if (*reinterpret_cast<const unsigned char*>(motion_call) == 0xe8
+				&& motion_call + 5 + *reinterpret_cast<const std::int32_t*>(motion_call + 1) == game::game_offset(0x10378FF0))
+				utils::hook::call(motion_call, motion_blur_stub);
+			else console::error("r_blur_extra: unsupported motion-blur call; native behavior retained.\n");
 			apply_stance_materials();
 			apply_input_and_overhead_patches();
 			apply_video_dvar_patches();
@@ -2393,6 +2463,10 @@ namespace patches
 
 			scheduler::once([this]
 			{
+				cg_vm_fov = dvars::Dvar_RegisterFloat("cg_vm_fov", "Viewmodel FOV; 0 = stock, ADS retains native zoom.",
+					0.0f, 0.0f, 160.0f, game::dvar_flags::saved);
+				r_blur_extra = dvars::Dvar_RegisterBool("r_blur_extra", 0,
+					"Allow motion blur, including falling and cover dash (0 disables all motion blur).", game::dvar_flags::saved);
 				dvars::Dvar_RegisterBool("sv_allowKillcams", 1,
 					"Enable native archived killcam replay; changes apply during the match.", game::dvar_flags::none);
 				pm_adsStopsSprint = dvars::Dvar_RegisterBool("pm_adsStopsSprint", 0,
@@ -2525,6 +2599,8 @@ namespace patches
 
 		void pre_destroy() override
 		{
+			viewmodel_projection_hook.clear();
+			cg_vm_fov = r_blur_extra = nullptr;
 			if (timer_period_active_)
 			{
 				timeEndPeriod(1);

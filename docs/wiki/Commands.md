@@ -1,5 +1,10 @@
 # Commands
 
+## Viewmodel field of view and motion blur
+
+- `cg_vm_fov <degrees>`: saved viewmodel-only FOV, `0` (default) retains stock behavior. Use `65`–`100` to adjust weapon framing without changing world FOV. Native ADS zoom is retained; valid nonzero range is 1–160 degrees.
+- `r_blur_extra <0|1>`: saved toggle, default `0`. Disables the common motion-blur pass, including normal camera motion, falling, and cover dash. `1` restores the stock motion-blur rules. Flashbangs, damage effects, depth of field, and menu blur are unchanged.
+
 ## In-game Steam friends panel
 
 The Friends/Party Invite entry and Steam match lobby's Invite Friends button
@@ -246,8 +251,10 @@ No System Link navigation or
 lobby commands are needed for discovery: use **Find Match** to join or create a
 lobby. With the default `sv_autostart 0`, the host uses `steam_match_start` when
 ready; `steam_status` shows the lobby member count. This is Steam lobby membership,
-not a native QoS party roster. The native-rendered match lobby shows Steam names,
-vote totals, and Start Match/Invite Friends/Leave Lobby actions. Starting
+not a native QoS party roster. The original QoS Scaleform match lobby shows Steam names,
+two vote options and totals, and Start Match/Invite Friends/Leave Lobby actions.
+The old custom match-lobby panel is not loaded or packaged in nightly builds.
+Normal round completion retains the Steam lobby; Back/Leave Lobby explicitly leaves it. Starting
 a hosted game through other menus or a map command also creates a public Steam
 lobby automatically. The manual `steam_lobby_create` command remains a diagnostic
 operation and does not itself launch a server.

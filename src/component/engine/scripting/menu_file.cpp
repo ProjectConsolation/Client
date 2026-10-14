@@ -986,7 +986,7 @@ namespace menu_file
 		bool frontend_match_origin_recorded = false;
 		bool return_systemlink_after_bootstrap = false;
 		bool steam_match_lobby_active = false;
-		std::unordered_map<std::string, std::string> steam_match_lobby_text;
+		bool steam_lobby_return_pending = false;
 		bool steam_friends_active = false;
 		std::unordered_map<std::string, std::string> steam_friends_text, steam_friends_actions;
 		bool local_loadout_active = false;
@@ -1225,6 +1225,7 @@ namespace menu_file
 			frontend_return_requested = !frontend_transition;
 			if (frontend_return_requested)
 			{
+				steam_lobby_return_pending = steam_match_lobby_active;
 				const auto* error = game::Dvar_FindVar("com_errorMessage");
 				const bool has_error = error && static_cast<unsigned char>(error->type) == game::DVAR_TYPE_STRING
 					&& error->current.string && *error->current.string;
@@ -1257,11 +1258,6 @@ namespace menu_file
 			// Menu_PaintAll also runs on the separate in-game UI context.
 			// Never consume frontend transition state while painting pause menus.
 			if (context != reinterpret_cast<unsigned char*>(game::game_offset(0x113CFC38))) return;
-			if (auto* lobby = find("csl_steam_lobby"))
-				for (int i = 0; i < lobby->itemCount; ++i)
-					if (auto* item = lobby->items[i]; item && item->window.name)
-						if (const auto field = steam_match_lobby_text.find(item->window.name); field != steam_match_lobby_text.end())
-							item->text = field->second.c_str();
 			const auto client = *reinterpret_cast<const int*>(context);
 			const auto count = *reinterpret_cast<const int*>(context + 2172);
 			if (client < 0 || client > 3 || count < 0 || count > 16) { restore_scaleform(); return; }
@@ -1328,6 +1324,33 @@ namespace menu_file
 				}
 			const auto* screen = game::Dvar_FindVar("sf_current_menu");
 			if (!screen || static_cast<unsigned char>(screen->type) != game::DVAR_TYPE_STRING || !screen->current.string) return;
+			if (steam_match_lobby_active)
+			{
+				// Steam membership survives native match teardown. Use QoS's GFx
+				// lobby, never the retired disk-menu prototype or a main-menu overlay.
+				for (int i = count - 1; i >= 0; --i)
+				{
+					auto* page = reinterpret_cast<game::menuDef_t**>(context + 2108)[i];
+					if (page && page->window.name && std::string_view(page->window.name).starts_with("csl_"))
+					{
+						utils::hook::invoke<void>(game::game_offset(0x102CE070), context, page);
+						return;
+					}
+				}
+				restore_scaleform(true);
+				// sf_current_menu may still say "mpxblobbymatch" while the engine
+				// is asynchronously loading the main menu after a round. Wait for
+				// its real interactive root, then route once to the retained lobby.
+				if (steam_lobby_return_pending && !frontend_root_visible()) return;
+				if (steam_lobby_return_pending || (frontend_return_requested && _stricmp(screen->current.string, "mpxblobbymatch")))
+				{
+					steam_lobby_return_pending = false;
+					frontend_return_requested = false;
+					command::execute("sf_open mpxblobbymatch\n");
+				}
+				if (!_stricmp(screen->current.string, "mpxblobbymatch")) frontend_return_requested = false;
+				return;
+			}
 			if (return_systemlink_after_bootstrap && !_stricmp(screen->current.string, "mpmainmenu")
 				&& frontend_root_visible())
 			{
@@ -1354,11 +1377,7 @@ namespace menu_file
 				frontend_transition = false;
 			}
 			const bool root = !_stricmp(screen->current.string, "mpmainmenu");
-			const bool steam_lobby_screen = steam_match_lobby_active &&
-				(!_stricmp(screen->current.string, "mpmainmenu") || !_stricmp(screen->current.string, "mpsyssetup")
-					|| !_stricmp(screen->current.string, "mpxblobbymatch") || !_stricmp(screen->current.string, "mpxbplaylistselect")
-					|| !_stricmp(screen->current.string, "mpxblivemain"));
-			const char* replacement_name = steam_lobby_screen ? "csl_steam_lobby" : root ? "csl_main"
+			const char* replacement_name = root ? "csl_main"
 				: !_stricmp(screen->current.string, "mpsyslink") ? "csl_systemlink"
 				: !_stricmp(screen->current.string, "mpsyssetup") ? "csl_host"
 				: !_stricmp(screen->current.string, "mpxblobbyprivatematch") ? "csl_private"
@@ -1392,7 +1411,7 @@ namespace menu_file
 					for (int i = 0; i < count; ++i)
 						present |= reinterpret_cast<game::menuDef_t**>(context + 2108)[i] == replacement;
 					if (!present) utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, replacement->window.name);
-					if (root && !steam_lobby_screen && !return_frontend_page.empty())
+					if (root && !return_frontend_page.empty())
 					{
 						if (auto* page = find(return_frontend_page))
 							utils::hook::invoke<int>(game::game_offset(0x102D8B90), context, page->window.name);
@@ -1643,6 +1662,7 @@ namespace menu_file
 			for (const auto& parsed : menus)
 			{
 				const auto key = lower(parsed.name);
+				if (key == "csl_steam_lobby") continue; // retired prototype; ignore stale installations too
 				if (loaded_menus.contains(key) || loaded_overlays.contains(key))
 				{
 					console::warn("[menu - disk] duplicate menu name '%s' in %s, keeping first definition\n",
@@ -2041,23 +2061,14 @@ namespace menu_file
 	{
 		if (active != steam_match_lobby_active) frontend_return_requested = true;
 		steam_match_lobby_active = active;
+		if (!active) steam_lobby_return_pending = false;
+		game::Dvar_SetFromStringByName("csl_lobby_active", active ? "1" : "0");
 		if (active) { return_systemlink_after_bootstrap = false; return_frontend_page.clear(); }
 	}
 
 	void set_match_lobby_text(const std::string& item, const std::string& text)
 	{
-		auto& stored = steam_match_lobby_text[item];
-		if (stored == text) return;
-		stored = text;
-		// Replace the pointer immediately, before input can visit a menu item
-		// whose previous std::string storage was reallocated by this update.
-		if (auto* menu = find("csl_steam_lobby"))
-			for (int i = 0; i < menu->itemCount; ++i)
-				if (auto* field = menu->items[i]; field && field->window.name && item == field->window.name)
-				{
-					field->text = stored.c_str();
-					for (auto& rect : field->textRect) rect.w = 0;
-				}
+		game::Dvar_SetFromStringByName(("csl_lobby_" + item).c_str(), text.c_str());
 	}
 
 	bool show_friends(const bool active)

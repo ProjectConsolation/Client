@@ -6,6 +6,19 @@
 
 namespace camera_validation
 {
+    // Modify only the viewmodel projection's X/Y terms. Preserve aspect ratio,
+    // depth mapping, and native ADS interpolation; zero selects stock behavior.
+    inline bool viewmodel_projection(std::span<float, 16> matrix, float fov, float ads)
+    {
+        if (!std::isfinite(fov) || fov < 1.0f || fov > 160.0f || !std::isfinite(ads)
+            || !std::isfinite(matrix[0]) || !std::isfinite(matrix[5]) || matrix[5] <= 0.0f) return false;
+        const float desired_y = 1.0f / (0.75f * std::tan(fov * 0.00872664626f));
+        const float ratio = 1.0f + (desired_y / matrix[5] - 1.0f) * (1.0f - std::clamp(ads, 0.0f, 1.0f));
+        if (!std::isfinite(ratio) || ratio <= 0.0f) return false;
+        matrix[0] *= ratio;
+        matrix[5] *= ratio;
+        return true;
+    }
     inline bool finite(std::span<const float> values)
     {
         return std::all_of(values.begin(), values.end(), [](float value) { return std::isfinite(value); });
