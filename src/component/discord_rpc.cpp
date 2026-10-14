@@ -58,9 +58,8 @@ namespace discord_rpc
 		static std::string map_image(std::string_view map, const std::string& fallback)
 		{
 			if (fallback.empty()) return {}; // Preserve the saved artwork opt-out.
-			// Uploaded Discord asset keys, not local IWI filenames. The retail
-			// PC maps use <mapname>_preview; DLC/custom artwork is not uploaded
-			// yet, so do not send nonexistent keys for those maps.
+			// Uploaded Discord asset keys, not local IWI filenames. Unknown
+			// custom maps retain the configured fallback rather than guessing keys.
 			// Public application asset list verified 2026-10-14. Four retail
 			// map IDs differ from their uploaded artwork names; do not guess keys.
 			static constexpr std::pair<const char*, const char*> maps[]{

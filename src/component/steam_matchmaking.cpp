@@ -1317,7 +1317,7 @@ namespace steam_matchmaking
 				auto* matchmaking = SteamMatchmaking();
 				if (!running_server() || !xlive::is_local_shim_loaded())
 				{
-					if (!waiting_host_ && !host_launch_started_ && !host_resolve_at_ && !resolving_find_host_)
+					if (!auto_lobby_ && !waiting_host_ && !host_launch_started_ && !host_resolve_at_ && !resolving_find_host_)
 						matchmaking->SetLobbyData(lobby_, "csl_host_state", "stopped");
 					if (published_ready_ && matchmaking->SetLobbyData(lobby_, "csl_game_ready", "0"))
 						published_ready_ = false;
@@ -1345,6 +1345,7 @@ namespace steam_matchmaking
 				if (!relay_enabled_ || !port) return;
 				if (published_ready_ && published_ip_ == host_ip_ && published_port_ == port) return;
 				if (!matchmaking->SetLobbyData(lobby_, "csl_game_port", std::to_string(port).c_str()) ||
+					!matchmaking->SetLobbyData(lobby_, "csl_game_epoch", std::to_string(GetTickCount64()).c_str()) ||
 					!matchmaking->SetLobbyData(lobby_, "csl_game_ready", "1")) return;
 				published_ip_ = host_ip_; published_port_ = port; published_ready_ = true;
 				console::info("Steam: published running QoS host via SDR (game port %u).\n", port);

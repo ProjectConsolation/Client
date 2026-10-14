@@ -6,6 +6,7 @@
 #include <utils/thread.hpp>
 
 #include <exception/minidump.hpp>
+#include <filesystem>
 #include "game/game.hpp"
 
 namespace exception

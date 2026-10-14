@@ -4,6 +4,7 @@
 
 - `cg_vm_fov <degrees>`: saved viewmodel-only FOV, `0` (default) retains stock behavior. Use `65`–`100` to adjust weapon framing without changing world FOV. Native ADS zoom is retained; valid nonzero range is 1–160 degrees.
 - `r_blur_extra <0|1>`: saved toggle, default `0`. Disables the common motion-blur pass, including normal camera motion, falling, and cover dash. `1` restores the stock motion-blur rules. Flashbangs, damage effects, depth of field, and menu blur are unchanged.
+- `cl_drawping <0|1>`: saved toggle, default `1`. Shows numeric ping in the Tab scoreboard; `0` restores the stock connection bars. Uses the native scoreboard ping value.
 
 ## In-game Steam friends panel
 

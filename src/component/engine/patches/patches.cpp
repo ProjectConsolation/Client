@@ -60,7 +60,7 @@ namespace patches
 			// QoS 102A6580 draws the numeric column from score_t +8 when Text
 			// is enabled, and its bars when Graph is enabled. No synthetic ping.
 			for (const auto* name : {"cg_scoreboardPingText", "cg_scoreboardPingGraph"})
-				if (auto* dvar = game::Dvar_FindVar(name); dvar && dvar->type == game::DVAR_TYPE_BOOL)
+				if (auto* dvar = game::Dvar_FindVar(name); dvar && static_cast<unsigned char>(dvar->type) == game::DVAR_TYPE_BOOL)
 				{
 					const bool value = std::strcmp(name, "cg_scoreboardPingText") == 0
 						? cl_drawping->current.enabled : !cl_drawping->current.enabled;

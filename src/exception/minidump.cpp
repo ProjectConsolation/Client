@@ -29,7 +29,7 @@ namespace exception
 	bool write_minidump_file(const LPEXCEPTION_POINTERS exceptioninfo, const char* filename)
 	{
 		// Write directly to disk: wtaf.dmp caught bad_alloc when the x86 exit
-		// reporter tried to append a complete multi-gigabyte dump to a string.
+		// reporter tried to append an entire large dump to a string.
 		const auto file_handle = CreateFileA(filename, GENERIC_WRITE | GENERIC_READ,
 			FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (file_handle == INVALID_HANDLE_VALUE) return false;
