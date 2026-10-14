@@ -40,8 +40,10 @@ on the game's main frame; no `-steam` switch is required. Delay-loading keeps
 a missing Steam redistributable from preventing offline startup. If Steam is
 unavailable or the user is not signed in, the client warns that online services
 require signing into Steam and continues with offline play. A sign-out after
-initialization produces the same warning once, not every frame. Run `steam_init`
-to retry initialization after starting/signing into Steam. A build generated
+initialization produces the same warning once, not every frame. Failed SDK
+initialization retries automatically every five seconds, with repeated identical
+errors suppressed. Run `steam_init` to request an immediate attempt after
+starting/signing into Steam. A build generated
 without SDK support also warns and retains offline play.
 
 Initialization supplies the configured build-time App ID automatically when no
@@ -96,8 +98,14 @@ It publishes a per-game registration and automatically runs the official
 `companion_attach` entry through hidden native 64-bit `rundll32.exe` when a
 compatible `companion64.dll` is present beside `JB_LiveEngine_s.exe`. It never
 loads that x64 DLL into the x86 game. Startup is asynchronous and nonfatal.
+Attachment is prepared before SDK initialization so Companion can capture the
+first activity report. Startup polls without blocking a frame and proceeds
+without custom presence if attachment is unavailable or takes over 20 seconds.
 The module modifies Steam itself and remains resident until Steam exits; game
 shutdown withdraws only this game's registration, not the Steam hook.
+The custom title is applied to activity reports sent to friends. Your own Steam
+Friends panel can still display the SDK App ID's title (Spacewar for 480); verify
+the custom activity from another account rather than using that local label.
 
 - `steam_presence_status`: print registration, actual module state/build/hook,
   Steam PID and requested title. State `1` means active; registration alone

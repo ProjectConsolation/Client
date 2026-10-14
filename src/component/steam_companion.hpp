@@ -27,6 +27,8 @@ namespace steam_companion
         ~client() { shutdown(); }
         client(const client&) = delete;
         client& operator=(const client&) = delete;
+        // False only while a bounded, asynchronous pre-SDK attachment is pending.
+        bool prepare();
         void initialize(std::uint32_t app);
         void update(const std::string& detail);
         void print_status() const;
@@ -39,6 +41,7 @@ namespace steam_companion
         record* record_ = nullptr;
         DWORD steam_pid_ = 0;
         bool attempted_ = false;
+        ULONGLONG preparation_started_ = 0;
         std::string title_;
     };
 }

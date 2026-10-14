@@ -90,6 +90,8 @@ namespace steam_companion
         wchar_t windows[MAX_PATH]{}; BOOL wow64 = FALSE;
         if (!GetWindowsDirectoryW(windows, MAX_PATH) || !IsWow64Process(GetCurrentProcess(), &wow64)) return;
         const auto rundll = std::filesystem::path(windows) / (wow64 ? L"Sysnative" : L"System32") / L"rundll32.exe";
+        // Upstream protocol names the base entry companion_attach. rundll32
+        // resolves companion_attachW first and supplies its UTF-16 arguments.
         std::wstring command = L"\"" + rundll.wstring() + L"\" \"" + dll.wstring() + L"\",companion_attach " + std::to_wstring(steam_pid_);
         STARTUPINFOW startup{}; startup.cb = sizeof(startup);
         startup.dwFlags = STARTF_USESHOWWINDOW; startup.wShowWindow = SW_HIDE;
@@ -99,9 +101,8 @@ namespace steam_companion
         CloseHandle(process.hThread); helper_ = process.hProcess;
     }
 
-    void client::update(const std::string& detail)
+    bool client::prepare()
     {
-        if (!record_) return;
         if (helper_ && WaitForSingleObject(helper_, 0) == WAIT_OBJECT_0)
         {
             DWORD code = 0; GetExitCodeProcess(helper_, &code);
@@ -112,7 +113,7 @@ namespace steam_companion
         {
             CloseHandle(steam_); steam_ = nullptr;
             if (changed_) CloseHandle(changed_);
-            changed_ = nullptr; steam_pid_ = 0; attempted_ = false;
+            changed_ = nullptr; steam_pid_ = 0; attempted_ = false; preparation_started_ = 0;
         }
         if (!steam_)
         {
@@ -121,11 +122,25 @@ namespace steam_companion
             if (!steam_) steam_pid_ = 0;
             if (steam_pid_)
             {
+                preparation_started_ = GetTickCount64();
                 const auto event = L"Local\\Companion.SteamPresence.Changed." + std::to_wstring(steam_pid_);
                 changed_ = CreateEventW(nullptr, FALSE, FALSE, event.c_str());
                 if (changed_) SetEvent(changed_);
             }
         }
+        attach();
+        status_record status{};
+        const bool valid = read_status(status);
+        // Missing DLL, no Steam, unsupported hook, or failed launch must not
+        // prevent SDK initialization. Only defer while attachment is pending.
+        const bool pending = helper_ || (valid && status.state == 0);
+        return !pending || GetTickCount64() - preparation_started_ >= 20000;
+    }
+
+    void client::update(const std::string& detail)
+    {
+        prepare();
+        if (!record_) return;
         std::string title = "Project Consolation";
         if (!detail.empty()) title += " | " + detail;
         // Status details supplied by the adapter are ASCII, never peer text.
@@ -139,7 +154,6 @@ namespace steam_companion
             title_ = std::move(title);
             if (changed_) SetEvent(changed_);
         }
-        attach();
     }
 
     void client::print_status() const
@@ -166,7 +180,7 @@ namespace steam_companion
         }
         for (const auto handle : {mapping_, changed_, steam_, helper_}) if (handle) CloseHandle(handle);
         mapping_ = changed_ = steam_ = helper_ = nullptr;
-        steam_pid_ = 0; attempted_ = false; title_.clear();
+        steam_pid_ = 0; attempted_ = false; preparation_started_ = 0; title_.clear();
         // The helper is bounded by upstream. Never terminate Steam or remotely
         // unload Companion, whose hook must remain resident until Steam exits.
     }

@@ -244,6 +244,7 @@ namespace steam_matchmaking
 			void initialize()
 			{
 				if (stopped_ || active_) return;
+				next_init_attempt_ = GetTickCount64() + 5000;
 				// IW4x Proxy::SetGame also sets SteamAppId before initializing.
 				// This adapter uses the supported SDK, not its internal client ABI.
 				// Preserve an explicit Steam launch or local developer App ID.
@@ -285,6 +286,13 @@ namespace steam_matchmaking
 					unavailable("Install the SDK's x86 steam_api.dll beside the game executable.");
 					return;
 				}
+				// The SDK can immediately send GamesPlayed. Install Companion's
+				// hook first so its initial report is captured for registration resend.
+				if (!presence_.prepare())
+				{
+					next_init_attempt_ = GetTickCount64() + 100;
+					return;
+				}
 				SteamErrMsg error{};
 				if (SteamAPI_InitEx(&error) != k_ESteamAPIInitResult_OK)
 				{
@@ -300,6 +308,7 @@ namespace steam_matchmaking
 					return;
 				}
 				invites_.Register(this, &service::invited);
+				last_init_error_.clear();
 				kicked_.Register(this, &service::kicked);
 				game_created_.Register(this, &service::game_created);
 				console::info("Steam initialized for App ID %u. Lobby title: Project: Consolation.\n", SteamUtils()->GetAppID());
@@ -311,6 +320,10 @@ namespace steam_matchmaking
 
 			void pump()
 			{
+				// Steam may not be ready on our first main frame. Keep offline
+				// startup nonfatal, but recover without requiring a console command.
+				if (!active_ && !stopped_ && GetTickCount64() >= next_init_attempt_)
+					initialize();
 				if (active_ && !stopped_)
 				{
 					SteamAPI_RunCallbacks();
@@ -531,6 +544,8 @@ namespace steam_matchmaking
 
 		private:
 			bool active_ = false, pending_ = false, stopped_ = false;
+			ULONGLONG next_init_attempt_ = 0;
+			std::string last_init_error_;
 			bool offline_warning_shown_ = false;
 			steam_companion::client presence_;
 			steam_identity::policy identity_;
@@ -946,7 +961,11 @@ namespace steam_matchmaking
 			void unavailable(const char* reason)
 			{
 				command::set_steam_identity(0);
-				console::warn("Steam online services unavailable: %s\n", reason);
+				if (last_init_error_ != reason)
+				{
+					last_init_error_ = reason;
+					console::warn("Steam online services unavailable: %s (retrying automatically).\n", reason);
+				}
 				warn_sign_in();
 			}
 

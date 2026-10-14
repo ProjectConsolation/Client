@@ -1,0 +1,19 @@
+IW4x Companion / libcompanion
+Upstream: https://github.com/iw4x/companion
+Revision: 46d9b47ea18f015f1b0d9f8ca3f2e5da3d9889c8
+Revision URL: https://github.com/iw4x/companion/tree/46d9b47ea18f015f1b0d9f8ca3f2e5da3d9889c8
+
+companion-source.zip contains the complete tracked source at this revision.
+windows-build-fixes.patch contains local documentation line-ending and test
+argument-handling fixes. No upstream production module code was changed.
+To reproduce the local checkout, extract the source and apply the patch with
+git apply windows-build-fixes.patch (or patch -p1).
+
+The supplied companion64.dll was built by the user for x86_64 Windows using
+MinGW-w64 GCC 16.2.0 and build2 0.18.x. See the source README for the bdep host
+and mingw configuration commands. The development documentation and tests
+were rebuilt after applying the Windows fixes; bdep test reported no errors.
+
+Companion is a separate Steam-client module, not linked into Consolation's
+x86 DLL. Its license and linking exception are included verbatim alongside
+LEGAL (including third-party notices) and AUTHORS. See those texts for terms.

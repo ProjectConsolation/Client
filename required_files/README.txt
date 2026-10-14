@@ -1,6 +1,10 @@
 Use the included "Launch Consolation.bat" to start multiplayer.
 
 Copy the complete nightly archive into the game directory, preserving folders.
+companion64.dll belongs beside JB_LiveEngine_s.exe. It runs inside native
+64-bit Steam, not the x86 game, and supplies the Project Consolation activity
+title. Keep licenses\companion\ with redistributed copies; matching source,
+local Windows build fixes, and upstream license notices are bundled there.
 consolation\zone\common_consolation.ff is REQUIRED for the client HUD assets;
 do not move it into the root directory or omit it when updating.
 
