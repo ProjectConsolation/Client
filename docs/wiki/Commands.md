@@ -126,6 +126,12 @@ instead of dereferencing null. This is not an implementation of voice chat.
 
 ## Steam lobby integration (development)
 
+Launch with `"Launch Consolation.bat" -noupdate` to bypass the updater entirely
+for that launch: no GitHub requests, prompts, downloads or update installation.
+Normal game startup and other launch arguments are preserved; the next launch
+checks normally unless the flag is supplied again. Direct updater-script users
+can pass `-NoUpdate` to `Check Consolation Updates.ps1` for the same early bypass.
+
 Generate the solution with `generate.bat --steamworks-sdk="C:\path\to\sdk"`
 or set `STEAMWORKS_SDK` to that SDK root. Plain `generate.bat` also detects SDKs
 in `deps/steamworks/sdk`, `deps/steamworks_sdk/sdk`, or your Windows Downloads

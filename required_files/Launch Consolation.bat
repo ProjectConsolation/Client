@@ -15,6 +15,14 @@ if not exist "%GAME_DIR%\JB_Launcher_s.exe" (
 
 REM Recommended for local GFWL emulation and LAN: install optional\offline\xlive.dll
 REM beside the launcher. Consolation detects it automatically; no debug flags needed.
+REM SHIFT parses a copy of the argument positions; %%* still forwards all original arguments.
+:check_update_flag
+if "%~1"=="" goto update_flags_done
+if /i "%~1"=="-noupdate" goto skip_update
+shift
+goto check_update_flag
+
+:update_flags_done
 if exist "%~dp0Check Consolation Updates.ps1" (
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Check Consolation Updates.ps1" -GameDirectory "%GAME_DIR%"
     if errorlevel 2 (
@@ -23,5 +31,11 @@ if exist "%~dp0Check Consolation Updates.ps1" (
         exit /b 2
     )
 )
+goto launch_game
+
+:skip_update
+echo [updater] skipped due to -noupdate
+
+:launch_game
 start "" /D "%GAME_DIR%" "%GAME_DIR%\JB_Launcher_s.exe" -multiplayer -seta g_gametype dm -set cin_firstRunDone 1 -set cin_skipAllMovies 1 %*
 exit /b

@@ -1,8 +1,14 @@
 param(
     [string]$GameDirectory = $PSScriptRoot,
     [switch]$CheckOnly,
-    [switch]$LibraryOnly
+    [switch]$LibraryOnly,
+    [switch]$NoUpdate
 )
+
+if ($NoUpdate) {
+    Write-Host '[updater] skipped due to -noupdate'
+    return
+}
 
 $ErrorActionPreference = 'Stop'
 
