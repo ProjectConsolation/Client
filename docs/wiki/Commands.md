@@ -127,9 +127,16 @@ instead of dereferencing null. This is not an implementation of voice chat.
 ## Steam lobby integration (development)
 
 Generate the solution with `generate.bat --steamworks-sdk="C:\path\to\sdk"`
-or set `STEAMWORKS_SDK` to that SDK root. Build the client yourself. Deploy the
+or set `STEAMWORKS_SDK` to that SDK root. Plain `generate.bat` also detects SDKs
+in `deps/steamworks/sdk`, `deps/steamworks_sdk/sdk`, or your Windows Downloads
+folder under `steamworks_sdk_*/sdk`; generation prints the selected SDK or an
+explicit warning if none is found. Build the client yourself. Deploy the
 SDK's **32-bit** `redistributable_bin/steam_api.dll` beside `JB_LiveEngine_s.exe`;
-it is also copied into the build output. Nightly packaging requires this x86
+it is also copied into the build output. With a deployment directory selected
+(`--copy-to`, or the detected default game installation), successful VS builds
+copy `d3d9.dll`, its build dependency `xlive.dll`, and `steam_api.dll` there.
+Close the game before building; locked files or missing write permission cause
+the copy step to fail. No Windows system DLL is replaced. Nightly packaging requires this x86
 redistributable, includes it at the ZIP root beside the client, and verifies its
 packaged hash. Missing or wrong-architecture redistributables fail packaging.
 Steam initialization runs by default
@@ -227,6 +234,9 @@ Protocol-layout declarations are attributed to the
 
 - `steam_init`: retry SDK initialization; print a nonfatal warning on failure.
 - `steam_status`: show actual App ID, Steam user, online state and current lobby.
+  Also reports `public`, native stats `fetched`, and `dirty` progression flags.
+  Public matchmaking uses the native profile/stat serializer on hosts and guests;
+  System Link transport does not make these matches private/unranked.
 - `steam_find_match`: same search as confirming a playlist in **Find Match**.
   Search public Steam hosts whose current/planned map/mode is an entry in the
   selected native playlist, then join a compatible lobby and query its Steam
@@ -242,6 +252,11 @@ Protocol-layout declarations are attributed to the
 - `steam_match_vote <1|2>`: vote for one of the two map/mode options in the
   current Steam match lobby. One changeable vote per current member; ballots
   from departed members or previous rounds are not counted.
+  F4 votes for the left card; F5 votes for the right card. Voting shortcuts are
+  in the native bottom help bar, not separate rows in the main action list.
+  Each card uses a full-size map image behind its text. Cards show a
+  independent map preview, the localized map name, then the localized mode on
+  the next line. The redundant playlist block is hidden.
 - `steam_match_cancel`: cancel Find Match without stopping a manually hosted
   lobby. Leaving the native match-search screen also cancels the search.
 - `steam_lobby_create [friends|public]`: create an 18-member
@@ -263,6 +278,8 @@ Protocol-layout declarations are attributed to the
   The dedicated-only query is filtered by Steam before the result limit and
   checked again locally. Changes during an outstanding query queue a refresh.
   This filter does not change Find Match eligibility.
+  The native browser footer shows **F6 — SHOW NON-DEDICATED SERVERS: ON/OFF**
+  using the same authored help controls as Enter/Select, not a generated panel.
 
 The frontend **Party Invite** and **Invite Friends** buttons open the Scaleform
 friends screen. Select a row, then Invite or Join. Scroll with the mouse wheel
@@ -276,8 +293,10 @@ as the console/native fallback; displayed names are plain text, not commands.
   match, establish the Steam connection, query its local bridge and enter the
   native QoS connection handshake. A failed query does not retry forever;
   fix connectivity, leave the lobby and rejoin to retry.
-- `steam_lobby_leave`: leave the current lobby. Wait for pending create/join/list
-  completion first so an asynchronous join cannot create untracked membership.
+- `steam_lobby_leave`: leave the current lobby. Pending create/join/list
+  completion is handled automatically, so an asynchronous join cannot create
+  untracked membership. Escape in a Steam match lobby explicitly leaves it;
+  when its host leaves, the waiting lobby closes for the remaining members.
 - `steam_lobby_invite`: open the native Steam friends panel for the current lobby.
   `steam_overlay_invite` opens the Steam overlay picker instead.
 - `steam_transport_status`: print packet counters and each peer's connection

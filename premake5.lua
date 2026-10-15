@@ -71,7 +71,7 @@ newoption {
 
 newoption {
 	trigger = "steamworks-sdk",
-	description = "Enable optional Steam lobby integration using a local Steamworks SDK root (sdk/).",
+	description = "Steamworks SDK root (sdk/); otherwise use STEAMWORKS_SDK or a locally detected SDK.",
 	value = "PATH"
 }
 
@@ -88,10 +88,32 @@ end
 steamAppId = string.format("%.0f", tonumber(steamAppId))
 
 local steamworksSdk = _OPTIONS["steamworks-sdk"] or os.getenv("STEAMWORKS_SDK")
+if not steamworksSdk then
+	local candidates = { "deps/steamworks/sdk", "deps/steamworks_sdk/sdk" }
+	local profile = os.getenv("USERPROFILE")
+	if profile then
+		for _, directory in ipairs(os.matchdirs(path.join(profile, "Downloads/steamworks_sdk_*/sdk"))) do
+			table.insert(candidates, directory)
+		end
+	end
+	for _, candidate in ipairs(candidates) do
+		if os.isfile(path.join(candidate, "public/steam/steam_api.h"))
+			and os.isfile(path.join(candidate, "redistributable_bin/steam_api.lib"))
+			and os.isfile(path.join(candidate, "redistributable_bin/steam_api.dll")) then
+			steamworksSdk = path.getabsolute(candidate)
+			break
+		end
+	end
+end
 if steamworksSdk and (not os.isfile(path.join(steamworksSdk, "public/steam/steam_api.h"))
 	or not os.isfile(path.join(steamworksSdk, "redistributable_bin/steam_api.lib"))
 	or not os.isfile(path.join(steamworksSdk, "redistributable_bin/steam_api.dll"))) then
 	error("steamworks-sdk must contain public/steam/steam_api.h and the Windows x86 redistributables")
+end
+if steamworksSdk then
+	print("Steamworks enabled: " .. steamworksSdk)
+else
+	print("WARNING: Steamworks SDK not found; Steam online services will not be compiled. Set STEAMWORKS_SDK or --steamworks-sdk.")
 end
 
 newaction {
@@ -415,6 +437,9 @@ workspace "consolation-client"
 			{
 				"copy /y \"$(TargetPath)\" \"" .. deployDirectory .. "\""
 			}
+			if steamworksSdk then
+				postbuildcommands { "copy /y \"$(TargetDir)steam_api.dll\" \"" .. deployDirectory .. "\\steam_api.dll\"" }
+			end
 		end
 
 		dependencies.imports()
@@ -442,12 +467,15 @@ workspace "consolation-client"
 
 		linkoptions { "/DEF:../src_xlive/xlive.def" }
 
-		-- Keep the shim opt-in: building the client must not replace GFWL in
-		-- the game directory. Package its usage note beside the built DLL.
+		-- Steam relay requires the matching shim. Deploy only when a game/deploy
+		-- directory was selected, never to a Windows system directory.
 		postbuildcommands {
 			"copy /y \"" .. path.translate(path.getabsolute("required_files/README_XLIVE.txt"), "\\")
 				.. "\" \"$(TargetDir)README_XLIVE.txt\""
 		}
+		if deployDirectory then
+			postbuildcommands { "copy /y \"$(TargetPath)\" \"" .. deployDirectory .. "\\xlive.dll\"" }
+		end
 
 	group "Dependencies"
 		dependencies.projects()
