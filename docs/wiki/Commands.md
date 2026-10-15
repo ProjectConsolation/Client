@@ -19,6 +19,12 @@ App ID; development App ID 480 rankings do not transfer automatically to a futur
 Project Consolation App ID. These are client-submitted playtest rankings, not
 server-verified or tamper-proof scores.
 
+The bridge maps QoS's upload property order to its display column order: K/D and
+W/L ratios use thousandths, while streaks remain whole counts. Version-3 uploads
+also use accuracy, rather than hits, as the accuracy board's primary score.
+Existing version-2 rows are decoded with their original layout; old accuracy
+scores need a subsequent valid stats upload before Steam's ordering is corrected.
+
 ## Viewmodel field of view and motion blur
 
 - `cg_vm_fov <degrees>`: saved viewmodel-only FOV, `0` (default) retains stock behavior. Use `65`–`100` to adjust weapon framing without changing world FOV. Native ADS zoom is retained; valid nonzero range is 1–160 degrees.
@@ -29,7 +35,7 @@ server-verified or tamper-proof scores.
 
 - `csl_clantag [open|apply|cancel]`: opens the four-character clan-tag input. Apply uses the same validation and profile persistence as `clanName`; Cancel/Escape discards edits. Available through **Clan Tag** in online, match, private-match and System Link setup menus. The reserved `CSL` tag remains restricted to the authorized Steam ID.
   The frontend Clan Tag screen reuses the authored QoS video-options layout.
-  Select the Clan Tag row to type; Enter accepts the draft and Escape cancels
+  Select the Clan Tag row to type in the value beside its fixed label; Enter accepts the draft and Escape cancels
   typing. OK saves, Cancel returns without saving. `prepare` and `apply_scaleform` are internal UI bridge actions;
   the latter still runs the normal clan-tag validator, never a raw console command.
 - **Start Game** appears first in the Steam match lobby only for its waiting host. It uses `steam_match_start`, which rechecks host ownership before starting; guests cannot launch a match.
@@ -294,6 +300,20 @@ F5 refreshes, and Escape returns to the owning menu. `steam_friends_scroll <firs
 sets the first visible row (0–256, clamped to the current list). The internal
 `steam_friends scaleform` bridge uses the same validated Steam friend snapshot
 as the console/native fallback; displayed names are plain text, not commands.
+The live **N Steam Friends** count appears above the first player. The
+video-options Bond illustration is removed without adding a covering panel.
+A successful Invite action
+means Steam accepted the request, not that the recipient received or joined it.
+To verify invites, use two signed-in accounts running matching builds: create a
+waiting lobby, select the other account and Invite, then accept on the other PC
+while it is outside a lobby/match. Confirm both names appear in the same lobby
+and both enter the host's match.
+
+Match-lobby names include their progression rank, resolved through QoS's native
+rank table. Remote XP metadata is cosmetic and is not trusted as an authoritative
+stats or leaderboard submission. Vote cards are cropped below their vote count;
+F4/F5 are labelled **VOTE MAP 1/2**. Cards, text and hints fade on screen exit and
+their image-loading callbacks and fade timer are cleaned up afterward.
 - `steam_lobby_join <decimal lobby SteamID>`: join and check protocol metadata;
   incompatible lobbies are immediately left. Wait for the host to start a
   match, establish the Steam connection, query its local bridge and enter the

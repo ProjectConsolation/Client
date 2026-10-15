@@ -172,14 +172,22 @@ namespace steam_leaderboards
         {
             if (source.id < 10 || source.id > 14 || !source.properties || source.count < 2 || source.count > 9) return false;
             for (DWORD i = 0; i < source.count; ++i) if (source.properties[i].value.type != 1 && source.properties[i].value.type != 2) return false;
+            // QoS LB_Init properties (1023F4B0) are not display-column order:
+            // kills/wins store streak before ratio; accuracy stores hits first.
+            // Native formatters 1023E640/1023E830 consume rating + column IDs.
+            std::array<const property*, 9> ordered{};
+            for (DWORD i = 0; i < source.count; ++i) ordered[i] = &source.properties[i];
+            if ((source.id == 10 || source.id == 11) && source.count == 6) std::swap(ordered[2], ordered[3]);
+            if (source.id == 13 && source.count == 5)
+            { ordered[0] = &source.properties[2]; ordered[1] = &source.properties[0]; ordered[2] = &source.properties[1]; }
             request job; job.upload = true; job.query.id = source.id;
-            job.score = static_cast<int>(std::clamp<long long>(numeric(source.properties[0].value), 0, INT_MAX));
+            job.score = static_cast<int>(std::clamp<long long>(numeric(ordered[0]->value), 0, INT_MAX));
             int32 wide_columns = 0;
-            for (DWORD i = 1; i < source.count; ++i) if (source.properties[i].value.type == 2) wide_columns |= 1 << (i - 1);
-            job.details = {detail_magic, 2, static_cast<int32>(source.count - 1), wide_columns};
+            for (DWORD i = 1; i < source.count; ++i) if (ordered[i]->value.type == 2) wide_columns |= 1 << (i - 1);
+            job.details = {detail_magic, 3, static_cast<int32>(source.count - 1), wide_columns};
             for (DWORD i = 1; i < source.count; ++i)
             {
-                const auto value = static_cast<unsigned long long>(numeric(source.properties[i].value));
+                const auto value = static_cast<unsigned long long>(numeric(ordered[i]->value));
                 job.details.push_back(static_cast<int32>(value)); job.details.push_back(static_cast<int32>(value >> 32));
             }
             // Coalesce cumulative snapshots rather than uploading per kill.
@@ -239,7 +247,7 @@ namespace steam_leaderboards
             {
                 LeaderboardEntry_t entry{}; int32 details[32]{};
                 if (!SteamUserStats()->GetDownloadedLeaderboardEntry(downloaded.m_hSteamLeaderboardEntries, i, &entry, details, 32)
-                    || entry.m_cDetails < 4 || entry.m_cDetails > 32 || details[0] != detail_magic || details[1] != 2
+                    || entry.m_cDetails < 4 || entry.m_cDetails > 32 || details[0] != detail_magic || (details[1] != 2 && details[1] != 3)
                     || details[2] < 0 || details[2] > 8 || entry.m_cDetails != 4 + 2 * details[2]) return ERROR_INVALID_DATA;
                 rows[i].xuid = entry.m_steamIDUser.ConvertToUint64(); rows[i].rank = entry.m_nGlobalRank;
                 if (entry.m_steamIDUser == SteamUser()->GetSteamID()) rows[i].xuid = native_self();
@@ -251,9 +259,20 @@ namespace steam_leaderboards
                 {
                     const auto id = job.query.columns[c]; if (id > details[2]) return ERROR_INVALID_DATA;
                     auto& output = rows[i].columns[c]; output.id = id;
-                    output.value.type = (details[3] & (1 << (id - 1))) ? 2 : 1;
-                    output.value.i64 = static_cast<long long>(static_cast<unsigned long long>(static_cast<unsigned int>(details[4 + (id - 1) * 2]))
-                        | (static_cast<unsigned long long>(static_cast<unsigned int>(details[5 + (id - 1) * 2])) << 32));
+                    auto slot = id;
+                    if (details[1] == 2 && (job.query.id == 10 || job.query.id == 11) && (id == 2 || id == 3)) slot = id == 2 ? 3 : 2;
+                    if (details[1] == 2 && job.query.id == 13 && id == 1)
+                    { output.value.type = 1; output.value.n = entry.m_nScore; continue; }
+                    if (details[1] == 2 && job.query.id == 13 && id == 2) slot = 1;
+                    if (slot > details[2]) return ERROR_INVALID_DATA;
+                    output.value.type = (details[3] & (1 << (slot - 1))) ? 2 : 1;
+                    output.value.i64 = static_cast<long long>(static_cast<unsigned long long>(static_cast<unsigned int>(details[4 + (slot - 1) * 2]))
+                        | (static_cast<unsigned long long>(static_cast<unsigned int>(details[5 + (slot - 1) * 2])) << 32));
+                }
+                if (details[1] == 2 && job.query.id == 13)
+                {
+                    if (details[2] < 2) return ERROR_INVALID_DATA;
+                    rows[i].rating = details[6]; // Legacy accuracy was incorrectly stored in detail column two.
                 }
             }
             return ERROR_SUCCESS;

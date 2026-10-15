@@ -771,7 +771,8 @@ namespace steam_matchmaking
 				if (invite_friend)
 				{
 					if (!lobby_.IsValid() || pending_) { notice("Join or create a Steam lobby before inviting friends."); return; }
-					notice(SteamMatchmaking()->InviteUserToLobby(lobby_, friend_id) ? "Steam invitation sent." : "Steam could not send the invitation.");
+					// A successful request is not a delivery/join acknowledgement.
+					notice(SteamMatchmaking()->InviteUserToLobby(lobby_, friend_id) ? "Steam invitation requested." : "Steam could not send the invitation.");
 					return;
 				}
 				if (lobby_.IsValid() || running_server() || pending_)
@@ -1225,6 +1226,13 @@ namespace steam_matchmaking
 				const bool online = active_ && SteamUser()->BLoggedOn();
 				auto* mm = SteamMatchmaking();
 				const int count = online ? lobby_.IsValid() ? std::clamp(mm->GetNumLobbyMembers(lobby_), 0, 18) : 1 : 0;
+				if (online && lobby_.IsValid())
+				{
+					const auto xp = local_rank_xp();
+					const auto value = xp >= 0 ? std::to_string(xp) : "";
+					if (value != mm->GetLobbyMemberData(lobby_, SteamUser()->GetSteamID(), "csl_rankxp"))
+						mm->SetLobbyMemberData(lobby_, "csl_rankxp", value.c_str());
+				}
 				// Presentation-only adapter: never fabricate a native party or use
 				// these row indices for LIVE kick/gamercard commands.
 				for (int i = 0; i < 18; ++i)
@@ -1236,6 +1244,7 @@ namespace steam_matchmaking
 						const auto* display = lobby_.IsValid() ? mm->GetLobbyMemberData(lobby_, member, "csl_display_name") : nullptr;
 						const auto* persona = member == SteamUser()->GetSteamID() ? SteamFriends()->GetPersonaName() : SteamFriends()->GetFriendPersonaName(member);
 						name = steam_friends::label(display && *display ? display : persona);
+						name += lobby_rank(member);
 						if (lobby_.IsValid() && member == mm->GetLobbyOwner(lobby_)) name += " (HOST)";
 					}
 					game::Dvar_SetFromStringByName(("csl_roster_name" + std::to_string(i)).c_str(), name.c_str());
@@ -1248,7 +1257,41 @@ namespace steam_matchmaking
 				// only the local user; never promote matched strangers into it.
 				game::Dvar_SetFromStringByName("csl_party_count", online ? "1" : "0");
 				game::Dvar_SetFromStringByName("csl_party_name0", online
-					? steam_friends::label(SteamFriends()->GetPersonaName()).c_str() : "");
+					? (steam_friends::label(SteamFriends()->GetPersonaName()) + lobby_rank(SteamUser()->GetSteamID())).c_str() : "");
+			}
+
+			int local_rank_xp() const
+			{
+				if (!*reinterpret_cast<const unsigned char*>(game::game_offset(0x116101C8))) return -1;
+				// QoS LB_Init's fifth playerStatsTable mapping is RANKXP, not a
+				// leaderboard position. Same native stat addressing as 102403D0.
+				const auto index = reinterpret_cast<const unsigned*>(game::game_offset(0x11634E08))[4];
+				if (index >= 3498) return -1;
+				return index < 2000 ? *reinterpret_cast<const unsigned char*>(game::game_offset(0x1160BFB4) + index)
+					: std::max(0, *reinterpret_cast<const int*>(game::game_offset(0x1160A844) + index * 4));
+			}
+
+			std::string lobby_rank(const CSteamID member) const
+			{
+				int xp = member == SteamUser()->GetSteamID() ? local_rank_xp() : -1;
+				if (xp < 0 && lobby_.IsValid())
+				{
+					const auto* text = SteamMatchmaking()->GetLobbyMemberData(lobby_, member, "csl_rankxp");
+					const auto size = text ? strnlen(text, 12) : 0;
+					if (!size || size > 10) return {};
+					const auto parsed = std::from_chars(text, text + size, xp);
+					if (parsed.ec != std::errc{} || parsed.ptr != text + size || xp < 0) return {};
+				}
+				if (xp < 0) return {};
+				// QoS 102FAE70 matches KisakCOD CL_GetRankForXp; 102FB040 uses
+				// QoS rankTable column 14 for the displayed progression rank.
+				const auto rank = reinterpret_cast<int(__cdecl*)(int)>(game::game_offset(0x102FAE70))(xp);
+				const auto* label = reinterpret_cast<const char*(__cdecl*)(int)>(game::game_offset(0x102FB040))(rank);
+				if (!label || !*label || strnlen(label, 64) >= 64) return {};
+				const auto translated = gametypes::labels::resolve(label, [](const char* key) {
+					return reinterpret_cast<const char*(__cdecl*)(const char*)>(game::game_offset(0x103C9F20))(key);
+				});
+				return " [" + steam_friends::label(translated.c_str()) + "]";
 			}
 			void update_lobby_screen()
 			{
@@ -1302,6 +1345,7 @@ namespace steam_matchmaking
 						const auto member = mm->GetLobbyMemberByIndex(lobby_, i);
 						const auto* display = mm->GetLobbyMemberData(lobby_, member, "csl_display_name");
 						name = steam_friends::label(display && *display ? display : SteamFriends()->GetFriendPersonaName(member));
+						name += lobby_rank(member);
 						if (member == mm->GetLobbyOwner(lobby_)) name += " (HOST)";
 					}
 					menu_file::set_match_lobby_text("member" + std::to_string(i), name);
