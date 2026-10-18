@@ -894,6 +894,14 @@ The System Link/private-lobby gamemode picker displays up to 12 modes per page.
 Page Up/Down changes pages when more modes are available. The server browser's
 first column is labelled **Server Hostname**, not Gamertag.
 
+The online playlist picker fits 14 entries in its original list area without a
+scrollbar. Up/Down navigates all entries; Left/Right or Page Up/Down jumps by 14.
+The four opt-in `[DEV] Bags/Canals/Cistern/Dam 24/7` playlists use Conflict (`dm`).
+`[DEV] Camille DLC Moshpit` rotates all four maps across Conflict, Team Conflict,
+Bond Versus, Bond Evasion, Golden Gun, Territory Control, Classic, and Gun Game.
+These development playlists are excluded from automatic Quick Match and require
+the corresponding DLC map files to be installed.
+
 With the local XLive shim installed, offline mode retains QoS's native `mpdata` loading and session-end saving through the shim's local title storage. The System Link script adaptation permits the existing money award/read path; other ranked-only statistics remain ranked-only. It does not create an online leaderboard service or bypass Store purchase rules.
 
 After rebuilding, verify this with two machines: note each player's starting balance, earn money in a System Link match, finish the match normally, then restart and check that each balance persists independently. Source/script regression tests are not proof that the full runtime session and storage transitions work.
