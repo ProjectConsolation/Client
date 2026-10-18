@@ -8,6 +8,7 @@
 #include "game/dvars.hpp"
 
 #include <utils/hook.hpp>
+#include "menu_capture_policy.hpp"
 
 namespace mouse_input
 {
@@ -24,6 +25,9 @@ namespace mouse_input
 		LONG old_raw_y = 0;
 		bool was_foreground = false;
 		bool native_mouse_state_verified = false;
+		bool menu_clip_hooked = false;
+		bool menu_cursor_free = false;
+		std::array<std::uint8_t, 6> original_clip_call{};
 		std::array<std::uint8_t, 5> original_mouse_event_call{};
 
 		struct mouse_event_state
@@ -77,6 +81,70 @@ namespace mouse_input
 			return native_mouse_state_verified && *reinterpret_cast<const bool*>(game::game_offset(0x113F00E8));
 		}
 
+		bool wants_free_menu_cursor()
+		{
+			const auto hwnd = get_window();
+			if (!hwnd || !IsWindow(hwnd) || IsIconic(hwnd)) return false;
+			const auto* fullscreen = game::Dvar_FindVar("r_fullscreen");
+			const auto* bypass = game::Dvar_FindVar("cl_bypassMouseInput");
+			return fullscreen && bypass && free_menu_cursor(GetForegroundWindow() == hwnd,
+				!fullscreen->current.enabled, *game::keyCatchers,
+				*reinterpret_cast<const int*>(game::game_offset(0x113D12E8)), bypass->current.enabled);
+		}
+
+		void unclip_game_window(HWND hwnd)
+		{
+			RECT clip{}, window{};
+			if (GetClipCursor(&clip) && GetWindowRect(hwnd, &window) && EqualRect(&clip, &window))
+				ClipCursor(nullptr);
+			if (GetCapture() == hwnd) ReleaseCapture();
+		}
+
+		BOOL __stdcall clip_game_mouse(const RECT* rect)
+		{
+			// Dedicated QoS IN_ActivateWin32Mouse ClipCursor call. No process-wide
+			// API detour: menus remain absolute, gameplay/fullscreen retain native clip.
+			return ClipCursor(wants_free_menu_cursor() ? nullptr : rect);
+		}
+
+		void install_menu_clip_hook()
+		{
+			const auto site = game::game_offset(0x102C364B);
+			std::array<std::uint8_t, 6> expected{0xFF, 0x15, 0, 0, 0, 0};
+			const auto slot = static_cast<std::uint32_t>(game::game_offset(0x1047632C));
+			std::memcpy(expected.data() + 2, &slot, sizeof(slot));
+			if (!native_mouse_state_verified || std::memcmp(reinterpret_cast<void*>(site), expected.data(), expected.size()))
+			{
+				game::Com_Printf(0, "[mouse] windowed menu cursor hook skipped: unexpected engine instructions\n");
+				return;
+			}
+			original_clip_call = expected;
+			utils::hook::call(site, &clip_game_mouse);
+			utils::hook::set<std::uint8_t>(site + 5, 0x90);
+			menu_clip_hooked = true;
+		}
+
+		void update_menu_capture()
+		{
+			if (!menu_clip_hooked) return;
+			if (!get_window()) { menu_cursor_free = false; return; }
+			const bool free = wants_free_menu_cursor();
+			const bool was_free = menu_cursor_free;
+			menu_cursor_free = free; // Publish before native calls can dispatch messages.
+			if (free)
+			{
+				unclip_game_window(get_window());
+				if (!was_free) reset_raw_motion();
+			}
+			else if (was_free && GetForegroundWindow() == get_window() && !IsIconic(get_window()))
+			{
+				// QoS PC 102C36D0 is cdecl(force). Native mouse enablement and
+				// foreground checks remain authoritative; do not force capture ourselves.
+				reset_raw_motion();
+				utils::hook::invoke<void>(game::game_offset(0x102C36D0), 1);
+			}
+		}
+
 		void release_background_mouse(HWND hwnd)
 		{
 			reset_raw_motion();
@@ -85,12 +153,9 @@ namespace mouse_input
 			// clearing only mouseActive lets native IN_Frame reacquire on return.
 			if (native_mouse_state_verified)
 				*reinterpret_cast<bool*>(game::game_offset(0x113F00E8)) = false;
-			RECT clip{}, window{};
 			// ClipCursor is desktop-global: do not undo another application's
 			// newly installed clip during the delayed foreground fallback.
-			if (GetClipCursor(&clip) && GetWindowRect(hwnd, &window) && EqualRect(&clip, &window))
-				ClipCursor(nullptr);
-			if (GetCapture() == hwnd) ReleaseCapture();
+			unclip_game_window(hwnd);
 			// Normalize visibility without incrementing its counter on duplicate
 			// deactivation messages. Native activation restores its own visibility.
 			auto count = ShowCursor(TRUE);
@@ -199,6 +264,7 @@ namespace mouse_input
 			// Then release even when its mouseActive guard skipped deactivation.
 			const auto result = CallWindowProcA(original_wnd_proc, hwnd, msg, wparam, lparam);
 			if (losing_focus) release_background_mouse(hwnd);
+			else update_menu_capture();
 			return result;
 		}
 
@@ -258,6 +324,7 @@ namespace mouse_input
 			if (original_wnd_proc)
 			{
 				verify_native_mouse_state();
+				install_menu_clip_hook();
 				was_foreground = GetForegroundWindow() == get_window();
 				wnd_proc_hooked = true;
 			}
@@ -282,19 +349,21 @@ namespace mouse_input
 
 		void uninstall_wnd_proc()
 		{
-			if (!wnd_proc_hooked || !get_window() || !original_wnd_proc)
-			{
-				return;
-			}
-
 			unregister_raw_input();
-			SetWindowLongPtrA(get_window(), GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(original_wnd_proc));
+			if (menu_clip_hooked)
+				utils::hook::set(game::game_offset(0x102C364B), original_clip_call);
+			menu_clip_hooked = false;
+			menu_cursor_free = false;
+			// Restore code even if WM_DESTROY already cleared the game's HWND.
+			if (wnd_proc_hooked && get_window() && original_wnd_proc)
+				SetWindowLongPtrA(get_window(), GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(original_wnd_proc));
 			original_wnd_proc = nullptr;
 			wnd_proc_hooked = false;
 		}
 
 		int call_original_mouse_event(const mouse_event_state& state)
 		{
+			update_menu_capture();
 			original_call_state = state;
 			call_original_mouse_event_stub();
 			return original_call_result;
@@ -414,6 +483,7 @@ namespace mouse_input
 					install_hooks_if_ready();
 					install_wnd_proc_if_ready();
 					update_focus_state();
+					update_menu_capture();
 					update_raw_input_state();
 				}, scheduler::main, 100ms);
 

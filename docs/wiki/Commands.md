@@ -34,9 +34,11 @@ scores need a subsequent valid stats upload before Steam's ordering is corrected
 ## In-game Steam friends panel
 
 - `csl_clantag [open|apply|cancel]`: opens the four-character clan-tag input. Apply uses the same validation and profile persistence as `clanName`; Cancel/Escape discards edits. Available through **Clan Tag** in online, match, private-match and System Link setup menus. The reserved `CSL` tag remains restricted to the authorized Steam ID.
-  The frontend Clan Tag screen reuses the authored QoS video-options layout.
-  Select the Clan Tag row to type in the value beside its fixed label; Enter accepts the draft and Escape cancels
-  typing. OK saves, Cancel returns without saving. `prepare` and `apply_scaleform` are internal UI bridge actions;
+  The frontend Clan Tag entry opens the native QoS modal popup over the current
+  lobby rather than navigating to a separate screen. Its focused text input
+  accepts up to four letters, numbers or underscores. OK/Enter validates and
+  saves; Cancel/Escape discards the draft and restores the underlying menu.
+  Rejected tags leave the popup open with an error. `prepare` and `apply_scaleform` are internal UI bridge actions;
   the latter still runs the normal clan-tag validator, never a raw console command.
 - **Start Game** appears first in the Steam match lobby only for its waiting host. It uses `steam_match_start`, which rechecks host ownership before starting; guests cannot launch a match.
 
@@ -875,8 +877,12 @@ alone does not verify the visible background.
 
 The tall left gray gradient is authored at one-quarter of its original alpha
 strength, independently of the wine tint and horizontal information panels.
-Deploy the matching `MpMainMenu.gfx` and `patch_consolation.ff`, then fully
-restart the game to discard cached artwork; this asset change needs no DLL rebuild.
+The same shape is softened in loadout, weapon store, online/playlist menus,
+party and private/match lobbies, and System Link join/setup/map/mode/options
+screens. The asset generator audits retail `ui_mp.ff` as well as customized
+loose and embedded movies, so screens without previous overrides are covered.
+Deploy the matching loose movie set and `patch_consolation.ff`, then fully
+restart the game to discard cached artwork; these asset changes need no DLL rebuild.
 
 The System Link/private-lobby gamemode picker displays up to 12 modes per page.
 Page Up/Down changes pages when more modes are available. The server browser's

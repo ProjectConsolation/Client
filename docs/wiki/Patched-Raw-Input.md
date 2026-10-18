@@ -42,3 +42,17 @@ Requires a rebuilt client DLL and full restart. Runtime validation remains:
 Alt-Tab from menus and gameplay with raw input on/off, move onto another monitor,
 then return and check cursor confinement, camera movement and controller cursor
 visibility. Repeat while minimized. Source checks do not prove desktop behavior.
+
+## Windowed menu cursor
+
+In windowed mode, menus using native absolute mouse input no longer confine the
+cursor to the game window. You can move outside and click another application
+without Alt-Tab. Returning to gameplay invokes the native mouse activation path
+to restore capture. Fullscreen, the native relative-input menu exception and
+`cl_bypassMouseInput` retain their original behavior. This does not change the
+display mode or require a new setting, and works with raw input on or off.
+
+The menu clip hook is scoped to the verified QoS PC 1.1 activation call, with
+instruction guards and shutdown restoration; it is not a global Windows API hook.
+Rebuild the client and test menu entry/exit, clicks outside and back, gameplay
+recapture, and controller-to-mouse switching before treating it as runtime verified.
