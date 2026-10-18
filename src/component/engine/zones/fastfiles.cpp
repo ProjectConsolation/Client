@@ -95,7 +95,7 @@ namespace fastfiles
 				if (file && file->name && file->buffer && std::string_view(file->name).starts_with(prefix))
 				{
 					const auto zone = std::string(std::string_view(file->name).substr(prefix.size()));
-					if (!dlc::requires_donor(zone) || zone.ends_with("_load")) return;
+					if (!dlc::is_dlc_map(zone) || zone.ends_with("_load")) return;
 					portal_links::manifest links;
 					pending_portal_links.erase(zone);
 					if (portal_links::decode({file->buffer, file->len}, links))
@@ -108,7 +108,7 @@ namespace fastfiles
 			auto* world = static_cast<unsigned char*>(entry->asset.header.data);
 			if (!world) return;
 			const auto* base_name = *reinterpret_cast<const char**>(world + 4);
-			if (!base_name || !dlc::requires_donor(base_name)) return;
+			if (!base_name || !dlc::is_dlc_map(base_name)) return;
 			const std::string zone(base_name);
 			const auto found = pending_portal_links.find(zone);
 			if (found == pending_portal_links.end()) return; // Stock/older zones have no adapter.

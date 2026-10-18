@@ -1,0 +1,7 @@
+<Project>
+  <Import Project="../../Directory.Build.props" />
+  <PropertyGroup>
+    <!-- Set before SDK common props select the NuGet/intermediate paths. -->
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../../build/launcher/obj/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

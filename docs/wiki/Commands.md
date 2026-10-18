@@ -727,7 +727,7 @@ These QoS PC 1.1 hooks require rebuilding the client and in-game validation. The
 | `pm_mantleFirstPerson` | `0` | Server-replicated experimental camera option for native `mantle_40`, `mantle_44` and `mantle_56` traversals. Uses the native first-person view branch and suppresses traversal/model camera replacement. `0` restores the stock camera. Does not port COD4 mantle movement or add COD4 hand animations. |
 | `pm_climbFirstPerson` | `0` | Server-replicated experimental camera option for native ladders, ledges and pipes. Same camera-only behavior as the mantle option; balance, generic transitions and wallhug retain their stock camera. Explicit `cg_thirdPerson` requests and death/spectator views are preserved. |
 | `pm_airborneBobScale` | `0` | Server-replicated float, range `0`–`1`. Scales native movement camera bob and the separate local weapon-bob translation while airborne and outside traversal. `0` suppresses these bob components; `1` restores stock amplitude. Both movement presets default to `0`; the dvar can still be changed afterward. Grounded bob, remote-player animation, velocity, recoil, landing effects, damage kick and body-bone animation are not changed. The weapon-bob adapter still needs rebuilt-client runtime testing. |
-| `ui_menuWineTint` | `1` | Saved local preference for the native menu background video and authored background sprites. Set `0` to restore their original colours. The main-menu information strip uses separate dark-gray artwork at its authored 127/255 opacity, independent of this toggle. Text, buttons, map previews and gameplay are not tinted; native background fades retain their alpha. Requires matching client and patch assets. The video pass explicitly selects linear YUV sampling in either mode. Background tint and transitions still require runtime verification. |
+| `ui_menuWineTint` | `1` | Saved local preference for the native menu background movie. Uses the launcher's wine-red `#952F48` on decoded luminance, preserving moving flag detail and native fade alpha. Set `0` to restore original video colours. Existing gray panel artwork/opacity is not changed by the native video adapter. Text, buttons, map previews and gameplay are not tinted. The video pass explicitly selects linear YUV sampling in either mode. Requires rebuilding the client; background tint and transitions still require runtime verification. |
 
 Use `pm_movement_mode iw3` for sprint-to-ADS, retained ADS on damage, prone permission, disabled cover, first-person mantle/climb cameras and suppressed airborne bob. Use `pm_movement_mode stock` to restore all seven native policies. Individual controls remain adjustable after applying a preset; selecting a different preset replaces those adjustments. Re-entering the same preset does not reapply it. This does not reset unrelated jump/speed settings.
 
@@ -856,13 +856,27 @@ and `discard` leaves engine values unchanged.
 
 ### System Link balance and local profiles
 
-`ui_menuWineTint 1` requests the deep dark-red background video and scoped sprite
-tint; `0` restores their authored colours. The main-menu information strip is
-separate dark-gray artwork, retaining its authored 127/255 opacity and native
-transition frames in either mode. Use matching client and patch assets. Text,
-orange selection highlights, map previews and gameplay are not recoloured. The
-setting is saved and defaults to enabled. The complete background appearance
-and transitions remain pending runtime confirmation.
+`ui_menuWineTint 1` requests a wine-red background movie matching the launcher's
+original `#952F48` accent; `0` restores the native movie colours. The video
+adapter colours the visible native cinematic draw as well as Scaleform's
+separate offscreen video copy, rather than painting a solid rectangle over the
+flag. The visible draw is restricted to the frontend `bink_bkg_loop_1` movie
+and its native cinematic material; other cinematics are unchanged. Native alpha
+and transition fades remain unchanged.
+The existing gray information-strip artwork and its installed transparency are
+not modified by this source change. Text, orange selection highlights, map
+previews and gameplay are not recoloured. The saved setting defaults to enabled.
+Rebuild the client to apply the adapter/palette changes; a launcher-only build
+does not update the game DLL. Complete background appearance and transitions
+remain pending runtime confirmation. The console reports the guarded
+`visible menu cinematic tint installed` hook and `visible menu cinematic: tint=1`
+when that draw is tinted. An `offscreen Scaleform video adapter active` message
+alone does not verify the visible background.
+
+The tall left gray gradient is authored at one-quarter of its original alpha
+strength, independently of the wine tint and horizontal information panels.
+Deploy the matching `MpMainMenu.gfx` and `patch_consolation.ff`, then fully
+restart the game to discard cached artwork; this asset change needs no DLL rebuild.
 
 The System Link/private-lobby gamemode picker displays up to 12 modes per page.
 Page Up/Down changes pages when more modes are available. The server browser's

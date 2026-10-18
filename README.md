@@ -10,6 +10,11 @@ For installation help, launch setup, features, and common questions, use the wik
 - [Controller support](https://github.com/ProjectConsolation/Client/wiki/Controller-Support)
 - [Crash debugging](https://github.com/ProjectConsolation/Client/wiki/Crash-Debugging)
 
+An experimental native C# desktop launcher is available as a separate
+[source subproject](src/launcher/README.md). It uses WPF rather than CEF and is
+not yet included in nightly packages; the batch launcher remains the normal
+packaged entry point.
+
 ## Nightly Builds
 
 Nightly builds are automatically generated and available in the [Releases](https://github.com/ProjectConsolation/Client/releases) section. Open the latest nightly release and download `consolation-nightly.zip` from its Assets list.

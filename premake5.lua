@@ -477,5 +477,14 @@ workspace "consolation-client"
 			postbuildcommands { "copy /y \"$(TargetPath)\" \"" .. deployDirectory .. "\\xlive.dll\"" }
 		end
 
+	group "Launcher"
+		externalproject "Consolation.Launcher"
+			location "src/launcher"
+			filename "Consolation.Launcher"
+			uuid "4861C7E9-76B7-49A9-B21A-BE637F048A5E"
+			kind "WindowedApp"
+			language "C#"
+			-- SDK-style WPF project owns its settings; no DLL build dependency.
+
 	group "Dependencies"
 		dependencies.projects()

@@ -20,6 +20,10 @@ namespace mouse_input
 		int ready_ticks = 0;
 		LONG raw_mouse_x = 0;
 		LONG raw_mouse_y = 0;
+		LONG old_raw_x = 0;
+		LONG old_raw_y = 0;
+		bool was_foreground = false;
+		bool native_mouse_state_verified = false;
 		std::array<std::uint8_t, 5> original_mouse_event_call{};
 
 		struct mouse_event_state
@@ -50,6 +54,64 @@ namespace mouse_input
 			return hwnd && IsWindow(hwnd) && dvars::m_rawInput != nullptr;
 		}
 
+		void reset_raw_motion()
+		{
+			raw_mouse_x = raw_mouse_y = old_raw_x = old_raw_y = 0;
+		}
+
+		void verify_native_mouse_state()
+		{
+			// QoS PC 1.1 IN_Frame clears s_wmv.mouseActive here. Validate the
+			// relocated absolute operand before writing this byte ourselves.
+			std::array<std::uint8_t, 7> expected{0xC6, 0x05, 0, 0, 0, 0, 0};
+			const auto address = static_cast<std::uint32_t>(game::game_offset(0x113F00E8));
+			std::memcpy(expected.data() + 2, &address, sizeof(address));
+			native_mouse_state_verified = std::memcmp(reinterpret_cast<void*>(game::game_offset(0x102C39D2)),
+				expected.data(), expected.size()) == 0;
+			if (!native_mouse_state_verified)
+				game::Com_Printf(0, "[mouse] focus-release native state guard failed; Windows release only\n");
+		}
+
+		bool native_mouse_active()
+		{
+			return native_mouse_state_verified && *reinterpret_cast<const bool*>(game::game_offset(0x113F00E8));
+		}
+
+		void release_background_mouse(HWND hwnd)
+		{
+			reset_raw_motion();
+			// QoS IN_Activate(102C3720)/IN_Frame(102C3970) can skip unclip
+			// when mouseActive was already cleared. Leave app-active state alone;
+			// clearing only mouseActive lets native IN_Frame reacquire on return.
+			if (native_mouse_state_verified)
+				*reinterpret_cast<bool*>(game::game_offset(0x113F00E8)) = false;
+			RECT clip{}, window{};
+			// ClipCursor is desktop-global: do not undo another application's
+			// newly installed clip during the delayed foreground fallback.
+			if (GetClipCursor(&clip) && GetWindowRect(hwnd, &window) && EqualRect(&clip, &window))
+				ClipCursor(nullptr);
+			if (GetCapture() == hwnd) ReleaseCapture();
+			// Normalize visibility without incrementing its counter on duplicate
+			// deactivation messages. Native activation restores its own visibility.
+			auto count = ShowCursor(TRUE);
+			if (count > 0) ShowCursor(FALSE);
+			for (unsigned attempt = 0; count < 0 && attempt < 32; ++attempt)
+				count = ShowCursor(TRUE);
+			was_foreground = false;
+		}
+
+		void update_focus_state()
+		{
+			const auto hwnd = get_window();
+			if (!wnd_proc_hooked || !hwnd) return;
+			const bool foreground = GetForegroundWindow() == hwnd && !IsIconic(hwnd);
+			if (!foreground && (was_foreground || native_mouse_active()))
+				release_background_mouse(hwnd);
+			else if (foreground && !was_foreground)
+				reset_raw_motion();
+			was_foreground = foreground;
+		}
+
 		void register_raw_input()
 		{
 			if (raw_input_registered || !get_window())
@@ -66,8 +128,7 @@ namespace mouse_input
 			if (RegisterRawInputDevices(&device, 1, sizeof(device)))
 			{
 				raw_input_registered = true;
-				raw_mouse_x = 0;
-				raw_mouse_y = 0;
+				reset_raw_motion();
 			}
 		}
 
@@ -86,8 +147,7 @@ namespace mouse_input
 			RegisterRawInputDevices(&device, 1, sizeof(device));
 
 			raw_input_registered = false;
-			raw_mouse_x = 0;
-			raw_mouse_y = 0;
+			reset_raw_motion();
 		}
 
 		LRESULT CALLBACK wnd_proc_stub(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -97,11 +157,9 @@ namespace mouse_input
 				|| msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN
 				|| msg == WM_MOUSEWHEEL || msg == WM_MOUSEHWHEEL))
 				gamepad::note_mouse_activity();
-			if (msg == WM_ACTIVATEAPP && wparam == FALSE)
-			{
-				raw_mouse_x = 0;
-				raw_mouse_y = 0;
-			}
+			const bool losing_focus = (msg == WM_ACTIVATEAPP && wparam == FALSE)
+				|| (msg == WM_ACTIVATE && LOWORD(wparam) == WA_INACTIVE)
+				|| msg == WM_KILLFOCUS || (msg == WM_SIZE && wparam == SIZE_MINIMIZED);
 
 			// Gameplay recenters the legacy cursor synthetically. Its native delta
 			// path below reports real movement; absolute messages are for UI only.
@@ -111,7 +169,7 @@ namespace mouse_input
 				gamepad::note_mouse_activity();
 			}
 
-			if (msg == WM_SETCURSOR && gamepad::should_hide_cursor())
+			if (foreground && msg == WM_SETCURSOR && gamepad::should_hide_cursor())
 			{
 				SetCursor(nullptr);
 				return TRUE;
@@ -124,7 +182,7 @@ namespace mouse_input
 				if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, raw_bytes, &size, sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1))
 				{
 					const auto* raw = reinterpret_cast<const RAWINPUT*>(raw_bytes);
-					if (raw->header.dwType == RIM_TYPEMOUSE)
+					if (foreground && raw->header.dwType == RIM_TYPEMOUSE)
 					{
 						raw_mouse_x += raw->data.mouse.lLastX;
 						raw_mouse_y += raw->data.mouse.lLastY;
@@ -137,7 +195,11 @@ namespace mouse_input
 				}
 			}
 
-			return CallWindowProcA(original_wnd_proc, hwnd, msg, wparam, lparam);
+			// Preserve native key clearing, activation and renderer handling first.
+			// Then release even when its mouseActive guard skipped deactivation.
+			const auto result = CallWindowProcA(original_wnd_proc, hwnd, msg, wparam, lparam);
+			if (losing_focus) release_background_mouse(hwnd);
+			return result;
 		}
 
 		void install_hooks_if_ready()
@@ -195,6 +257,8 @@ namespace mouse_input
 
 			if (original_wnd_proc)
 			{
+				verify_native_mouse_state();
+				was_foreground = GetForegroundWindow() == get_window();
 				wnd_proc_hooked = true;
 			}
 		}
@@ -238,6 +302,11 @@ namespace mouse_input
 
 		int __cdecl mouse_event_body(int y, int x, int dx, int dy)
 		{
+			if (GetForegroundWindow() != get_window())
+			{
+				reset_raw_motion();
+				return 0;
+			}
 			pending_event.x = x;
 			pending_event.y = y;
 			pending_event.dx = dx;
@@ -270,13 +339,10 @@ namespace mouse_input
 				return call_original_mouse_event(pending_event);
 			}
 
-			static LONG old_x = 0;
-			static LONG old_y = 0;
-
-			const auto raw_dx = raw_mouse_x - old_x;
-			const auto raw_dy = raw_mouse_y - old_y;
-			old_x = raw_mouse_x;
-			old_y = raw_mouse_y;
+			const auto raw_dx = raw_mouse_x - old_raw_x;
+			const auto raw_dy = raw_mouse_y - old_raw_y;
+			old_raw_x = raw_mouse_x;
+			old_raw_y = raw_mouse_y;
 
 			if (raw_dx == 0 && raw_dy == 0)
 			{
@@ -347,6 +413,7 @@ namespace mouse_input
 				{
 					install_hooks_if_ready();
 					install_wnd_proc_if_ready();
+					update_focus_state();
 					update_raw_input_state();
 				}, scheduler::main, 100ms);
 
