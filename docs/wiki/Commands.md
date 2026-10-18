@@ -36,6 +36,7 @@ scores need a subsequent valid stats upload before Steam's ordering is corrected
 - `csl_clantag [open|apply|cancel]`: opens the four-character clan-tag input. Apply uses the same validation and profile persistence as `clanName`; Cancel/Escape discards edits. Available through **Clan Tag** in online, match, private-match and System Link setup menus. The reserved `CSL` tag remains restricted to the authorized Steam ID.
   The frontend Clan Tag entry opens the native QoS modal popup over the current
   lobby rather than navigating to a separate screen. Its focused text input
+  reuses the popup's authored font binding rather than a dynamically resolved font,
   accepts up to four letters, numbers or underscores. OK/Enter validates and
   saves; Cancel/Escape discards the draft and restores the underlying menu.
   Rejected tags leave the popup open with an error. `prepare` and `apply_scaleform` are internal UI bridge actions;
@@ -896,6 +897,7 @@ first column is labelled **Server Hostname**, not Gamertag.
 
 The online playlist picker fits 14 entries in its original list area without a
 scrollbar. Up/Down navigates all entries; Left/Right or Page Up/Down jumps by 14.
+Rows are never enlarged beyond their authored size and remain above the footer.
 The four opt-in `[DEV] Bags/Canals/Cistern/Dam 24/7` playlists use Conflict (`dm`).
 `[DEV] Camille DLC Moshpit` rotates all four maps across Conflict, Team Conflict,
 Bond Versus, Bond Evasion, Golden Gun, Territory Control, Classic, and Gun Game.

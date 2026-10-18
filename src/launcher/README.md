@@ -14,7 +14,7 @@ the complete launcher output together, not just the executable.
 
 An original WPF implementation inspired by the X Labs launcher's compact
 navigation rail, rounded charcoal cards and coloured title-bar controls.
-Reference layout: [X Labs launcher UI](https://github.com/Laupetin/launcher/tree/develop/src/launcher-ui).
+Original X Labs launcher and layout credit: [momo5502](https://github.com/momo5502).
 No X Labs source, binaries, logos, artwork, CEF or WebView components are bundled.
 The hero uses the supplied `jb.png` artwork with a declarative opacity fade,
 the supplied wide Project: Consolation logo, and the supplied square sidebar
