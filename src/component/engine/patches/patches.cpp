@@ -430,7 +430,7 @@ namespace patches
 				{ "pm_allowCover", "1", "0" },
 				{ "pm_mantleFirstPerson", "0", "1" },
 				{ "pm_climbFirstPerson", "0", "1" },
-				{ "pm_airborneBobScale", "1", "0" },
+				{ "pm_airborneBobScale", "0", "0" },
 			};
 			for (const auto& setting : settings)
 				game::Dvar_SetFromStringByName(setting.name, mode == 0 ? setting.stock : setting.iw3);
@@ -443,6 +443,7 @@ namespace patches
 		utils::hook::detour camera_selection_hook;
 		utils::hook::detour horizontal_bob_hook;
 		utils::hook::detour vertical_bob_hook;
+		utils::hook::detour weapon_bob_hook;
 		void* cover_update_original{};
 		void* cover_permission_original{};
 		void* cover_entry_original{};
@@ -675,6 +676,52 @@ namespace patches
 			finished:
 				pop eax
 				jmp dword ptr[vertical_bob_original]
+			}
+		}
+
+		void scale_local_weapon_bob(unsigned char* output, const unsigned char* character)
+		{
+			if (!pm_airborneBobScale || !output || !character) return;
+			const auto* ps = reinterpret_cast<const unsigned char*>(game::game_offset(0x12A4CDFC));
+			const int client = *reinterpret_cast<const int*>(ps + 232);
+			// QoS 10330BD0 selects a 2400-byte character cache. Only touch the
+			// predicted local player's cache, never remote/preview characters.
+			if (client < 0 || client >= 12
+				|| character != reinterpret_cast<const unsigned char*>(game::game_offset(0x12A7E8EC)) + client * 2400
+				|| *reinterpret_cast<const int*>(ps + 4) != 0
+				|| *reinterpret_cast<const int*>(ps + 128) != 1023
+				|| (*reinterpret_cast<const unsigned int*>(ps + 12) & 8) != 0) return;
+			// QoS 10213C60 writes the bob translation at output+52..+60;
+			// 10335AC0 consumes it separately from recoil and other offsets.
+			// Unlike the camera helpers, ECX here is NOT a playerState.
+			camera_validation::scale_movement_bob(
+				std::span<float, 3>(reinterpret_cast<float*>(output + 52), 3), pm_airborneBobScale->current.value);
+		}
+
+		__declspec(noinline) void* native_weapon_bob() { return weapon_bob_hook.get_original(); }
+
+		__declspec(naked) void weapon_bob_stub()
+		{
+			__asm
+			{
+				// Native usercall: EDI=output, ESI=character, no stack arguments.
+				call native_weapon_bob
+				call eax
+				pushfd
+				pushad
+				mov ebp, esp
+				sub esp, 528
+				and esp, -16
+				fxsave [esp]
+				push esi
+				push edi
+				call scale_local_weapon_bob
+				add esp, 8
+				fxrstor [esp]
+				mov esp, ebp
+				popad
+				popfd
+				ret
 			}
 		}
 
@@ -1116,6 +1163,13 @@ namespace patches
 				vertical_bob_original = vertical_bob_hook.get_original();
 			}
 			else console::warn("[movement] airborne bob control skipped: unexpected engine instructions\n");
+
+			const auto weapon_bob_site = game::game_offset(0x10213C60);
+			constexpr unsigned char weapon_bob_bytes[] = {0x83, 0xEC, 0x14, 0xA1};
+			if (std::memcmp(reinterpret_cast<void*>(weapon_bob_site), weapon_bob_bytes, sizeof(weapon_bob_bytes)) == 0
+				&& *reinterpret_cast<const std::uintptr_t*>(weapon_bob_site + 4) == game::game_offset(0x118EC348))
+				weapon_bob_hook.create(weapon_bob_site, weapon_bob_stub);
+			else console::warn("[movement] airborne weapon bob skipped: unexpected engine instructions\n");
 
 			const auto damage_site = game::game_offset(0x1021E925);
 			constexpr unsigned char damage_bytes[] = {0x3A, 0xC3, 0x74, 0x2D, 0x39, 0x9E, 0x5C, 0x01, 0x00, 0x00};
@@ -2521,7 +2575,7 @@ namespace patches
 					"Use first-person camera on native ladders, ledges and pipes (0 = stock).", game::dvar_flags::replicated);
 				pm_airborneBobScale = dvars::Dvar_RegisterFloat("pm_airborneBobScale",
 					"Airborne movement camera bob scale: 0 suppresses, 1 restores stock; grounded bob is unchanged.",
-					1.0f, 0.0f, 1.0f, game::dvar_flags::replicated);
+					0.0f, 0.0f, 1.0f, game::dvar_flags::replicated);
 				game::DvarValue movement_default{};
 				movement_default.integer = 0;
 				game::DvarLimits movement_domain{};

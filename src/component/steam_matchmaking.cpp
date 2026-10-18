@@ -717,7 +717,17 @@ namespace steam_matchmaking
 						entry.status = !entry.online ? "Offline" : state == k_EPersonaStateBusy ? "Busy" :
 							state == k_EPersonaStateAway || state == k_EPersonaStateSnooze ? "Away" : "Online";
 						const auto lobby = friend_lobby(id);
-						if (lobby.IsValid()) { entry.lobby = lobby.ConvertToUint64(); entry.status += " / In a lobby"; }
+						FriendGameInfo_t playing{};
+						if (entry.online && api->GetFriendGamePlayed(id, &playing))
+						{
+							// Steam's public friends API supplies an AppID, not a store title.
+							// Prefer a published game name; never treat rich presence as code.
+							const auto* title = api->GetFriendRichPresence(id, "game_name");
+							entry.status = lobby.IsValid() ? "Project Consolation" :
+								title && *title ? steam_friends::label(title) :
+								"In game (" + std::to_string(playing.m_gameID.AppID()) + ")";
+						}
+						if (lobby.IsValid()) entry.lobby = lobby.ConvertToUint64();
 						entries.push_back(std::move(entry));
 					}
 				}
@@ -734,8 +744,9 @@ namespace steam_matchmaking
 					const auto* entry = index < friends_snapshot_.entries.size() ? &friends_snapshot_.entries[index] : nullptr;
 					game::Dvar_SetFromStringByName(("csl_friends_id" + std::to_string(row)).c_str(),
 						entry ? std::to_string(entry->id).c_str() : "");
+					game::Dvar_SetFromStringByName(("csl_friends_state" + std::to_string(row)).c_str(), entry ? entry->status.c_str() : "");
 					menu_file::set_friends_item("friend" + std::to_string(row), entry ?
-						std::string(entry->id == friends_snapshot_.selected ? "> " : "  ") + entry->name + "   -   " + entry->status : "",
+						std::string(entry->id == friends_snapshot_.selected ? "> " : "  ") + entry->name : "",
 						entry ? "exec \"steam_friend_select " + std::to_string(entry->id) + "\";" : "");
 				}
 				const auto* selected = friends_snapshot_.get(friends_snapshot_.selected);

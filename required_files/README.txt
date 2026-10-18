@@ -15,9 +15,9 @@ update to finish before starting the game. Client DLLs and assets stay matched.
 Debug builds are detected from d3d9.dll's version-resource debug flag. Available
 updates print "[updater] update available, but skipped due to debug build"
 without prompting or modifying installed files. The launcher proceeds normally.
-An already-installed offline shim is updated in the root only if it matches
-the old bundled optional/offline/xlive.dll and contains the shim marker; retail
-GFWL is never replaced implicitly. Profiles and user identity files are untouched.
+The required xlive.dll is installed and updated in the game root alongside
+d3d9.dll. Existing game-root files are backed up before replacement; Windows
+system GFWL files, profiles and user identity files are untouched.
 Launching the EXE directly bypasses this check. Older releases without an update
 manifest cannot be installed automatically. Protected game directories need write
 permission; failures warn and preserve startup rather than silently elevating.
@@ -40,9 +40,8 @@ These modify the stock menus, not the experimental custom frontend.
 Fully close and restart the game after updating; a DLL rebuild alone does
 not regenerate or install these assets. Original main\scaleform files stay intact.
 
-optional\offline\xlive.dll is optional for now, but highly recommended and
-REQUIRED on both PCs for Consolation's local GFWL emulation and LAN transport.
-Install it explicitly in the game root. See README_XLIVE.txt for instructions.
+The bundled root xlive.dll is REQUIRED for Steam and non-Steam play.
+Keep it in the game root with d3d9.dll. See README_XLIVE.txt for instructions.
 
 Default target:
 "C:\Program Files (x86)\Activision\Quantum of Solace(TM)\JB_Launcher_s.exe" -multiplayer -seta g_gametype dm -set cin_firstRunDone 1 -set cin_skipAllMovies 1
@@ -50,13 +49,15 @@ Default target:
 If installed elsewhere, right-click Launch Consolation.bat, choose Edit,
 and change GAME_DIR to your game directory.
 
-LOCAL GFWL / LAN
-Copy optional\offline\xlive.dll into the game root and launch normally.
+STEAM MULTIPLAYER / LAN FALLBACK
+Start Steam and sign in before launching, then use PLAY ONLINE for Steam
+matchmaking and peer-to-peer connections. LAN setup and original GFWL are not
+needed. If you do not use Steam, SYSTEM LINK is available as a LAN fallback.
+Both paths require the bundled xlive.dll in the game root.
 No -offline or -offline_test flags are needed for ordinary two-PC play.
 Host and join through SYSTEM LINK, or join with connectIP <host-IP>:1000.
-Use different startup player names: current name-derived XUIDs can collide if
-both PCs use the same name. See README_XLIVE.txt for details and debug options.
-For Microsoft's original GFWL runtime, leave the optional DLL uninstalled.
+Offline identities persist independently of player names. Do not copy another
+PC's identity files or profile storage. See README_XLIVE.txt for details.
 
 DESKTOP ICON
 Windows batch files use a generic icon. Run Repair Consolation Shortcut.ps1

@@ -1,0 +1,43 @@
+diff --git a/.gitattributes b/.gitattributes
+index c44a77c..fb75b36 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -14,6 +14,9 @@
+ #
+ #*.sh text eol=lf
+ 
++# CLI's TOC substitution requires a bare LF-terminated line on Windows too.
++libcompanion/doc/doc-prologue.xhtml text eol=lf
++
+ # Use `binary` to make sure certain files are never auto-detected as text.
+ #
+ #*.png binary
+diff --git a/libcompanion/tests/registration/driver.cxx b/libcompanion/tests/registration/driver.cxx
+index 28ad280..36039fe 100644
+--- a/libcompanion/tests/registration/driver.cxx
++++ b/libcompanion/tests/registration/driver.cxx
+@@ -179,6 +179,11 @@ try
+   if (m == "--valid" && argc == 3)
+     return valid_extra_info (argv[2]) ? 0 : 1;
+ 
++  // Construct the tab locally: Windows command-line quoting may split a
++  // literal tab into separate argv entries before this validation runs.
++  if (m == "--valid-control" && argc == 2)
++    return valid_extra_info ("a\tb") ? 0 : 1;
++
+   // Initialize the registration with a pattern that no successful decode
+   // produces. A failed decode must not change it (verified below).
+   //
+diff --git a/libcompanion/tests/registration/testscript b/libcompanion/tests/registration/testscript
+index 12138fa..cbebc0d 100644
+--- a/libcompanion/tests/registration/testscript
++++ b/libcompanion/tests/registration/testscript
+@@ -203,7 +203,7 @@
+ {{
+   $* --valid 'IW4x'               : ascii
+   $* --valid ''              == 1 : empty
+-  $* --valid 'a	b'           == 1 : control
++  $* --valid-control         == 1 : control
+   $* --valid 'abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'      : longest
+   $* --valid 'abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' == 1 : too-long
+ }}

@@ -13,9 +13,9 @@ if not exist "build\xlive.vcxproj" (
     set "GENERATE_EXIT_CODE=1"
     goto finish
 )
-echo Generated d3d9 and the optional xlive offline/debug shim projects.
+echo Generated d3d9 and the required xlive replacement projects.
 echo Building d3d9 also builds xlive.dll; this script does not compile them.
-echo Use xlive.dll only for offline/debug. See required_files\README_XLIVE.txt.
+echo Install both DLLs in the game root. See required_files\README_XLIVE.txt.
 
 :finish
 endlocal & exit /b %GENERATE_EXIT_CODE%

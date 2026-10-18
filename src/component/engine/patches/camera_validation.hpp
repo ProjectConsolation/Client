@@ -6,6 +6,16 @@
 
 namespace camera_validation
 {
+    // Native movement bob only; callers must establish local airborne state.
+    // Keep recoil, damage, landing and authored animation out of this vector.
+    inline bool scale_movement_bob(std::span<float, 3> offset, float scale)
+    {
+        if (!std::isfinite(scale) || scale < 0.0f || scale >= 1.0f
+            || !std::all_of(offset.begin(), offset.end(), [](float v) { return std::isfinite(v); })) return false;
+        for (auto& value : offset) value *= scale;
+        return true;
+    }
+
     // Modify only the viewmodel projection's X/Y terms. Preserve aspect ratio,
     // depth mapping, and native ADS interpolation; zero selects stock behavior.
     inline bool viewmodel_projection(std::span<float, 16> matrix, float fov, float ads)

@@ -24,7 +24,6 @@ namespace game_console
 	{
 		utils::hook::detour cl_key_event_hook;
 		utils::hook::detour cl_console_print_hook;
-		utils::hook::detour con_set_console_rect_hook;
 
 		float overlay_back_color[4] = { 0.01f, 0.01f, 0.01f, 0.82f };
 		float overlay_panel_color[4] = { 0.03f, 0.03f, 0.03f, 0.90f };
@@ -149,7 +148,6 @@ namespace game_console
 		void clear_dead_key_state();
 		void cl_key_event_stub();
 		void cl_console_print_stub(int local_client_num, int channel, const char* txt, int duration, int pixel_width, int flags);
-		void con_set_console_rect_stub();
 
 		void install_hooks_if_ready()
 		{
@@ -177,7 +175,6 @@ namespace game_console
 			}
 
 			cl_key_event_hook.create(reinterpret_cast<std::uintptr_t>(game::CL_KeyEvent_.get()), cl_key_event_stub);
-			con_set_console_rect_hook.create(reinterpret_cast<std::uintptr_t>(game::Con_SetConsoleRect.get()), con_set_console_rect_stub);
 			hooks_installed = true;
 			component_ready = true;
 		}
@@ -862,12 +859,6 @@ namespace game_console
 		{
 			append_console_text(txt);
 			cl_console_print_hook.invoke<void>(local_client_num, channel, txt, duration, pixel_width, flags);
-		}
-
-		void con_set_console_rect_stub()
-		{
-			con_set_console_rect_hook.invoke<void>();
-			draw_console_overlay();
 		}
 
 		void debug_log_toggle(const char* key_name)
@@ -2735,6 +2726,13 @@ namespace game_console
 			// Process direct keyboard input through a guarded wrapper so transient
 			// startup/input-state faults do not kill the whole game.
 			scheduler::loop(safe_process_console_input, scheduler::main, 16ms);
+			// QoS PC Con_SetConsoleRect (10313820) is also called by console
+			// initialization/layout, not just drawing. new1.dmp contains a damaged
+			// text command in RB_ExecuteRenderCommandsLoop (103B4B30). Never append
+			// commands from that global layout hook: use the scheduler's guarded
+			// 103121BB producer call, after R_SyncRenderThread and before R_EndFrame,
+			// matching KisakCOD's frontend/backend command-buffer ownership.
+			scheduler::loop(draw_console_overlay, scheduler::renderer);
 		}
 
 		void pre_destroy() override
@@ -2746,7 +2744,6 @@ namespace game_console
 			set_overlay_active(false);
 			cl_key_event_hook.clear();
 			cl_console_print_hook.clear();
-			con_set_console_rect_hook.clear();
 			clear_live_status();
 			con = nullptr;
 		}

@@ -49,14 +49,14 @@ If you are using a nightly build or a release build:
 
 The batch launcher includes the multiplayer, default deathmatch and skip-intro arguments, and starts in the game directory.
 
-The optional replacement is shipped under `optional/offline/xlive.dll`, not at
-the archive root. It is optional for now, but highly recommended and required on
-both PCs for Consolation's local GFWL emulation and LAN transport. Copy it into
-the game root, then launch normally: detection is automatic, with no `-offline`
-or `-offline_test` requirement. Leave it out to use Microsoft's original runtime.
-See [the local GFWL/LAN DLL note](required_files/README_XLIVE.txt).
+The bundled `xlive.dll` is required for both Steam and non-Steam play. It replaces
+the game's Games for Windows LIVE dependency and ships at the archive root,
+beside `d3d9.dll`. Keep both DLLs in the game root and update them together.
+Launch normally: detection is automatic, with no `-offline` or `-offline_test`
+requirement. Do not delete or replace the Windows system GFWL runtime.
+See [the required XLive replacement note](required_files/README_XLIVE.txt).
 `generate-nightly.bat` generates both projects; building `d3d9` also builds the
-optional shim and copies that note beside it. The shim is not auto-deployed.
+required shim and copies that note beside it.
 
 Default launch command:
 
@@ -70,17 +70,20 @@ If your game is installed in the default directory, use the included batch file 
 
 If installed elsewhere, right-click `Launch Consolation.bat`, choose **Edit**, and change `GAME_DIR` to your real install directory.
 
-For LAN play, install the optional shim on both PCs and use SYSTEM LINK to host
-and join. Direct joins use `connectIP <host-IP>:1000`. Normal two-PC play uses
+For online multiplayer, start Steam, sign in, then launch Consolation and use
+PLAY ONLINE. Steam matchmaking and peer-to-peer connections do not require
+setting up a LAN connection or using the original GFWL service.
+
+If you do not use Steam, LAN play remains available as a fallback. Install the
+same client files, including the required `xlive.dll`, on both PCs and use
+SYSTEM LINK to host and join. Direct joins use `connectIP <host-IP>:1000`.
+Normal two-PC LAN play uses
 UDP 1000/1001 on each PC; debug port overrides are only needed for special tests.
-Current offline XUIDs derive from the startup name, so use distinct startup names
-until identity persistence is independent of display names; `-name "YourName"`
-can set one explicitly. Keep it consistent to retain the same local profile.
+Offline identities persist independently of player names. Do not copy another
+PC's identity files or profile storage when setting up a second installation.
 The debug commands remain available but are not normal launch requirements.
-If an older nightly installed the replacement in the game root, extracting a new
-archive does not update that root copy: explicitly replace it with the matching
-optional shim. Move the root copy out to return to Microsoft's original runtime.
-Do not delete the system GFWL runtime.
+When upgrading from an older nightly that placed the DLL under `optional/offline`,
+use the new archive's root `xlive.dll`; the old optional-folder copy is not used.
 
 `consolation/zone/common_consolation.ff` is a required client asset file. Keep it
 at that location. The nightly packaging check rejects missing launchers or HUD
@@ -94,6 +97,7 @@ Advanced users can still make a non-default install work by manually copying the
 
 - [mjkzy](https://github.com/mjkzy) for working on zones & zonetool, finishing GSC support & providing a base + patches, upkeep
 - [Lierrmm](https://github.com/Lierrmm) for zones & zonetool, upkeep, patches
+- [mo (michaeloliverx)](https://github.com/michaeloliverx) for zone help and expanding OpenAssetTools support
 - [JerryALT](https://github.com/JerryALT) for lots of code snippets from [IW3SP-MOD](https://github.com/JerryALT/iw3sp_mod)
 - [xoxor4d](https://github.com/xoxor4d) for another big lot of code snippets from [iw3xo](https://github.com/xoxor4d/iw3xo-dev)
 - [JerryALT](https://gitea.com/JerryALT/) for IW3SP code snippets and research, raw mouse input

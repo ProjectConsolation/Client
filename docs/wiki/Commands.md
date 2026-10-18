@@ -301,7 +301,12 @@ sets the first visible row (0–256, clamped to the current list). The internal
 `steam_friends scaleform` bridge uses the same validated Steam friend snapshot
 as the console/native fallback; displayed names are plain text, not commands.
 The live **N Steam Friends** count appears above the first player. The
-video-options Bond illustration is removed without adding a covering panel.
+separate status column shows Offline, Busy, Away or Online, or the published
+game title while playing. Games that do not publish their title use an
+`In game (App ID)` fallback; the public Steam friends interface does not supply
+store names for arbitrary App IDs. F5/Refresh and Wheel/Arrows/Scroll hints
+appear in the bottom help bar alongside Enter/Select and Escape/Back.
+The video-options Bond illustration is removed without adding a covering panel.
 A successful Invite action
 means Steam accepted the request, not that the recipient received or joined it.
 To verify invites, use two signed-in accounts running matching builds: create a
@@ -721,7 +726,8 @@ These QoS PC 1.1 hooks require rebuilding the client and in-game validation. The
 | `pm_allowCover` | `1` | Server-replicated. `0` blocks native cover entry, including automatic/queued entry, clears the entry hint, and begins a native forced exit when already in cover. Native exit animation and cleanup continue normally. `1` permits the original rules; it does not override stock `cover_disable` or script restrictions. |
 | `pm_mantleFirstPerson` | `0` | Server-replicated experimental camera option for native `mantle_40`, `mantle_44` and `mantle_56` traversals. Uses the native first-person view branch and suppresses traversal/model camera replacement. `0` restores the stock camera. Does not port COD4 mantle movement or add COD4 hand animations. |
 | `pm_climbFirstPerson` | `0` | Server-replicated experimental camera option for native ladders, ledges and pipes. Same camera-only behavior as the mantle option; balance, generic transitions and wallhug retain their stock camera. Explicit `cg_thirdPerson` requests and death/spectator views are preserved. |
-| `pm_airborneBobScale` | `1` | Server-replicated float, range `0`–`1`. Scales the native movement camera bob speed input while airborne and outside traversal. `0` suppresses that bob; `1` restores stock amplitude. Grounded bob, velocity, recoil, landing effects and damage kick are not changed. This is a targeted mitigation; the reported excessive gun movement still needs reproduction and verification. |
+| `pm_airborneBobScale` | `0` | Server-replicated float, range `0`–`1`. Scales native movement camera bob and the separate local weapon-bob translation while airborne and outside traversal. `0` suppresses these bob components; `1` restores stock amplitude. Both movement presets default to `0`; the dvar can still be changed afterward. Grounded bob, remote-player animation, velocity, recoil, landing effects, damage kick and body-bone animation are not changed. The weapon-bob adapter still needs rebuilt-client runtime testing. |
+| `ui_menuWineTint` | `1` | Saved local preference for the native menu background video and authored background sprites. Set `0` to restore their original colours. The main-menu information strip uses separate dark-gray artwork at its authored 127/255 opacity, independent of this toggle. Text, buttons, map previews and gameplay are not tinted; native background fades retain their alpha. Requires matching client and patch assets. The video pass explicitly selects linear YUV sampling in either mode. Background tint and transitions still require runtime verification. |
 
 Use `pm_movement_mode iw3` for sprint-to-ADS, retained ADS on damage, prone permission, disabled cover, first-person mantle/climb cameras and suppressed airborne bob. Use `pm_movement_mode stock` to restore all seven native policies. Individual controls remain adjustable after applying a preset; selecting a different preset replaces those adjustments. Re-entering the same preset does not reapply it. This does not reset unrelated jump/speed settings.
 
@@ -849,6 +855,18 @@ pending until `apply` sets the dvars and requests a native renderer restart.
 and `discard` leaves engine values unchanged.
 
 ### System Link balance and local profiles
+
+`ui_menuWineTint 1` requests the deep dark-red background video and scoped sprite
+tint; `0` restores their authored colours. The main-menu information strip is
+separate dark-gray artwork, retaining its authored 127/255 opacity and native
+transition frames in either mode. Use matching client and patch assets. Text,
+orange selection highlights, map previews and gameplay are not recoloured. The
+setting is saved and defaults to enabled. The complete background appearance
+and transitions remain pending runtime confirmation.
+
+The System Link/private-lobby gamemode picker displays up to 12 modes per page.
+Page Up/Down changes pages when more modes are available. The server browser's
+first column is labelled **Server Hostname**, not Gamertag.
 
 With the local XLive shim installed, offline mode retains QoS's native `mpdata` loading and session-end saving through the shim's local title storage. The System Link script adaptation permits the existing money award/read path; other ranked-only statistics remain ranked-only. It does not create an online leaderboard service or bypass Store purchase rules.
 

@@ -185,7 +185,7 @@ function Get-ConsolationPackagePlan([string]$Root, [string]$ArchivePath, [string
             # Ignore this obsolete entry in older manifests before the allowlist
             # check; it must never be an approved installable required file.
             if ($name -eq 'xlive_patch.asi') { continue }
-            $rootFiles = @('d3d9.dll','steam_api.dll','companion64.dll','binkw32.dll',
+            $rootFiles = @('d3d9.dll','xlive.dll','steam_api.dll','companion64.dll','binkw32.dll',
                 'JB_Launcher_s.exe','Launch Consolation.bat','Check Consolation Updates.ps1',
                 'README.txt','README_XLIVE.txt','PLAYTEST_STEAM_PLAYLISTS.txt',
                 'Repair Consolation Shortcut.ps1','consolelogo.png','icon.ico','jb.bmp','jblogo.bmp')
@@ -201,8 +201,13 @@ function Get-ConsolationPackagePlan([string]$Root, [string]$ArchivePath, [string
             if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $file.sha256) { throw 'Release file hash mismatch' }
         }
         foreach ($required in @('d3d9.dll','steam_api.dll','Launch Consolation.bat','Check Consolation Updates.ps1',
-                'consolation/zone/common_consolation.ff','consolation/zone/patch_consolation.ff','optional/offline/xlive.dll')) {
+                'consolation/zone/common_consolation.ff','consolation/zone/patch_consolation.ff')) {
             if (!$seen.Contains($required)) { throw "Incomplete full release: $required" }
+        }
+        # New releases install the required shim directly; accept the older
+        # optional layout as well so cached releases remain compatible.
+        if (!$seen.Contains('xlive.dll') -and !$seen.Contains('optional/offline/xlive.dll')) {
+            throw 'Incomplete full release: xlive.dll'
         }
         if ($entries.Count -ne $seen.Count + 1) { throw 'Unmanifested ZIP files' }
         foreach ($file in $manifest.files) {
@@ -216,7 +221,7 @@ function Get-ConsolationPackagePlan([string]$Root, [string]$ArchivePath, [string
             }
             # Only update a root offline DLL when it is the installed copy of
             # the old bundled shim. Never replace retail/system GFWL implicitly.
-            if ($name -eq 'optional/offline/xlive.dll') {
+            if ($name -eq 'optional/offline/xlive.dll' -and !$seen.Contains('xlive.dll')) {
                 $rootShim = Resolve-ConsolationUpdatePath $Root 'xlive.dll'
                 if ((Test-Path -LiteralPath $rootShim -PathType Leaf) -and (Test-Path -LiteralPath $target -PathType Leaf)) {
                     $rootHash = (Get-FileHash -LiteralPath $rootShim -Algorithm SHA256).Hash
