@@ -41,6 +41,12 @@ scores need a subsequent valid stats upload before Steam's ordering is corrected
   Rejected tags leave the popup open with an error. `prepare` and `apply_scaleform` are internal UI bridge actions;
   the latter still runs the normal clan-tag validator, never a raw console command.
 - **Start Game** appears first in the Steam match lobby only for its waiting host. It uses `steam_match_start`, which rechecks host ownership before starting; guests cannot launch a match.
+- **Leave Lobby** and Back in a retained Steam match lobby request the existing
+  Steam leave action, wait for lobby retention to clear, then run native party
+  cleanup and navigate to the online menu through Scaleform's screen controller.
+  A failed leave keeps the screen in place and allows retry; it does not report
+  success by hiding the lobby locally. Deploy matching loose movies and patch
+  zone, then fully restart to discard cached menu classes.
 
 The Friends/Party Invite entry and Steam match lobby's Invite Friends button
 open a Scaleform screen using the authored QoS video-options controls and fonts.
