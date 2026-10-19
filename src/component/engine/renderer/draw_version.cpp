@@ -6,6 +6,7 @@
 
 #include "game/game.hpp"
 #include "game/dvars.hpp"
+#include "menu_video_tint_policy.hpp"
 
 namespace draw_version
 {
@@ -18,7 +19,9 @@ namespace draw_version
 		constexpr float shadow_offset_x = 1.0f;
 		constexpr float shadow_offset_y = 1.0f;
 		float shadow_color[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
-		float version_text_color[4] = { 0.20f, 0.55f, 1.0f, 0.85f };
+		float version_text_color[4] = {
+			menu_video_tint::red[0], menu_video_tint::red[1], menu_video_tint::red[2], 0.85f
+		};
 		float watermark_text_color[4] = { 1.0f, 1.0f, 1.0f, 0.35f };
 		const char* watermark_text = "Project: Consolation";
 		std::atomic_bool overlay_enabled{false};

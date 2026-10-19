@@ -96,9 +96,7 @@ foreach ($file in Get-ChildItem -LiteralPath $requiredDirectory -Recurse -File) 
 }
 Copy-Item -LiteralPath (Join-Path $ReleaseDirectory 'd3d9.dll') -Destination $staging
 Copy-Item -LiteralPath $steamApiPath -Destination $staging
-$offline = Join-Path $staging 'optional/offline'
-New-Item -ItemType Directory -Path $offline -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $ReleaseDirectory 'xlive.dll') -Destination $offline
+Copy-Item -LiteralPath (Join-Path $ReleaseDirectory 'xlive.dll') -Destination $staging
 
 # A full updater must install matching code and assets from one release, not
 # combine main-branch assets with binaries from an older nightly.
@@ -118,12 +116,11 @@ $archive = [System.IO.Compression.ZipFile]::OpenRead([System.IO.Path]::GetFullPa
 try {
     $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
     if ('consolation-update-manifest.json' -notin $names) { throw 'Full-update manifest missing from ZIP' }
-    foreach ($required in @('d3d9.dll', 'steam_api.dll', 'Launch Consolation.bat', 'Check Consolation Updates.ps1', 'JB_Launcher_s.exe',
-            'README.txt', 'README_XLIVE.txt', 'consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff',
-            'optional/offline/xlive.dll') + $stockMenuFiles + $companionFiles) {
+    foreach ($required in @('d3d9.dll', 'steam_api.dll', 'xlive.dll', 'Launch Consolation.bat', 'Check Consolation Updates.ps1', 'JB_Launcher_s.exe',
+            'README.txt', 'README_XLIVE.txt', 'consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff') + $stockMenuFiles + $companionFiles) {
         if ($required -notin $names) { throw "Nightly ZIP is missing $required" }
     }
-    if ('xlive.dll' -in $names) { throw 'Offline replacement must not be installed from the ZIP root' }
+    if ('optional/offline/xlive.dll' -in $names) { throw 'Required XLive replacement must ship at the ZIP root' }
     if ('xlive_patch.asi' -in $names) { throw 'Legacy ASI is incompatible with the bundled offline shim' }
     if ('consolation/menu/ui_mp/steam_lobby.menu' -in $names) { throw 'Retired custom match lobby must not ship' }
     if ($names | Where-Object { $_ -match '(^|/)playlists\.info$' }) { throw 'Playlists must be embedded in patch_consolation.ff, not loose files' }
@@ -131,12 +128,12 @@ try {
     # library must travel with the screens whose class definitions it supplies.
     $sha256 = [System.Security.Cryptography.SHA256]::Create()
     try {
-        foreach ($menu in $stockMenuFiles + $companionFiles + @('consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff', 'steam_api.dll')) {
+        foreach ($menu in $stockMenuFiles + $companionFiles + @('consolation/zone/common_consolation.ff', 'consolation/zone/patch_consolation.ff', 'steam_api.dll', 'xlive.dll')) {
             $entry = $archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq $menu }
             $stream = $entry.Open()
             try { $packedHash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') }
             finally { $stream.Dispose() }
-            $hashSource = if ($menu -eq 'steam_api.dll') { $steamApiPath } else { Join-Path $requiredDirectory $menu }
+            $hashSource = if ($menu -eq 'steam_api.dll') { $steamApiPath } elseif ($menu -eq 'xlive.dll') { Join-Path $ReleaseDirectory $menu } else { Join-Path $requiredDirectory $menu }
             $sourceHash = (Get-FileHash -LiteralPath $hashSource -Algorithm SHA256).Hash
             if ($packedHash -ne $sourceHash) { throw "Nightly menu hash mismatch: $menu" }
         }
