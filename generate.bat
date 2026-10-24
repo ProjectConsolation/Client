@@ -132,4 +132,20 @@ if not exist "build" (
     mkdir build
 )
 
+REM SDK-style projects need a restore even when they have no PackageReference.
+REM Keep this a separate process before MSBuild evaluates the mixed solution;
+REM a pre-build event is too late to import NuGet-generated props and targets.
+where /q "dotnet.exe"
+if errorlevel 1 (
+    echo ERROR: The launcher requires the .NET 10 SDK. Install it and rerun generate.bat. >&2
+    exit /b 1
+)
+
+echo Restoring launcher framework and NuGet assets...
+dotnet restore "%~dp0src\launcher\Consolation.Launcher.csproj" --nologo
+if errorlevel 1 (
+    echo ERROR: Launcher restore failed. Resolve the restore error and rerun generate.bat. >&2
+    exit /b 1
+)
+
 echo consolation-client.sln should now be in build\

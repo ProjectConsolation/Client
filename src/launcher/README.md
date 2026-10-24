@@ -10,6 +10,22 @@ framework-dependent deployment requires the x86 .NET 10 Desktop Runtime.
 Output goes under the repository's ignored `build/launcher` directory. Deploy
 the complete launcher output together, not just the executable.
 
+`generate.bat` (also used by `generate-nightly.bat`) restores the launcher before
+reporting success. This creates `build/launcher/obj/project.assets.json` without
+compiling anything. A clean checkout needs this restore even though the project
+has no explicit NuGet package references. Restore failures stop generation rather
+than surfacing later as `NETSDK1004` during the solution build.
+
+If building an already-generated solution after cleaning its intermediate files,
+restore again first:
+
+```bat
+dotnet restore src\launcher\Consolation.Launcher.csproj
+```
+
+For the standalone launcher solution, MSBuild's `/restore` option can perform
+restore and build with separate evaluations. Do not use `/t:Restore,Build`.
+
 ## Interface
 
 An original WPF implementation inspired by the X Labs launcher's compact
@@ -160,7 +176,7 @@ safe from directory names alone. Backup hashes detect corruption, not malicious
 modification by another process with the same file permissions.
 
 This subproject is not yet included in nightly archives. Verification includes
-23 static launcher contracts, updater fixture tests in PowerShell 7 and Windows
+25 static launcher contracts, updater fixture tests in PowerShell 7 and Windows
 PowerShell 5.1, and offscreen source-XAML renders. The latest source changes have
 been built successfully as Release x86. Compiled launch, updater dialogs, DPI, keyboard navigation and
 installation behavior still require a Windows runtime test. Run static tests
